@@ -1,0 +1,14 @@
+---
+- name: Launch Windows Server EFI image build
+  hosts: aws_metal
+  gather_facts: true
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/mirror_content.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/day2/openshift_pipelines.yml
+    - ../../vars/day2/windows_server_build.yml
+  tasks:
+    - name: Launch Windows Server EFI builder PipelineRun
+      ansible.builtin.include_role:
+        name: openshift_windows_server_build

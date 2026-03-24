@@ -1,0 +1,16 @@
+[req]
+distinguished_name = dn
+req_extensions = req_ext
+prompt = no
+
+[dn]
+CN = {{ request.common_name }}
+O = {{ idm_server.realm }}
+
+[req_ext]
+subjectAltName = @alt_names
+
+[alt_names]
+{% for dns_name in request.dns_names %}
+DNS.{{ loop.index }} = {{ dns_name }}
+{% endfor %}

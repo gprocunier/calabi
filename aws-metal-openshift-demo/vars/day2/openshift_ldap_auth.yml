@@ -1,0 +1,31 @@
+---
+openshift_ldap_auth:
+  identity_provider_name: "Red Hat Identity Management"
+  bind_dn: "cn=Directory Manager"
+  bind_password: "{{ idm_server.ds_password }}"
+  user_search_base_dn: ""
+  group_search_base_dn: ""
+  login_url: ""
+  oauth:
+    mapping_method: claim
+    insecure: false
+    attributes:
+      id:
+        - dn
+      preferred_username:
+        - uid
+      name:
+        - cn
+      email:
+        - mail
+  group_sync:
+    schedule: "*/30 * * * *"
+    whitelist_groups:
+      - openshift-admin
+      - virt-admin
+      - developer
+    rfc2307:
+      groups_filter: "(objectClass=groupOfNames)"
+      users_filter: "(objectClass=person)"
+  authorization:
+    cluster_admin_group: openshift-admin

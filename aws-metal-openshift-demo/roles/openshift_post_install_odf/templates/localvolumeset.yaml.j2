@@ -1,0 +1,24 @@
+apiVersion: local.storage.openshift.io/v1alpha1
+kind: LocalVolumeSet
+metadata:
+  name: {{ openshift_post_install_odf_local_volume_set_name }}
+  namespace: {{ openshift_post_install_odf_local_storage_namespace }}
+spec:
+  deviceInclusionSpec:
+    deviceTypes:
+      - disk
+    minSize: 900Gi
+    maxSize: 1000Gi
+  maxDeviceCount: 1
+  nodeSelector:
+    nodeSelectorTerms:
+      - matchExpressions:
+          - key: {{ openshift_post_install_odf_storage_label }}
+            operator: Exists
+  storageClassName: {{ openshift_post_install_odf_local_volume_set_name }}
+  tolerations:
+    - key: {{ openshift_post_install_odf_storage_taint_key }}
+      operator: Equal
+      value: "{{ openshift_post_install_odf_storage_taint_value }}"
+      effect: {{ openshift_post_install_odf_storage_taint_effect }}
+  volumeMode: Block

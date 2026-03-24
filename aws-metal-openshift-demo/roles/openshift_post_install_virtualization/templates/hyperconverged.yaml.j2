@@ -1,0 +1,8 @@
+apiVersion: hco.kubevirt.io/v1beta1
+kind: HyperConverged
+metadata:
+  name: {{ openshift_post_install_virtualization_hco_name }}
+  namespace: {{ openshift_post_install_virtualization_namespace }}
+spec:
+  vmStateStorageClass: >-
+    {{ openshift_post_install_virtualization_default_storage_class }}

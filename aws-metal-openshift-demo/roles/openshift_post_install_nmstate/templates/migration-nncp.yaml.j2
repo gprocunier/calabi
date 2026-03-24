@@ -1,0 +1,22 @@
+apiVersion: nmstate.io/v1
+kind: NodeNetworkConfigurationPolicy
+metadata:
+  name: {{ item.name }}
+spec:
+  nodeSelector:
+{% for key, value in item.node_selector.items() %}
+    {{ key }}: {{ value | to_json }}
+{% endfor %}
+  desiredState:
+    interfaces:
+      - name: {{ item.interface_name }}
+        description: {{ item.description }}
+        type: vlan
+        state: up
+        vlan:
+          base-iface: {{ item.base_interface }}
+          id: {{ item.vlan_id }}
+        ipv4:
+          enabled: false
+        ipv6:
+          enabled: false

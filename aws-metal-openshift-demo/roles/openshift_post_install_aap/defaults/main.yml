@@ -1,0 +1,2 @@
+---
+openshift_post_install_aap_remote_dir: /var/tmp/openshift-post-install-aap

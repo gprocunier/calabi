@@ -1,0 +1,3 @@
+---
+openshift_cluster_cleanup_wipe_block_devices: true
+openshift_cluster_cleanup_runtime_root: /var/lib/aws-metal-openshift-demo

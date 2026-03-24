@@ -1,0 +1,375 @@
+---
+- name: Derive post-install NMState context
+  ansible.builtin.set_fact:
+    openshift_post_install_nmstate_oc_local_path: >-
+      {{ lab_execution_tools_root }}/{{
+      mirror_registry_ocp_release }}/bin/oc
+    openshift_post_install_nmstate_kubeconfig_local_path: >-
+      {{ lab_execution_ocp_generated_root }}/auth/kubeconfig
+    openshift_post_install_nmstate_remote_dir: >-
+      /var/tmp/openshift-post-install-nmstate
+    openshift_post_install_nmstate_remote_oc_path: >-
+      /var/tmp/openshift-post-install-nmstate/oc
+    openshift_post_install_nmstate_remote_kubeconfig_path: >-
+      /var/tmp/openshift-post-install-nmstate/kubeconfig
+    openshift_post_install_nmstate_remote_subscription_path: >-
+      /var/tmp/openshift-post-install-nmstate/subscription.yaml
+    openshift_post_install_nmstate_remote_instance_path: >-
+      /var/tmp/openshift-post-install-nmstate/nmstate.yaml
+    openshift_post_install_nmstate_vm_data_vlan_items: >-
+      {{
+        lab_switch_ports
+        | dict2items
+        | selectattr('value.vlan_id', 'in', [300, 301, 302])
+        | list
+      }}
+
+- name: Initialize NodeNetworkConfigurationPolicy definition list
+  ansible.builtin.set_fact:
+    openshift_post_install_nmstate_nncp_definitions: []
+
+- name: Add live-migration VLAN NodeNetworkConfigurationPolicy definition
+  ansible.builtin.set_fact:
+    openshift_post_install_nmstate_nncp_definitions: >-
+      {{
+        openshift_post_install_nmstate_nncp_definitions
+        + [
+            {
+              'name': openshift_post_install_nmstate_migration_nncp_name,
+              'vlan_id': openshift_install_cluster.network.migration_vlan_id,
+              'interface_name': 'vlan' ~ (openshift_install_cluster.network.migration_vlan_id | string),
+              'base_interface': openshift_post_install_nmstate_migration_base_interface,
+              'description': 'OpenShift Virtualization live migration VLAN',
+              'node_selector': openshift_post_install_nmstate_migration_node_selector
+            }
+          ]
+      }}
+  when: openshift_post_install_nmstate_configure_migration_vlan | bool
+
+- name: Add VM data VLAN NodeNetworkConfigurationPolicy definitions
+  ansible.builtin.set_fact:
+    openshift_post_install_nmstate_nncp_definitions: >-
+      {{
+        openshift_post_install_nmstate_nncp_definitions
+        + [
+            {
+              'name': 'vm-data-vlan-' ~ (item.value.vlan_id | string),
+              'vlan_id': item.value.vlan_id,
+              'interface_name': 'vlan' ~ (item.value.vlan_id | string),
+              'base_interface': openshift_post_install_nmstate_vm_data_vlan_base_interface,
+              'description': item.value.description,
+              'node_selector': openshift_post_install_nmstate_vm_data_vlan_node_selector
+            }
+          ]
+      }}
+  loop: "{{ openshift_post_install_nmstate_vm_data_vlan_items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: openshift_post_install_nmstate_configure_vm_data_vlans | bool
+
+- name: Assert local oc binary exists for NMState orchestration
+  ansible.builtin.stat:
+    path: "{{ openshift_post_install_nmstate_oc_local_path }}"
+  delegate_to: localhost
+  become: true
+  register: openshift_post_install_nmstate_oc_local_stat
+
+- name: Assert generated kubeconfig exists for NMState orchestration
+  ansible.builtin.stat:
+    path: "{{ openshift_post_install_nmstate_kubeconfig_local_path }}"
+  delegate_to: localhost
+  become: true
+  register: openshift_post_install_nmstate_kubeconfig_local_stat
+
+- name: Fail when required local NMState artifacts are missing
+  ansible.builtin.assert:
+    that:
+      - openshift_post_install_nmstate_oc_local_stat.stat.exists
+      - openshift_post_install_nmstate_kubeconfig_local_stat.stat.exists
+    fail_msg: >-
+      NMState orchestration requires a generated oc binary and kubeconfig.
+
+- name: Create remote NMState workspace
+  ansible.builtin.file:
+    path: "{{ openshift_post_install_nmstate_remote_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Copy pinned oc binary to hypervisor for NMState orchestration
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_nmstate_oc_local_path }}"
+    dest: "{{ openshift_post_install_nmstate_remote_oc_path }}"
+    mode: "0755"
+
+- name: Copy generated kubeconfig to hypervisor for NMState orchestration
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_nmstate_kubeconfig_local_path }}"
+    dest: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+    mode: "0600"
+
+- name: Detect current NMState operator CSV phase
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_nmstate_remote_oc_path }}" get subscription \
+      "{{ openshift_post_install_nmstate_subscription_name }}" \
+      -n "{{ openshift_post_install_nmstate_namespace }}" \
+      -o jsonpath='{.status.currentCSV}' 2>/dev/null \
+    | xargs -r -I{} "{{ openshift_post_install_nmstate_remote_oc_path }}" get csv {} \
+      -n "{{ openshift_post_install_nmstate_namespace }}" \
+      -o jsonpath='{.status.phase}'
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+  register: openshift_post_install_nmstate_existing_csv_phase
+  changed_when: false
+  failed_when: false
+
+- name: Detect whether the NMState instance already exists
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_nmstate_remote_oc_path }}"
+      - get
+      - nmstate
+      - kubernetes-nmstate
+      - -n
+      - "{{ openshift_post_install_nmstate_namespace }}"
+      - -o
+      - name
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+  register: openshift_post_install_nmstate_existing_instance
+  changed_when: false
+  failed_when: false
+
+- name: Detect current NNCP availability
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_nmstate_remote_oc_path }}"
+      - get
+      - nncp
+      - "{{ item.name }}"
+      - -o
+      - jsonpath={.status.conditions[?(@.type=="Available")].status}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+  register: openshift_post_install_nmstate_existing_nncp
+  changed_when: false
+  failed_when: false
+  loop: "{{ openshift_post_install_nmstate_nncp_definitions }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Derive whether NMState configuration can be reused as-is
+  ansible.builtin.set_fact:
+    openshift_post_install_nmstate_reuse_existing: >-
+      {{
+        openshift_post_install_nmstate_existing_csv_phase.stdout == 'Succeeded'
+        and openshift_post_install_nmstate_existing_instance.rc == 0
+        and (
+          openshift_post_install_nmstate_existing_nncp.results
+          | map(attribute='stdout')
+          | list
+          | difference(['True'])
+          | length == 0
+        )
+      }}
+
+- name: Render NMState operator subscription manifest
+  ansible.builtin.template:
+    src: subscription.yaml.j2
+    dest: "{{ openshift_post_install_nmstate_remote_subscription_path }}"
+    mode: "0644"
+
+- name: Render NMState instance manifest
+  ansible.builtin.template:
+    src: nmstate.yaml.j2
+    dest: "{{ openshift_post_install_nmstate_remote_instance_path }}"
+    mode: "0644"
+
+- name: Render NodeNetworkConfigurationPolicy manifests
+  ansible.builtin.template:
+    src: migration-nncp.yaml.j2
+    dest: >-
+      {{ openshift_post_install_nmstate_remote_dir }}/{{ item.name }}.yaml
+    mode: "0644"
+  loop: "{{ openshift_post_install_nmstate_nncp_definitions }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Configure NMState resources when reuse is not possible
+  when: not openshift_post_install_nmstate_reuse_existing
+  block:
+    - name: Ensure NMState namespace exists
+      ansible.builtin.shell: |
+        set -o pipefail
+        "{{ openshift_post_install_nmstate_remote_oc_path }}" create namespace \
+          "{{ openshift_post_install_nmstate_namespace }}" \
+          --dry-run=client -o yaml \
+        | "{{ openshift_post_install_nmstate_remote_oc_path }}" apply -f -
+      args:
+        executable: /bin/bash
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+      changed_when: true
+
+    - name: Apply NMState operator subscription
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_nmstate_remote_oc_path }}"
+          - apply
+          - -f
+          - "{{ openshift_post_install_nmstate_remote_subscription_path }}"
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+      changed_when: true
+
+    - name: Wait for NMState operator CSV to be selected
+      ansible.builtin.shell: |
+        set -o pipefail
+        "{{ openshift_post_install_nmstate_remote_oc_path }}" get subscription \
+          "{{ openshift_post_install_nmstate_subscription_name }}" \
+          -n "{{ openshift_post_install_nmstate_namespace }}" \
+          -o jsonpath='{.status.currentCSV}' | tr -d '\n'
+      args:
+        executable: /bin/bash
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+      register: openshift_post_install_nmstate_current_csv
+      changed_when: false
+      retries: 30
+      delay: 10
+      until: openshift_post_install_nmstate_current_csv.stdout | length > 0
+
+    - name: Wait for NMState operator CSV phase Succeeded
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_nmstate_remote_oc_path }}"
+          - get
+          - csv
+          - "{{ openshift_post_install_nmstate_current_csv.stdout }}"
+          - -n
+          - "{{ openshift_post_install_nmstate_namespace }}"
+          - -o
+          - jsonpath={.status.phase}
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+      register: openshift_post_install_nmstate_csv_phase
+      changed_when: false
+      retries: 30
+      delay: 10
+      until: openshift_post_install_nmstate_csv_phase.stdout == 'Succeeded'
+
+    - name: Wait for NMState CRD to exist
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_nmstate_remote_oc_path }}"
+          - api-resources
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+      register: openshift_post_install_nmstate_api_resources
+      changed_when: false
+      retries: 12
+      delay: 10
+      until: "'nmstates' in openshift_post_install_nmstate_api_resources.stdout"
+
+    - name: Apply NMState instance
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_nmstate_remote_oc_path }}"
+          - apply
+          - -f
+          - "{{ openshift_post_install_nmstate_remote_instance_path }}"
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+      changed_when: true
+
+    - name: Wait for NMState pods to become Ready
+      ansible.builtin.shell: |
+        set -o pipefail
+        "{{ openshift_post_install_nmstate_remote_oc_path }}" get pods \
+          -n "{{ openshift_post_install_nmstate_namespace }}" -o json \
+        | jq -r '
+            [
+              .items[]
+              | select(
+                  (
+                    .status.containerStatuses // []
+                    | map(select(.ready == true))
+                    | length
+                  ) !=
+                  (
+                    .spec.containers // []
+                    | length
+                  )
+                )
+            ] | length
+          '
+      args:
+        executable: /bin/bash
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+      register: openshift_post_install_nmstate_not_ready_count
+      changed_when: false
+      retries: 30
+      delay: 10
+      until: openshift_post_install_nmstate_not_ready_count.stdout == '0'
+
+    - name: Wait for NMState webhook service endpoints to become Ready
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_nmstate_remote_oc_path }}"
+          - get
+          - endpoints
+          - nmstate-webhook
+          - -n
+          - "{{ openshift_post_install_nmstate_namespace }}"
+          - -o
+          - jsonpath={.subsets[0].addresses[0].ip}
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+      register: openshift_post_install_nmstate_webhook_endpoint
+      changed_when: false
+      retries: 30
+      delay: 10
+      until: openshift_post_install_nmstate_webhook_endpoint.stdout | length > 0
+
+    - name: Apply NodeNetworkConfigurationPolicy manifests
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_nmstate_remote_oc_path }}"
+          - apply
+          - -f
+          - "{{ openshift_post_install_nmstate_remote_dir }}/{{ item.name }}.yaml"
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+      changed_when: true
+      loop: "{{ openshift_post_install_nmstate_nncp_definitions }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Wait for NodeNetworkConfigurationPolicies to become Available
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_nmstate_remote_oc_path }}"
+          - get
+          - nncp
+          - "{{ item.name }}"
+          - -o
+          - jsonpath={.status.conditions[?(@.type=="Available")].status}
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+      register: openshift_post_install_nmstate_nncp_available
+      changed_when: false
+      retries: 30
+      delay: 10
+      until: openshift_post_install_nmstate_nncp_available.stdout == 'True'
+      loop: "{{ openshift_post_install_nmstate_nncp_definitions }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+- name: Publish NMState reuse decision
+  ansible.builtin.debug:
+    msg: >-
+      Reusing existing NMState configuration:
+      {{ openshift_post_install_nmstate_reuse_existing }}

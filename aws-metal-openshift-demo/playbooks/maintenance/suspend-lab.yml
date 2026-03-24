@@ -1,0 +1,15 @@
+---
+- name: Gracefully suspend the OpenShift lab and power off the hypervisor
+  hosts: aws_metal
+  become: true
+  gather_facts: true
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/mirror_content.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/mirror_registry_vm.yml
+    - ../../vars/guests/bastion_vm.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/guests/openshift_cluster_vm.yml
+  roles:
+    - role: lab_suspend

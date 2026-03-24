@@ -1,0 +1,32 @@
+apiVersion: remediation.medik8s.io/v1alpha1
+kind: NodeHealthCheck
+metadata:
+  name: {{ openshift_post_install_virtualization_nhc_instance_name }}
+  namespace: {{ openshift_post_install_virtualization_ha_namespace }}
+spec:
+  minHealthy: "{{ openshift_post_install_virtualization_nhc_min_healthy }}"
+{% if openshift_post_install_virtualization_far_template_enabled %}
+  remediationTemplate:
+    apiVersion: fence-agents-remediation.medik8s.io/v1alpha1
+    kind: FenceAgentsRemediationTemplate
+    name: {{ openshift_post_install_virtualization_far_template_name }}
+    namespace: {{ openshift_post_install_virtualization_far_template_namespace }}
+{% endif %}
+  selector:
+    matchExpressions:
+{% for expression in openshift_post_install_virtualization_nhc_selector.match_expressions %}
+      - key: {{ expression.key }}
+        operator: {{ expression.operator }}
+{% if expression.values is defined and expression.values | length > 0 %}
+        values:
+{% for value in expression.values %}
+          - {{ value }}
+{% endfor %}
+{% endif %}
+{% endfor %}
+  unhealthyConditions:
+{% for condition in openshift_post_install_virtualization_nhc_unhealthy_conditions %}
+    - type: {{ condition.type }}
+      status: "{{ condition.status }}"
+      duration: "{{ condition.duration }}"
+{% endfor %}

@@ -1,0 +1,197 @@
+---
+- name: Prepare an AWS metal host for an OpenShift disconnected lab
+  hosts: all
+  become: true
+  gather_facts: true
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/host_resource_management.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/rhsm.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../cloudformation/virt-01-volume-inventory.yml
+
+  vars:
+    lab_bridge_name: lab-switch
+    lab_switch_name: lab-switch
+    lab_switch_xml_path: /etc/libvirt/lab-switch.xml
+    lab_domain: workshop.lan
+    lab_uplink_interface: "{{ ansible_default_ipv4.interface }}"
+    lab_fast_datapath_repo: fast-datapath-for-rhel-10-x86_64-rpms
+    lab_baseos_repo: rhel-10-for-x86_64-baseos-rpms
+    lab_appstream_repo: rhel-10-for-x86_64-appstream-rpms
+    lab_codeready_repo: codeready-builder-for-rhel-10-x86_64-rpms
+    lab_ovs_package: openvswitch3.6
+    lab_service_units:
+      - NetworkManager.service
+      - openvswitch.service
+      - osbuild-composer.socket
+      - osbuild-composer.service
+      - pmcd.service
+      - pmlogger.service
+      - pmproxy.service
+      - virtqemud.service
+      - virtnetworkd.service
+      - virtnodedevd.service
+      - virtnwfilterd.service
+      - virtsecretd.service
+      - virtstoraged.service
+      - virtinterfaced.service
+      - virtqemud.socket
+      - virtnetworkd.socket
+      - virtnodedevd.socket
+      - virtnwfilterd.socket
+      - virtsecretd.socket
+      - virtstoraged.socket
+      - virtinterfaced.socket
+      - firewalld.service
+    lab_routed_ports: >-
+      {{ lab_switch_ports | dict2items
+      | selectattr('value.routable', 'equalto', true)
+      | list }}
+    lab_packages:
+      - NetworkManager
+      - "{{ lab_ovs_package }}"
+      - cockpit
+      - cockpit-files
+      - cockpit-image-builder
+      - cockpit-machines
+      - cockpit-podman
+      - cockpit-session-recording
+      - pcp
+      - pcp-system-tools
+      - libvirt
+      - qemu-kvm
+      - virt-install
+      - guestfs-tools
+      - virt-top
+      - firewalld
+    lab_expected_total_disks: "{{ (guest_volumes | length) + 1 }}"
+  pre_tasks:
+    - name: Discover the current virt-01 instance ID from AWS
+      ansible.builtin.command:
+        argv:
+          - aws
+          - ec2
+          - describe-instances
+          - --filters
+          - "Name=tag:Name,Values={{ virt_host.name }}"
+          - "Name=private-ip-address,Values={{ ansible_default_ipv4.address }}"
+          - "Name=instance-state-name,Values=running"
+          - --query
+          - "Reservations[0].Instances[0].InstanceId"
+          - --output
+          - text
+      register: lab_current_instance_id
+      delegate_to: localhost
+      become: false
+      changed_when: false
+
+    - name: Discover the current attached guest EBS volumes from AWS
+      ansible.builtin.command:
+        argv:
+          - aws
+          - ec2
+          - describe-volumes
+          - --filters
+          - "Name=attachment.instance-id,Values={{ lab_current_instance_id.stdout }}"
+          - --query
+          - "Volumes[?Tags[?Key==`GuestDisk`]].{volume_id:VolumeId,aws_device_name:Attachments[0].Device,name:Tags[?Key==`GuestDisk`]|[0].Value,purpose:Tags[?Key==`Purpose`]|[0].Value,size_gib:Size,volume_type:VolumeType,iops:Iops,throughput_mbps:Throughput}"
+          - --output
+          - json
+      register: lab_current_guest_volumes
+      delegate_to: localhost
+      become: false
+      changed_when: false
+
+    - name: Use the live AWS guest volume mapping for bootstrap
+      ansible.builtin.set_fact:
+        lab_active_guest_volumes: "{{ lab_current_guest_volumes.stdout | from_json }}"
+
+    - name: Wait for the full guest EBS disk set to appear on the hypervisor
+      ansible.builtin.command:
+        argv:
+          - bash
+          - -lc
+          - "lsblk -dn -o TYPE | awk '$1==\"disk\"{count++} END{print count+0}'"
+      register: lab_detected_disk_count
+      changed_when: false
+      retries: 60
+      delay: 10
+      until: (lab_detected_disk_count.stdout | int) >= (lab_expected_total_disks | int)
+  roles:
+    - role: lab_host_base
+    - role: lab_host_resource_management
+    - role: lab_switch
+    - role: lab_firewall
+    - role: lab_libvirt
+  post_tasks:
+    - name: Check whether the local guest base image is available on the operator host
+      ansible.builtin.stat:
+        path: "{{ lab_execution_guest_base_image_file }}"
+      delegate_to: localhost
+      become: false
+      register: lab_execution_guest_base_image_local_stat
+
+    - name: Ensure the hypervisor guest image directory exists
+      ansible.builtin.file:
+        path: "{{ lab_execution_hypervisor_guest_image_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Check whether the guest base image is already present on the hypervisor
+      ansible.builtin.stat:
+        path: >-
+          {{ lab_execution_hypervisor_guest_image_dir }}/{{
+          lab_execution_guest_base_image_file | basename }}
+      register: lab_execution_guest_base_image_remote_stat
+
+    - name: Stage the local guest base image onto the hypervisor when available
+      ansible.builtin.copy:
+        src: "{{ lab_execution_guest_base_image_file }}"
+        dest: >-
+          {{ lab_execution_hypervisor_guest_image_dir }}/{{
+          lab_execution_guest_base_image_file | basename }}
+        owner: root
+        group: root
+        mode: "0644"
+      when:
+        - lab_execution_guest_base_image_local_stat.stat.exists
+        - not lab_execution_guest_base_image_remote_stat.stat.exists
+
+    - name: Download the guest base image directly to the hypervisor when a signed URL is provided
+      ansible.builtin.get_url:
+        url: "{{ lab_execution_guest_base_image_url }}"
+        dest: >-
+          {{ lab_execution_hypervisor_guest_image_dir }}/{{
+          lab_execution_guest_base_image_file | basename }}
+        owner: root
+        group: root
+        mode: "0644"
+        timeout: 3600
+      when:
+        - not lab_execution_guest_base_image_local_stat.stat.exists
+        - not lab_execution_guest_base_image_remote_stat.stat.exists
+        - lab_execution_guest_base_image_url | default('') | length > 0
+      no_log: true
+
+    - name: Recheck whether the guest base image is present on the hypervisor after staging
+      ansible.builtin.stat:
+        path: >-
+          {{ lab_execution_hypervisor_guest_image_dir }}/{{
+          lab_execution_guest_base_image_file | basename }}
+      register: lab_execution_guest_base_image_ready_stat
+
+    - name: Fail when the guest base image is unavailable for support VM builds
+      ansible.builtin.assert:
+        that:
+          - lab_execution_guest_base_image_ready_stat.stat.exists
+        fail_msg: >-
+          Guest base image {{
+          lab_execution_hypervisor_guest_image_dir }}/{{ lab_execution_guest_base_image_file
+          | basename }} is not present on the hypervisor, no local staging
+          file was found at {{ lab_execution_guest_base_image_file }}, and no
+          usable direct-download URL was supplied in
+          lab_execution_guest_base_image_url.

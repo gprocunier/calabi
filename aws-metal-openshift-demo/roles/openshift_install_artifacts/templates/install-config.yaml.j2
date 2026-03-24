@@ -1,0 +1,41 @@
+apiVersion: v1
+baseDomain: {{ openshift_install_cluster.base_domain }}
+metadata:
+  name: {{ openshift_install_artifacts.install_config.metadata_name }}
+capabilities:
+  baselineCapabilitySet: {{ openshift_install_artifacts.install_config.capabilities.baseline_capability_set }}
+  additionalEnabledCapabilities:
+{% for capability in openshift_install_artifacts.install_config.capabilities.additional_enabled_capabilities %}
+    - {{ capability }}
+{% endfor %}
+compute:
+  - name: worker
+    replicas: {{ openshift_install_artifacts.install_config.compute_replicas }}
+controlPlane:
+  name: master
+  replicas: {{ openshift_install_artifacts.install_config.control_plane_replicas }}
+networking:
+  networkType: {{ openshift_install_artifacts.install_config.network_type }}
+  machineNetwork:
+    - cidr: {{ openshift_install_cluster.network.machine_cidr }}
+  clusterNetwork:
+{% for entry in openshift_install_artifacts.install_config.cluster_network %}
+    - cidr: {{ entry.cidr }}
+      hostPrefix: {{ entry.host_prefix }}
+{% endfor %}
+  serviceNetwork:
+{% for cidr in openshift_install_artifacts.install_config.service_network %}
+    - {{ cidr }}
+{% endfor %}
+platform:
+  baremetal:
+    apiVIPs:
+      - {{ openshift_install_cluster.network.api_vip }}
+    ingressVIPs:
+      - {{ openshift_install_cluster.network.ingress_vip }}
+pullSecret: >-
+  {{ openshift_install_artifacts_pull_secret_raw.content | b64decode | trim }}
+sshKey: >-
+  {{ openshift_install_artifacts_ssh_public_key_raw.content | b64decode | trim }}
+additionalTrustBundle: |
+{{ openshift_install_artifacts_idm_ca_bundle_raw.content | b64decode | indent(2, true) }}

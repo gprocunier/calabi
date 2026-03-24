@@ -1,0 +1,13 @@
+---
+lab_suspend_remote_dir: /var/tmp/openshift-lab-suspend
+lab_suspend_remote_oc_path: /var/tmp/openshift-lab-suspend/oc
+lab_suspend_remote_kubeconfig_path: /var/tmp/openshift-lab-suspend/kubeconfig
+
+lab_suspend_shutdown_timeout_seconds: 900
+lab_suspend_shutdown_poll_seconds: 10
+lab_suspend_host_poweroff_delay_seconds: 5
+
+lab_suspend_support_vm_shutdown_order:
+  - bastion
+  - mirror_registry
+  - idm

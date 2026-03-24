@@ -1,0 +1,70 @@
+apiVersion: v1alpha1
+kind: AgentConfig
+rendezvousIP: {{ openshift_install_artifacts.agent_config.rendezvous_ip }}
+hosts:
+{% for node in openshift_install_cluster.nodes %}
+{% set vm_node = (openshift_cluster_nodes | selectattr('name', 'equalto', node.name) | first) %}
+  - hostname: {{ node.name }}
+    role: {{ 'master' if node.role == 'control-plane' else 'worker' }}
+    interfaces:
+      - name: {{ openshift_install_artifacts.agent_config.primary_interface_name }}
+        macAddress: "{{ node.mac_address }}"
+    rootDeviceHints:
+{% set default_root_device_hints = {'serialNumber': vm_node.disks.root.serial} %}
+{% set root_device_hints = node.root_device_hints | default(default_root_device_hints) | default(openshift_install_artifacts.agent_config.root_device_hints) %}
+{% for hint_key, hint_value in root_device_hints.items() %}
+      {{ hint_key }}: {{ hint_value | to_json }}
+{% endfor %}
+    networkConfig:
+      interfaces:
+        - name: {{ openshift_install_artifacts.agent_config.primary_interface_name }}
+          identifier: mac-address
+          type: ethernet
+          state: up
+          mac-address: "{{ node.mac_address }}"
+          ipv4:
+            enabled: false
+            dhcp: false
+          ipv6:
+            enabled: false
+        - name: {{ openshift_install_artifacts.agent_config.primary_interface_name }}.{{ openshift_install_cluster.network.machine_vlan_id }}
+          type: vlan
+          state: up
+          vlan:
+            base-iface: {{ openshift_install_artifacts.agent_config.primary_interface_name }}
+            id: {{ openshift_install_cluster.network.machine_vlan_id }}
+          ipv4:
+            enabled: true
+            dhcp: false
+            address:
+              - ip: {{ node.machine_network.ipv4_address }}
+                prefix-length: {{ node.machine_network.prefix_length }}
+          ipv6:
+            enabled: false
+        - name: {{ openshift_install_artifacts.agent_config.primary_interface_name }}.{{ openshift_install_cluster.network.storage_vlan_id }}
+          type: vlan
+          state: up
+          vlan:
+            base-iface: {{ openshift_install_artifacts.agent_config.primary_interface_name }}
+            id: {{ openshift_install_cluster.network.storage_vlan_id }}
+          ipv4:
+            enabled: true
+            dhcp: false
+            address:
+              - ip: {{ node.storage_network.ipv4_address }}
+                prefix-length: {{ node.storage_network.prefix_length }}
+          ipv6:
+            enabled: false
+      dns-resolver:
+        config:
+          server:
+{% for server in openshift_install_cluster.network.machine_dns_servers %}
+            - {{ server }}
+{% endfor %}
+      routes:
+        config:
+          - destination: 0.0.0.0/0
+            next-hop-address: {{ openshift_install_cluster.network.machine_gateway }}
+            next-hop-interface: {{ openshift_install_artifacts.agent_config.primary_interface_name }}.{{ openshift_install_cluster.network.machine_vlan_id }}
+            table-id: 254
+{% endfor %}

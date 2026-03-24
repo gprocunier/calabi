@@ -1,0 +1,47 @@
+---
+- name: Stage the project and lab execution inputs onto the bastion
+  hosts: aws_metal
+  become: false
+  gather_facts: false
+  vars_files:
+    - ../../vars/guests/bastion_vm.yml
+    - ../../vars/global/execution_environment.yml
+
+  pre_tasks:
+    - name: Register the bastion host as a temporary Ansible host
+      ansible.builtin.add_host:
+        name: bastion_stage_target
+        groups:
+          - openshift_bastion
+        ansible_host: "{{ bastion_vm.network.ipv4_address }}"
+        ansible_user: "{{ bastion_vm.access.admin_user }}"
+        ansible_ssh_private_key_file: >-
+          {{ bastion_client.controller_ssh_private_key_file }}
+        ansible_ssh_common_args: >-
+          -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null
+          -o ProxyCommand="ssh
+          -i {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+          -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null
+          {{ hostvars[inventory_hostname].ansible_user }}@{{
+          hostvars[inventory_hostname].ansible_host }}
+          -W %h:%p"
+
+    - name: Wait for the bastion guest to accept SSH connections
+      ansible.builtin.wait_for:
+        host: "{{ bastion_vm.network.ipv4_address }}"
+        port: 22
+        timeout: 900
+        sleep: 10
+
+- name: Prepare the bastion as the lab execution host
+  hosts: openshift_bastion
+  become: true
+  gather_facts: true
+  vars_files:
+    - ../../vars/guests/bastion_vm.yml
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/mirror_content.yml
+  roles:
+    - role: bastion_stage

@@ -1,0 +1,10 @@
+---
+- name: Convert designated worker nodes into infra nodes
+  hosts: aws_metal
+  gather_facts: true
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/mirror_content.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+  roles:
+    - role: openshift_post_install_infra

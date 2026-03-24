@@ -1,0 +1,66 @@
+# Calabi
+
+> Ansible-driven disconnected OpenShift 4 lab on one bare-metal host
+
+Calabi deploys a full 9-node OpenShift cluster (3 control-plane, 3 infra,
+3 worker) on a single AWS m5.metal instance using nested KVM, Open vSwitch
+VLAN segmentation, and a fully disconnected content workflow.  Everything is
+automated with Ansible and runs on one RHEL hypervisor.
+
+The name references a Calabi-Yau manifold -- a play on folded dimensions and
+the idea of folding a datacenter into one system.
+
+## What it does
+
+- Provisions AWS bare-metal infrastructure via CloudFormation
+- Bootstraps a RHEL KVM/libvirt/OVS hypervisor with firewalld and PCP
+- Builds support guests: FreeIPA (IdM), bastion, mirror-registry
+- Mirrors disconnected OpenShift content for air-gapped install
+- Performs an agent-based OpenShift install with direct boot-media control
+- Applies day-2 operators: ODF/Ceph storage, OpenShift Virtualization,
+  Pipelines, Network Observability, Ansible Automation Platform
+- Manages host CPU resources with Gold/Silver/Bronze cgroup performance
+  domains and libvirt vCPU pinning
+
+## Architecture
+
+Single m5.metal host (96 vCPU, 384 GiB) running RHEL 10.1:
+
+- OVS bridge with 7 VLANs: management, machine network, storage, live
+  migration, two guest-data segments, and an isolated L2 segment
+- 12 nested VMs: 9 OpenShift nodes + IdM + bastion + mirror-registry
+- Host CPU split: 24 logical CPUs reserved for host/emulator, 72 logical
+  CPUs in the guest execution pool
+- Guest tiers: Gold (masters, weight 512), Silver (infra, weight 333),
+  Bronze (workers + support, weight 167)
+
+## Validated baseline
+
+- OpenShift 4.20.15
+- 3 masters: 8 vCPU / 24 GiB
+- 3 infra: 16 vCPU / 48 GiB
+- 3 workers: 4 vCPU / 16 GiB (8 vCPU uplift supported)
+
+## Key technologies
+
+Ansible, KVM, libvirt, Open vSwitch, VLAN, CloudFormation, RHEL, FreeIPA,
+systemd cgroups v2, OpenShift agent-based installer, ODF/Ceph, Cockpit, PCP
+
+## Documentation
+
+- [Lab README](aws-metal-openshift-demo/README.md): implementation entry point
+- [Docs Map](aws-metal-openshift-demo/docs/README.md): guided navigation
+- [Prerequisites](aws-metal-openshift-demo/docs/prerequisites.md): what you need before building
+- [Automation Flow](aws-metal-openshift-demo/docs/automation-flow.md): 17-step deployment sequence
+- [Network Topology](aws-metal-openshift-demo/docs/network-topology.md): VLAN design and routing
+- [Resource Management](aws-metal-openshift-demo/docs/host-resource-management.md): CPU domains and sizing
+- [IaaS Model](aws-metal-openshift-demo/docs/iaas-resource-model.md): AWS resource design and cost
+- [Cluster Matrix](aws-metal-openshift-demo/docs/openshift-cluster-matrix.md): node identities and sizing
+- [Orchestration Guide](aws-metal-openshift-demo/docs/orchestration-guide.md): playbook and role map
+- [Manual Process](aws-metal-openshift-demo/docs/manual-process.md): step-by-step without automation
+
+## Source
+
+- Repository: https://github.com/gprocunier/calabi
+- License: GPL-3.0
+- Author: Greg Procunier

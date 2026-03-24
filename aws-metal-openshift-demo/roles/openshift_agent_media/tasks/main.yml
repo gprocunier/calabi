@@ -1,0 +1,280 @@
+---
+- name: Derive agent media paths
+  ansible.builtin.set_fact:
+    openshift_agent_media_hypervisor_host: "{{ groups['aws_metal'] | first }}"
+    openshift_agent_media_render_dir: "{{ openshift_agent_media.output_dir }}"
+    openshift_agent_media_attachment_plan_path: >-
+      {{ openshift_agent_media.attachment_plan_file }}
+    openshift_agent_media_binary_dir: >-
+      {{ openshift_agent_media.openshift_install_binary | dirname }}
+    openshift_agent_media_boot_artifact_path: >-
+      {{
+        openshift_agent_media.output_dir ~ '/'
+        ~ openshift_agent_media.boot_artifact.filename
+      }}
+    openshift_agent_media_attachment_boot_path: >-
+      {{
+        openshift_agent_media.output_dir ~ '/'
+        ~ openshift_agent_media.boot_artifact.filename
+      }}
+
+- name: Validate rendered install artifacts exist
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ openshift_agent_media_render_dir }}/install-config.yaml"
+    - "{{ openshift_agent_media_render_dir }}/agent-config.yaml"
+  register: openshift_agent_media_required_artifacts
+
+- name: Assert install artifacts are present before boot media generation
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+    fail_msg: >-
+      Required install artifact {{ item.item }} is missing. Run
+      playbooks/cluster/openshift-install-artifacts.yml first.
+  loop: "{{ openshift_agent_media_required_artifacts.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Check for openshift-install binary
+  ansible.builtin.command:
+    argv:
+      - bash
+      - -lc
+      - "command -v {{ openshift_agent_media.openshift_install_binary }}"
+  register: openshift_agent_media_binary_check
+  changed_when: false
+
+- name: Assert openshift-install is available
+  ansible.builtin.assert:
+    that:
+      - openshift_agent_media_binary_check.rc == 0
+    fail_msg: >-
+      openshift-install was not found via {{
+      openshift_agent_media.openshift_install_binary }} on the control node.
+
+- name: Check whether the agent boot artifact already exists
+  ansible.builtin.stat:
+    path: "{{ openshift_agent_media_boot_artifact_path }}"
+  register: openshift_agent_media_existing_boot_artifact_stat
+
+- name: Generate agent boot media
+  ansible.builtin.command:
+    argv: >-
+      {{
+        [openshift_agent_media.openshift_install_binary]
+        + openshift_agent_media.create_image_subcommand
+        + ['--dir', openshift_agent_media_render_dir]
+      }}
+  environment:
+    PATH: >-
+      {{ openshift_agent_media_binary_dir }}:{{ lookup('env', 'PATH') }}
+  register: openshift_agent_media_create_image
+  changed_when: true
+  when: >-
+    openshift_agent_media.regenerate_boot_media | bool or
+    not openshift_agent_media_existing_boot_artifact_stat.stat.exists
+
+- name: Validate agent boot artifact was created
+  ansible.builtin.stat:
+    path: "{{ openshift_agent_media_boot_artifact_path }}"
+  register: openshift_agent_media_boot_artifact_stat
+
+- name: Assert agent boot artifact exists
+  ansible.builtin.assert:
+    that:
+      - openshift_agent_media_boot_artifact_stat.stat.exists
+    fail_msg: >-
+      Expected boot artifact was not created at {{
+      openshift_agent_media_boot_artifact_path }}.
+
+- name: Calculate the local checksum for the generated agent boot ISO
+  ansible.builtin.command:
+    argv:
+      - sha256sum
+      - "{{ openshift_agent_media_boot_artifact_path }}"
+  register: openshift_agent_media_local_checksum
+  changed_when: false
+
+- name: Store the local checksum value for the generated agent boot ISO
+  ansible.builtin.set_fact:
+    openshift_agent_media_local_checksum_value: >-
+      {{ openshift_agent_media_local_checksum.stdout.split()[0] }}
+
+- name: Ensure the hypervisor media directory exists
+  ansible.builtin.command:
+    argv:
+      - ssh
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - -i
+      - >-
+        {{
+          hostvars[openshift_agent_media_hypervisor_host]
+          .ansible_ssh_private_key_file
+        }}
+      - >-
+        {{ hostvars[openshift_agent_media_hypervisor_host].ansible_user }}@{{
+        hostvars[openshift_agent_media_hypervisor_host].ansible_host }}
+      - sudo
+      - mkdir
+      - -p
+      - "{{ openshift_agent_media.hypervisor_boot_media_path | dirname }}"
+  changed_when: false
+  when: openshift_agent_media.publish_to_hypervisor | bool
+
+- name: Remove any previous temporary agent boot ISO from the hypervisor
+  ansible.builtin.command:
+    argv:
+      - ssh
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - -i
+      - >-
+        {{
+          hostvars[openshift_agent_media_hypervisor_host]
+          .ansible_ssh_private_key_file
+        }}
+      - >-
+        {{ hostvars[openshift_agent_media_hypervisor_host].ansible_user }}@{{
+        hostvars[openshift_agent_media_hypervisor_host].ansible_host }}
+      - sudo
+      - rm
+      - -f
+      - "{{ openshift_agent_media.hypervisor_temp_path }}"
+  changed_when: false
+  when: openshift_agent_media.publish_to_hypervisor | bool
+
+- name: Upload the generated agent boot ISO to the hypervisor
+  ansible.builtin.command:
+    argv:
+      - scp
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - -i
+      - >-
+        {{
+          hostvars[openshift_agent_media_hypervisor_host]
+          .ansible_ssh_private_key_file
+        }}
+      - "{{ openshift_agent_media_boot_artifact_path }}"
+      - >-
+        {{ hostvars[openshift_agent_media_hypervisor_host].ansible_user }}@{{
+        hostvars[openshift_agent_media_hypervisor_host].ansible_host
+        }}:{{ openshift_agent_media.hypervisor_temp_path }}
+  changed_when: true
+  when: openshift_agent_media.publish_to_hypervisor | bool
+
+- name: Verify the uploaded temporary agent boot ISO checksum on the hypervisor
+  ansible.builtin.command:
+    argv:
+      - ssh
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - -i
+      - >-
+        {{
+          hostvars[openshift_agent_media_hypervisor_host]
+          .ansible_ssh_private_key_file
+        }}
+      - >-
+        {{ hostvars[openshift_agent_media_hypervisor_host].ansible_user }}@{{
+        hostvars[openshift_agent_media_hypervisor_host].ansible_host }}
+      - sha256sum
+      - "{{ openshift_agent_media.hypervisor_temp_path }}"
+  register: openshift_agent_media_hypervisor_temp_checksum
+  changed_when: false
+  when: openshift_agent_media.publish_to_hypervisor | bool
+
+- name: Assert the uploaded temporary agent boot ISO matches the control node copy
+  ansible.builtin.assert:
+    that:
+      - >-
+        openshift_agent_media_hypervisor_temp_checksum.stdout.split()[0]
+        == openshift_agent_media_local_checksum_value
+    fail_msg: >-
+      The uploaded temporary agent boot ISO on the hypervisor does not match
+      the control node artifact checksum.
+  when: openshift_agent_media.publish_to_hypervisor | bool
+
+- name: Install the uploaded agent boot ISO at the hypervisor attachment path
+  ansible.builtin.command:
+    argv:
+      - ssh
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - -i
+      - >-
+        {{
+          hostvars[openshift_agent_media_hypervisor_host]
+          .ansible_ssh_private_key_file
+        }}
+      - >-
+        {{ hostvars[openshift_agent_media_hypervisor_host].ansible_user }}@{{
+        hostvars[openshift_agent_media_hypervisor_host].ansible_host }}
+      - sudo
+      - install
+      - -m
+      - "0644"
+      - "{{ openshift_agent_media.hypervisor_temp_path }}"
+      - "{{ openshift_agent_media.hypervisor_boot_media_path }}"
+  changed_when: true
+  when: openshift_agent_media.publish_to_hypervisor | bool
+
+- name: Verify the installed agent boot ISO checksum on the hypervisor
+  ansible.builtin.command:
+    argv:
+      - ssh
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - -i
+      - >-
+        {{
+          hostvars[openshift_agent_media_hypervisor_host]
+          .ansible_ssh_private_key_file
+        }}
+      - >-
+        {{ hostvars[openshift_agent_media_hypervisor_host].ansible_user }}@{{
+        hostvars[openshift_agent_media_hypervisor_host].ansible_host }}
+      - sha256sum
+      - "{{ openshift_agent_media.hypervisor_boot_media_path }}"
+  register: openshift_agent_media_hypervisor_installed_checksum
+  changed_when: false
+  when: openshift_agent_media.publish_to_hypervisor | bool
+
+- name: Assert the installed agent boot ISO matches the control node copy
+  ansible.builtin.assert:
+    that:
+      - >-
+        openshift_agent_media_hypervisor_installed_checksum.stdout.split()[0]
+        == openshift_agent_media_local_checksum_value
+    fail_msg: >-
+      The installed agent boot ISO on the hypervisor does not match the
+      control node artifact checksum.
+  when: openshift_agent_media.publish_to_hypervisor | bool
+
+- name: Set the attachment path to the hypervisor-visible ISO location
+  ansible.builtin.set_fact:
+    openshift_agent_media_attachment_boot_path: >-
+      {{ openshift_agent_media.hypervisor_boot_media_path }}
+  when: openshift_agent_media.publish_to_hypervisor | bool
+
+- name: Render generated cluster node attachment plan
+  ansible.builtin.template:
+    src: openshift_cluster_attachment_plan.yml.j2
+    dest: "{{ openshift_agent_media_attachment_plan_path }}"
+    mode: "0644"
+  when: openshift_agent_media.update_cluster_attachment_plan | bool

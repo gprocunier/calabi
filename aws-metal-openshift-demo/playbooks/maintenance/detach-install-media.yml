@@ -1,0 +1,78 @@
+---
+- name: Detach support-guest cloud-init media and OpenShift agent media
+  hosts: aws_metal
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/mirror_content.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/bastion_vm.yml
+    - ../../vars/guests/mirror_registry_vm.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/guests/openshift_cluster_vm.yml
+    - ../../vars/cluster/openshift_agent_media.yml
+  tasks:
+    - name: Detach IDM cloud-init media
+      ansible.builtin.include_role:
+        name: libvirt_cdrom_cleanup
+      vars:
+        libvirt_cdrom_cleanup_domain: >-
+          {{ idm_vm.name }}.{{ idm_vm.domain }}
+        libvirt_cdrom_cleanup_media_path: >-
+          {{
+            idm_runtime_root
+            | default('/var/lib/aws-metal-openshift-demo')
+          }}/{{ idm_vm.name }}/{{ idm_vm.name }}-cidata.iso
+        libvirt_cdrom_cleanup_remove_media_file: true
+        libvirt_cdrom_cleanup_reset_boot_to_hd_only: true
+
+    - name: Detach bastion cloud-init media
+      ansible.builtin.include_role:
+        name: libvirt_cdrom_cleanup
+      vars:
+        libvirt_cdrom_cleanup_domain: >-
+          {{ bastion_vm.name }}.{{ bastion_vm.domain }}
+        libvirt_cdrom_cleanup_media_path: >-
+          /var/lib/aws-metal-openshift-demo/{{ bastion_vm.name }}/{{
+          bastion_vm.name }}-cidata.iso
+        libvirt_cdrom_cleanup_remove_media_file: true
+        libvirt_cdrom_cleanup_reset_boot_to_hd_only: true
+
+    - name: Detach mirror registry cloud-init media
+      ansible.builtin.include_role:
+        name: libvirt_cdrom_cleanup
+      vars:
+        libvirt_cdrom_cleanup_domain: >-
+          {{ mirror_registry_vm.name }}.{{ mirror_registry_vm.domain }}
+        libvirt_cdrom_cleanup_media_path: >-
+          {{
+            mirror_registry_runtime_root
+            | default('/var/lib/aws-metal-openshift-demo')
+          }}/{{ mirror_registry_vm.name }}/{{
+            mirror_registry_vm.name
+          }}-cidata.iso
+        libvirt_cdrom_cleanup_remove_media_file: true
+        libvirt_cdrom_cleanup_reset_boot_to_hd_only: true
+
+    - name: Detach OpenShift agent media and restore disk boot order
+      ansible.builtin.include_role:
+        name: libvirt_cdrom_cleanup
+      vars:
+        libvirt_cdrom_cleanup_domain: >-
+          {{
+            openshift_cluster_node.fqdn
+            | default(
+              openshift_cluster_node.name
+              ~ '.'
+              ~ openshift_install_cluster.full_domain
+            )
+          }}
+        libvirt_cdrom_cleanup_media_path: >-
+          {{ openshift_agent_media.hypervisor_boot_media_path }}
+        libvirt_cdrom_cleanup_reset_boot_to_hd_only: true
+        libvirt_cdrom_cleanup_remove_device: false
+      loop: "{{ openshift_install_cluster.nodes }}"
+      loop_control:
+        loop_var: openshift_cluster_node
+        label: "{{ openshift_cluster_node.name }}"

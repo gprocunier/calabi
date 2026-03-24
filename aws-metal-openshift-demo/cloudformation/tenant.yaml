@@ -1,0 +1,111 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Tenant substrate stack for the OpenShift nested-virtualization lab. Creates
+  the VPC, public subnet, internet gateway, public route table, and persistent
+  Elastic IP used later by the host-only virt-01 stack.
+
+Parameters:
+  LabPrefix:
+    Type: String
+    Default: workshop
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+    Description: Prefix used for AWS resource names and tags.
+
+  AvailabilityZone:
+    Type: AWS::EC2::AvailabilityZone::Name
+    Default: us-east-2a
+    Description: Availability Zone used for the tenant subnet.
+
+  VpcCidr:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: CIDR block for the lab VPC.
+
+  PublicSubnetCidr:
+    Type: String
+    Default: 10.0.0.0/20
+    Description: CIDR block for the public subnet that hosts virt-01.
+
+Resources:
+  LabVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${LabPrefix}-vpc'
+
+  LabInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${LabPrefix}-igw'
+
+  LabVpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref LabInternetGateway
+      VpcId: !Ref LabVpc
+
+  LabPublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref LabVpc
+      AvailabilityZone: !Ref AvailabilityZone
+      CidrBlock: !Ref PublicSubnetCidr
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${LabPrefix}-subnet-public1-${AvailabilityZone}'
+
+  LabPublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref LabVpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${LabPrefix}-rtb-public'
+
+  LabDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: LabVpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref LabPublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref LabInternetGateway
+
+  LabPublicRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref LabPublicRouteTable
+      SubnetId: !Ref LabPublicSubnet
+
+  VirtHostElasticIp:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: virt-01
+        - Key: Role
+          Value: virt-host-eip
+
+Outputs:
+  VpcId:
+    Description: VPC ID created for the lab.
+    Value: !Ref LabVpc
+
+  PublicSubnetId:
+    Description: Public subnet ID intended for virt-01.
+    Value: !Ref LabPublicSubnet
+
+  ElasticIpAllocationId:
+    Description: Persistent Elastic IP allocation ID reserved for virt-01.
+    Value: !GetAtt VirtHostElasticIp.AllocationId
+
+  ElasticIpPublicIp:
+    Description: Persistent public IPv4 reserved for virt-01.
+    Value: !Ref VirtHostElasticIp

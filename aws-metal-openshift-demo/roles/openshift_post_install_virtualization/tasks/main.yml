@@ -1,0 +1,721 @@
+---
+- name: Derive post-install OpenShift Virtualization context
+  ansible.builtin.set_fact:
+    openshift_post_install_virtualization_oc_local_path: >-
+      {{ lab_execution_tools_root }}/{{
+      mirror_registry_ocp_release }}/bin/oc
+    openshift_post_install_virtualization_kubeconfig_local_path: >-
+      {{ lab_execution_ocp_generated_root }}/auth/kubeconfig
+    openshift_post_install_virtualization_remote_dir: >-
+      /var/tmp/openshift-post-install-virtualization
+    openshift_post_install_virtualization_remote_oc_path: >-
+      /var/tmp/openshift-post-install-virtualization/oc
+    openshift_post_install_virtualization_remote_kubeconfig_path: >-
+      /var/tmp/openshift-post-install-virtualization/kubeconfig
+    openshift_post_install_virtualization_remote_operatorgroup_path: >-
+      /var/tmp/openshift-post-install-virtualization/operatorgroup.yaml
+    openshift_post_install_virtualization_remote_subscription_path: >-
+      /var/tmp/openshift-post-install-virtualization/subscription.yaml
+    openshift_post_install_virtualization_remote_hco_path: >-
+      /var/tmp/openshift-post-install-virtualization/hyperconverged.yaml
+    openshift_post_install_virtualization_remote_ha_operatorgroup_path: >-
+      /var/tmp/openshift-post-install-virtualization/ha-operatorgroup.yaml
+    openshift_post_install_virtualization_remote_nhc_subscription_path: >-
+      /var/tmp/openshift-post-install-virtualization/nhc-subscription.yaml
+    openshift_post_install_virtualization_remote_far_subscription_path: >-
+      /var/tmp/openshift-post-install-virtualization/far-subscription.yaml
+    openshift_post_install_virtualization_remote_nhc_instance_path: >-
+      /var/tmp/openshift-post-install-virtualization/nodehealthcheck.yaml
+    openshift_post_install_virtualization_remote_far_template_path: >-
+      /var/tmp/openshift-post-install-virtualization/far-template.yaml
+
+- name: Assert local oc binary exists for OpenShift Virtualization
+  # orchestration
+  ansible.builtin.stat:
+    path: "{{ openshift_post_install_virtualization_oc_local_path }}"
+  delegate_to: localhost
+  become: false
+  register: openshift_post_install_virtualization_oc_local_stat
+
+- name: Assert generated kubeconfig exists for OpenShift
+  # Virtualization orchestration
+  ansible.builtin.stat:
+    path: "{{ openshift_post_install_virtualization_kubeconfig_local_path }}"
+  delegate_to: localhost
+  become: false
+  register: openshift_post_install_virtualization_kubeconfig_local_stat
+
+- name: Fail when required local OpenShift Virtualization artifacts are missing
+  ansible.builtin.assert:
+    that:
+      - openshift_post_install_virtualization_oc_local_stat.stat.exists
+      - openshift_post_install_virtualization_kubeconfig_local_stat.stat.exists
+    fail_msg: >-
+      OpenShift Virtualization orchestration requires a generated oc binary and
+      kubeconfig.
+
+- name: Create remote OpenShift Virtualization workspace
+  ansible.builtin.file:
+    path: "{{ openshift_post_install_virtualization_remote_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Copy pinned oc binary to hypervisor for OpenShift
+  # Virtualization orchestration
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_virtualization_oc_local_path }}"
+    dest: "{{ openshift_post_install_virtualization_remote_oc_path }}"
+    mode: "0755"
+
+- name: Copy generated kubeconfig to hypervisor for OpenShift
+  # Virtualization orchestration
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_virtualization_kubeconfig_local_path }}"
+    dest: "{{ openshift_post_install_virtualization_remote_kubeconfig_path }}"
+    mode: "0600"
+
+- name: Render OpenShift Virtualization operator group manifest
+  ansible.builtin.template:
+    src: operatorgroup.yaml.j2
+    dest: >-
+      {{ openshift_post_install_virtualization_remote_operatorgroup_path }}
+    mode: "0644"
+
+- name: Render OpenShift Virtualization subscription manifest
+  ansible.builtin.template:
+    src: subscription.yaml.j2
+    dest: "{{ openshift_post_install_virtualization_remote_subscription_path }}"
+    mode: "0644"
+
+- name: Render HyperConverged manifest
+  ansible.builtin.template:
+    src: hyperconverged.yaml.j2
+    dest: "{{ openshift_post_install_virtualization_remote_hco_path }}"
+    mode: "0644"
+
+- name: Render workload availability operator group manifest
+  ansible.builtin.template:
+    src: ha-operatorgroup.yaml.j2
+    dest: >-
+      {{
+      openshift_post_install_virtualization_remote_ha_operatorgroup_path
+      }}
+    mode: "0644"
+
+- name: Render Node Health Check subscription manifest
+  ansible.builtin.template:
+    src: nhc-subscription.yaml.j2
+    dest: >-
+      {{
+      openshift_post_install_virtualization_remote_nhc_subscription_path
+      }}
+    mode: "0644"
+
+- name: Render Fence Agents Remediation subscription manifest
+  ansible.builtin.template:
+    src: far-subscription.yaml.j2
+    dest: >-
+      {{
+      openshift_post_install_virtualization_remote_far_subscription_path
+      }}
+    mode: "0644"
+
+- name: Render Node Health Check instance manifest
+  ansible.builtin.template:
+    src: nodehealthcheck.yaml.j2
+    dest: >-
+      {{
+      openshift_post_install_virtualization_remote_nhc_instance_path
+      }}
+    mode: "0644"
+  when: openshift_post_install_virtualization_nhc_instance_enabled
+
+- name: Render Fence Agents Remediation template manifest
+  ansible.builtin.template:
+    src: far-template.yaml.j2
+    dest: >-
+      {{
+      openshift_post_install_virtualization_remote_far_template_path
+      }}
+    mode: "0644"
+  when: openshift_post_install_virtualization_far_template_enabled
+
+- name: Ensure OpenShift Virtualization namespace exists
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_virtualization_remote_oc_path }}" \
+      create namespace \
+      "{{ openshift_post_install_virtualization_namespace }}" \
+      --dry-run=client -o yaml \
+    | "{{ openshift_post_install_virtualization_remote_oc_path }}" apply -f -
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  changed_when: true
+
+- name: Ensure workload availability namespace exists
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_virtualization_remote_oc_path }}" \
+      create namespace \
+      "{{ openshift_post_install_virtualization_ha_namespace }}" \
+      --dry-run=client -o yaml \
+    | "{{ openshift_post_install_virtualization_remote_oc_path }}" apply -f -
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  changed_when: true
+
+- name: Apply OpenShift Virtualization operator group
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_virtualization_remote_operatorgroup_path }}"
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  register: openshift_post_install_virtualization_operatorgroup_apply
+  changed_when: >-
+    'created' in
+    openshift_post_install_virtualization_operatorgroup_apply.stdout
+    or 'configured' in
+    openshift_post_install_virtualization_operatorgroup_apply.stdout
+
+- name: Apply OpenShift Virtualization subscription
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_virtualization_remote_subscription_path }}"
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  register: openshift_post_install_virtualization_subscription_apply
+  changed_when: >-
+    'created' in openshift_post_install_virtualization_subscription_apply.stdout
+    or 'configured' in
+    openshift_post_install_virtualization_subscription_apply.stdout
+
+- name: Wait for OpenShift Virtualization operator CSV to be selected
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_virtualization_remote_oc_path }}" \
+      get subscription \
+      "{{ openshift_post_install_virtualization_subscription_name }}" \
+      -n "{{ openshift_post_install_virtualization_namespace }}" \
+      -o jsonpath='{.status.currentCSV}' | tr -d '\n'
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  register: openshift_post_install_virtualization_current_csv
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_virtualization_current_csv.stdout | length > 0
+
+- name: Wait for OpenShift Virtualization operator CSV phase
+  # Succeeded
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - get
+      - csv
+      - "{{ openshift_post_install_virtualization_current_csv.stdout }}"
+      - -n
+      - "{{ openshift_post_install_virtualization_namespace }}"
+      - -o
+      - jsonpath={.status.phase}
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  register: openshift_post_install_virtualization_csv_phase
+  changed_when: false
+  retries: 60
+  delay: 10
+  until: openshift_post_install_virtualization_csv_phase.stdout == 'Succeeded'
+
+- name: Apply HyperConverged instance
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_virtualization_remote_hco_path }}"
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  changed_when: true
+
+- name: Wait for the default virtualization storage class to exist
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - get
+      - storageclass
+      - "{{ openshift_post_install_virtualization_default_storage_class }}"
+      - -o
+      - name
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  register: openshift_post_install_virtualization_default_sc
+  changed_when: false
+  failed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_virtualization_default_sc.rc == 0
+
+- name: Mark ODF RBD virtualization class as default virt storage class
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - annotate
+      - storageclass
+      - "{{ openshift_post_install_virtualization_default_storage_class }}"
+      - storageclass.kubevirt.io/is-default-virt-class=true
+      - --overwrite
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  changed_when: true
+  when: openshift_post_install_virtualization_default_sc.rc == 0
+
+- name: Apply workload availability operator group
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - apply
+      - -f
+      - >-
+        {{
+        openshift_post_install_virtualization_remote_ha_operatorgroup_path
+        }}
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  register: openshift_post_install_virtualization_ha_operatorgroup_apply
+  changed_when: >-
+    'created' in
+    openshift_post_install_virtualization_ha_operatorgroup_apply.stdout
+    or 'configured' in
+    openshift_post_install_virtualization_ha_operatorgroup_apply.stdout
+  notify:
+    - Reset workload availability CSVs
+    - Reset workload availability install plans
+
+- name: Read Node Health Check subscription status
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_virtualization_remote_oc_path }}" \
+      get subscription \
+      "{{ openshift_post_install_virtualization_nhc_subscription_name }}" \
+      -n "{{ openshift_post_install_virtualization_ha_namespace }}" \
+      -o \
+      jsonpath='{.status.state}{" "}{.status.installPlanRef.name}' \
+      2>/dev/null
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  register: openshift_post_install_virtualization_nhc_subscription_status
+  changed_when: false
+  failed_when: false
+
+- name: Read Fence Agents Remediation subscription status
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_virtualization_remote_oc_path }}" \
+      get subscription \
+      "{{ openshift_post_install_virtualization_far_subscription_name }}" \
+      -n "{{ openshift_post_install_virtualization_ha_namespace }}" \
+      -o \
+      jsonpath='{.status.state}{" "}{.status.installPlanRef.name}' \
+      2>/dev/null
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  register: openshift_post_install_virtualization_far_subscription_status
+  changed_when: false
+  failed_when: false
+
+- name: Check referenced Node Health Check install plan
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - get
+      - installplan
+      - >-
+        {{
+        openshift_post_install_virtualization_nhc_subscription_status.stdout.split()[1]
+        }}
+      - -n
+      - "{{ openshift_post_install_virtualization_ha_namespace }}"
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  register: openshift_post_install_virtualization_nhc_installplan_check
+  changed_when: false
+  failed_when: false
+  when:
+    - >-
+      openshift_post_install_virtualization_nhc_subscription_status.stdout
+      | length > 0
+    - >-
+      (
+        openshift_post_install_virtualization_nhc_subscription_status.stdout
+        .split()
+      ) | length > 1
+    - >-
+      openshift_post_install_virtualization_nhc_subscription_status.stdout.split()[0]
+      == 'UpgradePending'
+
+- name: Check referenced Fence Agents Remediation install plan
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - get
+      - installplan
+      - >-
+        {{
+        openshift_post_install_virtualization_far_subscription_status.stdout.split()[1]
+        }}
+      - -n
+      - "{{ openshift_post_install_virtualization_ha_namespace }}"
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  register: openshift_post_install_virtualization_far_installplan_check
+  changed_when: false
+  failed_when: false
+  when:
+    - >-
+      openshift_post_install_virtualization_far_subscription_status.stdout
+      | length > 0
+    - >-
+      (
+        openshift_post_install_virtualization_far_subscription_status.stdout
+        .split()
+      ) | length > 1
+    - >-
+      openshift_post_install_virtualization_far_subscription_status.stdout.split()[0]
+      == 'UpgradePending'
+
+- name: Delete stale Node Health Check subscription
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - delete
+      - subscription
+      - "{{ openshift_post_install_virtualization_nhc_subscription_name }}"
+      - -n
+      - "{{ openshift_post_install_virtualization_ha_namespace }}"
+      - --ignore-not-found=true
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  changed_when: true
+  when:
+    - >-
+      openshift_post_install_virtualization_nhc_subscription_status.stdout
+      | length > 0
+    - >-
+      (
+        openshift_post_install_virtualization_nhc_subscription_status.stdout
+        .split()
+      ) | length > 1
+    - >-
+      openshift_post_install_virtualization_nhc_subscription_status.stdout.split()[0]
+      == 'UpgradePending'
+    - >-
+      openshift_post_install_virtualization_nhc_installplan_check.rc
+      | default(0) != 0
+
+- name: Delete stale Fence Agents Remediation subscription
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - delete
+      - subscription
+      - "{{ openshift_post_install_virtualization_far_subscription_name }}"
+      - -n
+      - "{{ openshift_post_install_virtualization_ha_namespace }}"
+      - --ignore-not-found=true
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  changed_when: true
+  when:
+    - >-
+      openshift_post_install_virtualization_far_subscription_status.stdout
+      | length > 0
+    - >-
+      (
+        openshift_post_install_virtualization_far_subscription_status.stdout
+        .split()
+      ) | length > 1
+    - >-
+      openshift_post_install_virtualization_far_subscription_status.stdout.split()[0]
+      == 'UpgradePending'
+    - >-
+      openshift_post_install_virtualization_far_installplan_check.rc
+      | default(0) != 0
+
+- name: Flush workload availability OperatorGroup handlers
+  ansible.builtin.meta: flush_handlers
+
+- name: Apply Node Health Check Operator subscription
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - apply
+      - -f
+      - >-
+        {{
+        openshift_post_install_virtualization_remote_nhc_subscription_path
+        }}
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  register: openshift_post_install_virtualization_nhc_subscription_apply
+  changed_when: >-
+    'created' in
+    openshift_post_install_virtualization_nhc_subscription_apply.stdout
+    or 'configured' in
+    openshift_post_install_virtualization_nhc_subscription_apply.stdout
+
+- name: Apply Fence Agents Remediation Operator subscription
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - apply
+      - -f
+      - >-
+        {{
+        openshift_post_install_virtualization_remote_far_subscription_path
+        }}
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  register: openshift_post_install_virtualization_far_subscription_apply
+  changed_when: >-
+    'created' in
+    openshift_post_install_virtualization_far_subscription_apply.stdout
+    or 'configured' in
+    openshift_post_install_virtualization_far_subscription_apply.stdout
+
+- name: Wait for Node Health Check deployment to exist
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - get
+      - deployment
+      - "{{ openshift_post_install_virtualization_nhc_deployment_name }}"
+      - -n
+      - "{{ openshift_post_install_virtualization_ha_namespace }}"
+      - -o
+      - jsonpath={.metadata.name}
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  register: openshift_post_install_virtualization_nhc_deployment_name_check
+  changed_when: false
+  retries: 60
+  delay: 10
+  until: >-
+    openshift_post_install_virtualization_nhc_deployment_name_check.stdout
+    == openshift_post_install_virtualization_nhc_deployment_name
+
+- name: Wait for Node Health Check deployment to become available
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - get
+      - deployment
+      - "{{ openshift_post_install_virtualization_nhc_deployment_name }}"
+      - -n
+      - "{{ openshift_post_install_virtualization_ha_namespace }}"
+      - -o
+      - jsonpath={.status.conditions[?(@.type=="Available")].status}
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  register: openshift_post_install_virtualization_nhc_deployment_available
+  changed_when: false
+  retries: 60
+  delay: 10
+  until: >-
+    openshift_post_install_virtualization_nhc_deployment_available.stdout
+    == 'True'
+
+- name: Wait for Fence Agents Remediation deployment to exist
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - get
+      - deployment
+      - "{{ openshift_post_install_virtualization_far_deployment_name }}"
+      - -n
+      - "{{ openshift_post_install_virtualization_ha_namespace }}"
+      - -o
+      - jsonpath={.metadata.name}
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  register: openshift_post_install_virtualization_far_deployment_name_check
+  changed_when: false
+  retries: 60
+  delay: 10
+  until: >-
+    openshift_post_install_virtualization_far_deployment_name_check.stdout
+    == openshift_post_install_virtualization_far_deployment_name
+
+- name: Wait for Fence Agents Remediation deployment to become available
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - get
+      - deployment
+      - "{{ openshift_post_install_virtualization_far_deployment_name }}"
+      - -n
+      - "{{ openshift_post_install_virtualization_ha_namespace }}"
+      - -o
+      - jsonpath={.status.conditions[?(@.type=="Available")].status}
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  register: openshift_post_install_virtualization_far_deployment_available
+  changed_when: false
+  retries: 60
+  delay: 10
+  until: >-
+    openshift_post_install_virtualization_far_deployment_available.stdout
+    == 'True'
+
+- name: Apply Fence Agents Remediation template
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_virtualization_remote_far_template_path }}"
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  register: openshift_post_install_virtualization_far_template_apply
+  changed_when: >-
+    'created' in
+    openshift_post_install_virtualization_far_template_apply.stdout
+    or 'configured' in
+    openshift_post_install_virtualization_far_template_apply.stdout
+  when: openshift_post_install_virtualization_far_template_enabled
+
+- name: Apply Node Health Check instance
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_virtualization_remote_nhc_instance_path }}"
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  register: openshift_post_install_virtualization_nhc_instance_apply
+  changed_when: >-
+    'created' in
+    openshift_post_install_virtualization_nhc_instance_apply.stdout
+    or 'configured' in
+    openshift_post_install_virtualization_nhc_instance_apply.stdout
+  when: openshift_post_install_virtualization_nhc_instance_enabled
+
+- name: Wait for HyperConverged availability
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - get
+      - hyperconverged
+      - "{{ openshift_post_install_virtualization_hco_name }}"
+      - -n
+      - "{{ openshift_post_install_virtualization_namespace }}"
+      - -o
+      - jsonpath={.status.conditions[?(@.type=="Available")].status}
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  register: openshift_post_install_virtualization_hco_available
+  changed_when: false
+  retries: 60
+  delay: 15
+  until: openshift_post_install_virtualization_hco_available.stdout == 'True'
+
+- name: Discover the KubeVirt CR created by HyperConverged
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - get
+      - kubevirt
+      - -n
+      - "{{ openshift_post_install_virtualization_namespace }}"
+      - -o
+      - jsonpath={.items[0].metadata.name}
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  register: openshift_post_install_virtualization_kubevirt_name
+  changed_when: false
+  retries: 60
+  delay: 15
+  until: openshift_post_install_virtualization_kubevirt_name.stdout | length > 0
+
+- name: Wait for discovered KubeVirt CR availability
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - get
+      - kubevirt
+      - "{{ openshift_post_install_virtualization_kubevirt_name.stdout }}"
+      - -n
+      - "{{ openshift_post_install_virtualization_namespace }}"
+      - -o
+      - jsonpath={.status.conditions[?(@.type=="Available")].status}
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  register: openshift_post_install_virtualization_kubevirt_available
+  changed_when: false
+  retries: 60
+  delay: 15
+  until: >-
+    openshift_post_install_virtualization_kubevirt_available.stdout == 'True'
+
+- name: Wait for virt-handler daemonset to be ready
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - get
+      - daemonset
+      - virt-handler
+      - -n
+      - "{{ openshift_post_install_virtualization_namespace }}"
+      - -o
+      - jsonpath={.status.numberReady}
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  register: openshift_post_install_virtualization_virt_handler_ready
+  changed_when: false
+  retries: 60
+  delay: 15
+  until: >-
+    openshift_post_install_virtualization_virt_handler_ready.stdout | int >= 1

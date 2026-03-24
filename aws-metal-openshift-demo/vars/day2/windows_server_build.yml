@@ -1,0 +1,23 @@
+---
+openshift_windows_build_namespace: >-
+  {{ openshift_post_install_pipelines_namespace }}
+openshift_windows_build_pipeline_name: >-
+  {{ openshift_post_install_pipelines_pipeline_name }}
+openshift_windows_build_pipelinerun_name: windows2k22-efi-installer-run
+
+openshift_windows_build_iso_url: REPLACE_WITH_WINDOWS_SERVER_ISO_URL
+openshift_windows_build_accept_eula: true
+openshift_windows_build_autounattend_configmaps_url: >-
+  {{ openshift_post_install_pipelines_configmaps_url }}
+openshift_windows_build_autounattend_configmap_name: windows2k22-autounattend
+
+openshift_windows_build_instancetype_name: u1.large
+openshift_windows_build_instancetype_kind: VirtualMachineClusterInstancetype
+openshift_windows_build_preference_name: windows.2k22.virtio
+openshift_windows_build_preference_kind: VirtualMachineClusterPreference
+
+openshift_windows_build_virtio_containerdisk: >-
+  {{ openshift_post_install_pipelines_default_virtio_containerdisk }}
+openshift_windows_build_base_dv_name: win2k22
+openshift_windows_build_iso_dv_name: win2k22-install
+openshift_windows_build_use_bios_mode: false

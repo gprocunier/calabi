@@ -1,0 +1,121 @@
+---
+- name: Check whether the libvirt lab network exists
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - net-info
+      - "{{ lab_switch_name }}"
+  register: lab_cleanup_network_info
+  changed_when: false
+  failed_when: false
+
+- name: Stop the libvirt lab network
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - net-destroy
+      - "{{ lab_switch_name }}"
+  when: lab_cleanup_network_info.rc == 0
+  changed_when: true
+  failed_when: false
+
+- name: Disable libvirt lab network autostart
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - net-autostart
+      - "{{ lab_switch_name }}"
+      - --disable
+  when: lab_cleanup_network_info.rc == 0
+  changed_when: true
+  failed_when: false
+
+- name: Undefine the libvirt lab network
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - net-undefine
+      - "{{ lab_switch_name }}"
+  when: lab_cleanup_network_info.rc == 0
+  changed_when: true
+  failed_when: false
+
+- name: Stop the lab networking service
+  ansible.builtin.systemd_service:
+    name: aws-metal-openshift-demo-net.service
+    enabled: false
+    state: stopped
+  failed_when: false
+
+- name: Remove OVS bridge and lab switchports
+  ansible.builtin.command:
+    argv:
+      - ovs-vsctl
+      - --if-exists
+      - del-br
+      - "{{ lab_bridge_name }}"
+  changed_when: true
+  failed_when: false
+
+- name: Remove the lab firewalld zone
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --permanent
+      - --delete-zone=lab
+  register: lab_cleanup_delete_zone
+  changed_when: "'success' in lab_cleanup_delete_zone.stdout"
+  failed_when:
+    - lab_cleanup_delete_zone.rc != 0
+    - "'INVALID_ZONE' not in lab_cleanup_delete_zone.stderr"
+
+- name: Disable masquerade on the external zone
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --permanent
+      - --zone=external
+      - --remove-masquerade
+  register: lab_cleanup_remove_masquerade
+  changed_when: "'success' in lab_cleanup_remove_masquerade.stdout"
+  failed_when:
+    - lab_cleanup_remove_masquerade.rc != 0
+    - "'NOT_ENABLED' not in lab_cleanup_remove_masquerade.stderr"
+
+- name: Reload firewalld after removing lab networking policy
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --reload
+  when: >-
+    lab_cleanup_delete_zone.changed or
+    lab_cleanup_remove_masquerade.changed
+  changed_when: true
+
+- name: Disable IP forwarding at runtime
+  ansible.builtin.command:
+    argv:
+      - sysctl
+      - -w
+      - net.ipv4.ip_forward=0
+  changed_when: true
+
+- name: Remove the persistent lab sysctl configuration
+  ansible.builtin.file:
+    path: /etc/sysctl.d/90-aws-metal-openshift-demo.conf
+    state: absent
+
+- name: Remove lab networking artifacts
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/libvirt/lab-switch.xml
+    - /etc/systemd/system/aws-metal-openshift-demo-net.service
+    - /usr/local/sbin/aws-metal-openshift-demo-net.sh
+  when: lab_cleanup_remove_artifacts | bool
+
+- name: Reload systemd after removing the lab networking unit
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: lab_cleanup_remove_artifacts | bool

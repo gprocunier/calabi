@@ -1,0 +1,16 @@
+version: 2
+ethernets:
+  {{ mirror_registry_vm.network.interface_name }}:
+    match:
+      macaddress: "{{ mirror_registry_vm.network.mac_address }}"
+    set-name: {{ mirror_registry_vm.network.interface_name }}
+    addresses:
+      - {{ mirror_registry_role_vm_ip_cidr }}
+    routes:
+      - to: 0.0.0.0/0
+        via: {{ mirror_registry_vm.network.gateway }}
+    nameservers:
+      addresses:
+{% for dns_server in mirror_registry_vm.network.dns_servers %}
+        - {{ dns_server }}
+{% endfor %}

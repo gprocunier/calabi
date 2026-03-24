@@ -1,0 +1,27 @@
+---
+openshift_post_install_web_terminal_namespace: openshift-operators
+openshift_post_install_web_terminal_subscription_name: web-terminal
+openshift_post_install_web_terminal_package_name: web-terminal
+openshift_post_install_web_terminal_channel: fast
+openshift_post_install_web_terminal_source: cs-redhat-operator-index-v4-20
+openshift_post_install_web_terminal_source_namespace: openshift-marketplace
+openshift_post_install_web_terminal_customize_tooling: true
+openshift_post_install_web_terminal_tooling_build_strategy: mirror_registry
+openshift_post_install_web_terminal_tooling_imagestream_name: >-
+  web-terminal-tooling-custom
+openshift_post_install_web_terminal_tooling_base_image: >-
+  registry.redhat.io/web-terminal/web-terminal-tooling-rhel9@sha256:a107f3d0a1e0046a2a3c089d67b4d54f0b94048154dd2fbd5f8344506c9994cd
+openshift_post_install_web_terminal_tooling_tag: latest
+openshift_post_install_web_terminal_tooling_mirror_repo: >-
+  init/web-terminal-tooling-custom
+openshift_post_install_web_terminal_recreate_existing_workspaces: false
+openshift_post_install_web_terminal_tooling_packages:
+  - bind-utils
+  - iperf3
+  - iproute
+  - iputils
+  - jq
+  - nmap-ncat
+  - openldap-clients
+  - procps-ng
+  - traceroute

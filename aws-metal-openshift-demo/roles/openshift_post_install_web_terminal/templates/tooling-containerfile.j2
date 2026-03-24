@@ -1,0 +1,10 @@
+FROM {{ openshift_post_install_web_terminal_tooling_base_image }}
+USER 0
+RUN pkgmgr="$(command -v microdnf || command -v dnf)" && \
+    "${pkgmgr}" -y install \
+{% for package_name in openshift_post_install_web_terminal_tooling_packages %}
+    {{ package_name }} \
+{% endfor %}
+ && "${pkgmgr}" clean all \
+ && rm -rf /var/cache/dnf
+USER 1001

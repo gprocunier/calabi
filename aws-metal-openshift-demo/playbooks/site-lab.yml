@@ -1,0 +1,37 @@
+---
+- import_playbook: lab/mirror-registry.yml
+  tags:
+    - mirror-registry
+    - support-vms
+- import_playbook: lab/openshift-dns.yml
+  tags:
+    - openshift-dns
+    - cluster-prep
+- import_playbook: cluster/openshift-installer-binaries.yml
+  tags:
+    - installer-binaries
+    - cluster-prep
+- import_playbook: cluster/openshift-install-artifacts.yml
+  tags:
+    - install-artifacts
+    - cluster-prep
+- import_playbook: cluster/openshift-agent-media.yml
+  tags:
+    - agent-media
+    - cluster-prep
+- import_playbook: cluster/openshift-cluster.yml
+  tags:
+    - cluster-vms
+    - cluster-build
+- import_playbook: cluster/openshift-install-wait.yml
+  tags:
+    - install-wait
+    - cluster-build
+- import_playbook: day2/openshift-post-install-validate.yml
+  tags:
+    - day2-validate
+    - day2
+- import_playbook: day2/openshift-post-install.yml
+  tags:
+    - day2-post-install
+    - day2

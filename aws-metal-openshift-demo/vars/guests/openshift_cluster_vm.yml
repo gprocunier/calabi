@@ -1,0 +1,194 @@
+---
+# Paths in this file are evaluated on the managed hypervisor host.
+openshift_cluster_vm_defaults:
+  domain: ""
+  osinfo: rhel10.1
+  boot:
+    firmware: uefi
+    machine: q35
+    cpu_model: host-passthrough
+    tpm_enabled: false
+  network:
+    libvirt_network: lab-switch
+    libvirt_portgroup: ocp-trunk
+  provisioning:
+    recreate_domain: false
+    reinitialize_root_disk: true
+    wipe_additional_disks: true
+  performance_domain:
+    tier: bronze
+    iothreads: 0
+  access:
+    attach_agent_boot_media: false
+    agent_boot_media_path: ""
+    agent_boot_media_target_dev: sdc
+  console:
+    graphics_type: vnc
+    vnc_listen: 127.0.0.1
+  disks:
+    root:
+      bus: scsi
+      cache: none
+      io: native
+      discard: unmap
+      rotation_rate: 1
+      serial: ""
+
+openshift_cluster_dependencies:
+  idm:
+    name: idm-01.workshop.lan
+    ipv4_address: 172.16.0.10
+  mirror_registry:
+    name: mirror-registry.workshop.lan
+    ipv4_address: 172.16.0.20
+
+openshift_cluster_nodes:
+  - name: ocp-master-01
+    role: control-plane
+    mac_address: "52:54:00:20:00:10"
+    resources:
+      vcpus: 8
+      memory_mb: 24576
+    performance_domain:
+      tier: gold
+      iothreads: 0
+    disks:
+      root:
+        path: /dev/ebs/ocp-master-01
+        serial: ocpmaster01root
+
+  - name: ocp-master-02
+    role: control-plane
+    mac_address: "52:54:00:20:00:11"
+    resources:
+      vcpus: 8
+      memory_mb: 24576
+    performance_domain:
+      tier: gold
+      iothreads: 0
+    disks:
+      root:
+        path: /dev/ebs/ocp-master-02
+        serial: ocpmaster02root
+
+  - name: ocp-master-03
+    role: control-plane
+    mac_address: "52:54:00:20:00:12"
+    resources:
+      vcpus: 8
+      memory_mb: 24576
+    performance_domain:
+      tier: gold
+      iothreads: 0
+    disks:
+      root:
+        path: /dev/ebs/ocp-master-03
+        serial: ocpmaster03root
+
+  - name: ocp-infra-01
+    role: infra
+    mac_address: "52:54:00:20:00:21"
+    resources:
+      vcpus: 16
+      memory_mb: 49152
+    performance_domain:
+      tier: silver
+      iothreads: 1
+    disks:
+      root:
+        path: /dev/ebs/ocp-infra-01
+        serial: ocpinfra01root
+      additional:
+        - name: odf-data
+          path: /dev/ebs/ocp-infra-01-data
+          serial: ocpinfra01odfdata
+          bus: scsi
+          cache: none
+          io: native
+          discard: unmap
+
+  - name: ocp-infra-02
+    role: infra
+    mac_address: "52:54:00:20:00:22"
+    resources:
+      vcpus: 16
+      memory_mb: 49152
+    performance_domain:
+      tier: silver
+      iothreads: 1
+    disks:
+      root:
+        path: /dev/ebs/ocp-infra-02
+        serial: ocpinfra02root
+      additional:
+        - name: odf-data
+          path: /dev/ebs/ocp-infra-02-data
+          serial: ocpinfra02odfdata
+          bus: scsi
+          cache: none
+          io: native
+          discard: unmap
+
+  - name: ocp-infra-03
+    role: infra
+    mac_address: "52:54:00:20:00:23"
+    resources:
+      vcpus: 16
+      memory_mb: 49152
+    performance_domain:
+      tier: silver
+      iothreads: 1
+    disks:
+      root:
+        path: /dev/ebs/ocp-infra-03
+        serial: ocpinfra03root
+      additional:
+        - name: odf-data
+          path: /dev/ebs/ocp-infra-03-data
+          serial: ocpinfra03odfdata
+          bus: scsi
+          cache: none
+          io: native
+          discard: unmap
+
+  - name: ocp-worker-01
+    role: worker
+    mac_address: "52:54:00:20:00:31"
+    resources:
+      vcpus: 8
+      memory_mb: 16384
+    performance_domain:
+      tier: bronze
+      iothreads: 0
+    disks:
+      root:
+        path: /dev/ebs/ocp-worker-01
+        serial: ocpworker01root
+
+  - name: ocp-worker-02
+    role: worker
+    mac_address: "52:54:00:20:00:32"
+    resources:
+      vcpus: 8
+      memory_mb: 16384
+    performance_domain:
+      tier: bronze
+      iothreads: 0
+    disks:
+      root:
+        path: /dev/ebs/ocp-worker-02
+        serial: ocpworker02root
+
+  - name: ocp-worker-03
+    role: worker
+    mac_address: "52:54:00:20:00:33"
+    resources:
+      vcpus: 8
+      memory_mb: 16384
+    performance_domain:
+      tier: bronze
+      iothreads: 0
+    disks:
+      root:
+        path: /dev/ebs/ocp-worker-03
+        serial: ocpworker03root

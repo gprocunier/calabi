@@ -1,0 +1,44 @@
+---
+lab_switch_ports:
+  vlan100:
+    vlan_id: 100
+    description: Management network
+    cidr: 172.16.0.0/24
+    gateway_cidr: 172.16.0.1/24
+    routable: true
+  vlan200:
+    vlan_id: 200
+    description: OpenShift machineNetwork
+    cidr: 172.16.10.0/24
+    gateway_cidr: 172.16.10.1/24
+    routable: true
+  vlan201:
+    vlan_id: 201
+    description: ODF storage network
+    cidr: 172.16.11.0/24
+    gateway_cidr: 172.16.11.1/24
+    routable: true
+  vlan202:
+    vlan_id: 202
+    description: OpenShift Virtualization live migration network
+    cidr: 172.16.12.0/24
+    gateway_cidr: 172.16.12.1/24
+    routable: true
+  vlan300:
+    vlan_id: 300
+    description: Routed VM data network A
+    cidr: 172.16.20.0/24
+    gateway_cidr: 172.16.20.1/24
+    routable: true
+  vlan301:
+    vlan_id: 301
+    description: Routed VM data network B
+    cidr: 172.16.21.0/24
+    gateway_cidr: 172.16.21.1/24
+    routable: true
+  vlan302:
+    vlan_id: 302
+    description: Isolated VM data network
+    cidr: 172.16.22.0/24
+    gateway_cidr: ""
+    routable: false

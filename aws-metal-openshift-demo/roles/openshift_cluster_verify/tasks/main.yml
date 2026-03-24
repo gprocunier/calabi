@@ -1,0 +1,57 @@
+---
+- name: Derive OpenShift cluster verification facts
+  ansible.builtin.set_fact:
+    openshift_cluster_verify_nodes: "{{ openshift_cluster_nodes }}"
+    openshift_cluster_verify_domain: >-
+      {{
+        openshift_install_cluster.full_domain
+        | default(openshift_cluster_vm_defaults.domain)
+      }}
+
+- name: Check whether OpenShift cluster domains exist
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - dominfo
+      - "{{ item.name }}.{{ item.domain | default(openshift_cluster_verify_domain) }}"
+  loop: "{{ openshift_cluster_verify_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: openshift_cluster_verify_domain_info
+  changed_when: false
+  failed_when: false
+
+- name: Assert all OpenShift cluster domains exist
+  ansible.builtin.assert:
+    that:
+      - item.rc == 0
+    fail_msg: >-
+      OpenShift domain {{
+      item.item.name }}.{{ item.item.domain | default(openshift_cluster_verify_domain) }}
+      was not found in privileged libvirt context.
+  loop: "{{ openshift_cluster_verify_domain_info.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Capture OpenShift cluster block device maps
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - domblklist
+      - "{{ item.name }}.{{ item.domain | default(openshift_cluster_verify_domain) }}"
+  loop: "{{ openshift_cluster_verify_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: openshift_cluster_verify_domblklist
+  changed_when: false
+
+- name: Assert agent ISO is attached to each OpenShift domain
+  ansible.builtin.assert:
+    that:
+      - "'agent.x86_64.iso' in item.stdout"
+    fail_msg: >-
+      Agent ISO is not attached to {{
+      item.item.name }}.{{ item.item.domain | default(openshift_cluster_verify_domain) }}.
+  loop: "{{ openshift_cluster_verify_domblklist.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"

@@ -1,0 +1,45 @@
+---
+openshift_post_install_odf_local_storage_operatorgroup_name: "openshift-local-storage"
+openshift_post_install_odf_local_storage_subscription_name: "local-storage-operator"
+openshift_post_install_odf_local_storage_package_name: "local-storage-operator"
+openshift_post_install_odf_local_storage_channel: "stable"
+openshift_post_install_odf_catalog_source: "cs-redhat-operator-index-v4-20"
+openshift_post_install_odf_catalog_source_namespace: "openshift-marketplace"
+openshift_post_install_odf_local_storage_source: "{{ openshift_post_install_odf_catalog_source }}"
+openshift_post_install_odf_local_storage_source_namespace: "openshift-marketplace"
+openshift_post_install_odf_operatorgroup_name: "openshift-storage"
+openshift_post_install_odf_subscription_name: "odf-operator"
+openshift_post_install_odf_package_name: "odf-operator"
+openshift_post_install_odf_channel: "stable-4.20"
+openshift_post_install_odf_source: "{{ openshift_post_install_odf_catalog_source }}"
+openshift_post_install_odf_source_namespace: "{{ openshift_post_install_odf_catalog_source_namespace }}"
+openshift_post_install_odf_storage_label: >-
+  cluster.ocs.openshift.io/openshift-storage
+openshift_post_install_odf_storage_taint_key: "node.ocs.openshift.io/storage"
+openshift_post_install_odf_storage_taint_value: "true"
+openshift_post_install_odf_storage_taint_effect: "NoSchedule"
+openshift_post_install_odf_local_volume_discovery_name: "auto-discover-devices"
+openshift_post_install_odf_local_volume_set_name: "ceph-osd"
+openshift_post_install_odf_storage_cluster_name: "ocs-storagecluster"
+openshift_post_install_odf_storage_cluster_namespace: "openshift-storage"
+openshift_post_install_odf_local_storage_namespace: "openshift-local-storage"
+openshift_post_install_odf_osd_size: "980Gi"
+openshift_post_install_odf_multus_enabled: false
+openshift_post_install_odf_multus_public_network_name: "ocs-public-cluster"
+openshift_post_install_odf_multus_public_master_interface: "enp1s0.201"
+openshift_post_install_odf_multus_public_ipam_range: "172.16.11.128/25"
+openshift_post_install_odf_console_plugins:
+  - odf-console
+openshift_post_install_odf_required_storage_classes:
+  - ocs-storagecluster-ceph-rbd
+openshift_post_install_odf_bluestore_wipe_offsets_mb:
+  - 0
+  - 1024
+  - 10240
+  - 102400
+  - 1024000
+openshift_post_install_odf_force_rebuild: false
+openshift_post_install_odf_force_osd_device_reset: false
+openshift_post_install_odf_host_state_paths_to_purge:
+  - /var/lib/rook/*
+  - /var/lib/ceph/*

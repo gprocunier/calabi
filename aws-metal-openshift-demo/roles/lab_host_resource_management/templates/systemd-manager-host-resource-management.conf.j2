@@ -1,0 +1,5 @@
+[Manager]
+DefaultCPUAccounting=yes
+{% if lab_host_resource_management.host_policy.manage_systemd_cpu_affinity | bool %}
+CPUAffinity={{ lab_host_resource_management.cpu_pools.host_reserved }}
+{% endif %}

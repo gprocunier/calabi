@@ -1,0 +1,36 @@
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: {{ openshift_windows_build_pipelinerun_name }}
+  namespace: {{ openshift_windows_build_namespace }}
+spec:
+  pipelineRef:
+    name: {{ openshift_windows_build_pipeline_name }}
+  params:
+    - name: winImageDownloadURL
+      value: {{ openshift_windows_build_iso_url }}
+    - name: acceptEula
+      value: "{{ openshift_windows_build_accept_eula | ternary('true', 'false') }}"
+    - name: autounattendXMLConfigMapsURL
+      value: {{ openshift_windows_build_autounattend_configmaps_url }}
+    - name: instanceTypeName
+      value: {{ openshift_windows_build_instancetype_name }}
+    - name: instanceTypeKind
+      value: {{ openshift_windows_build_instancetype_kind }}
+    - name: preferenceName
+      value: {{ openshift_windows_build_preference_name }}
+    - name: virtualMachinePreferenceKind
+      value: {{ openshift_windows_build_preference_kind }}
+    - name: autounattendConfigMapName
+      value: {{ openshift_windows_build_autounattend_configmap_name }}
+    - name: virtioContainerDiskName
+      value: {{ openshift_windows_build_virtio_containerdisk }}
+    - name: baseDvName
+      value: {{ openshift_windows_build_base_dv_name }}
+    - name: isoDVName
+      value: {{ openshift_windows_build_iso_dv_name }}
+    - name: useBiosMode
+      value: "{{ openshift_windows_build_use_bios_mode | ternary('true', 'false') }}"
+  taskRunTemplate:
+    serviceAccountName: pipeline

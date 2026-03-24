@@ -1,0 +1,13 @@
+apiVersion: config.openshift.io/v1
+kind: APIServer
+metadata:
+  name: cluster
+spec:
+  servingCerts:
+    namedCertificates:
+      - names:
+{% for dns_name in openshift_idm_certs.api.dns_names %}
+          - {{ dns_name }}
+{% endfor %}
+        servingCertificate:
+          name: {{ openshift_idm_certs.api.secret_name }}

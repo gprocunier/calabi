@@ -1,0 +1,1493 @@
+---
+- name: Derive mirror registry guest facts
+  ansible.builtin.set_fact:
+    mirror_registry_guest_vm_fqdn: >-
+      {{ mirror_registry_vm.name }}.{{ mirror_registry_vm.domain }}
+    mirror_registry_guest_hypervisor_host: "{{ groups['aws_metal'] | first }}"
+    mirror_registry_guest_cloudinit_iso: >-
+      /var/lib/aws-metal-openshift-demo/{{ mirror_registry_vm.name }}/{{
+      mirror_registry_vm.name }}-cidata.iso
+    mirror_registry_guest_registry_host: >-
+      {{ mirror_registry_vm.name }}.{{ mirror_registry_vm.domain }}
+    mirror_registry_guest_registry_endpoint: >-
+      {{ mirror_registry_vm.name }}.{{ mirror_registry_vm.domain }}:{{
+      mirror_registry_service.registry_port }}
+    mirror_registry_guest_ipa_domain: "{{ idm_vm.domain }}"
+    mirror_registry_guest_ipa_realm: "{{ idm_server.realm }}"
+    mirror_registry_guest_ipa_server: "{{ idm_vm.name }}.{{ idm_vm.domain }}"
+    mirror_registry_guest_ipa_admin_password: "{{ idm_server.admin_password }}"
+    mirror_registry_guest_ipa_admin_principal: >-
+      {{
+        mirror_registry_client.admin_principal
+        if '@' in mirror_registry_client.admin_principal
+        else mirror_registry_client.admin_principal ~ '@' ~ idm_server.realm
+      }}
+    mirror_registry_guest_init_email: >-
+      {{
+        mirror_registry_service.init_email
+        if mirror_registry_service.init_email | length > 0
+        else mirror_registry_service.init_user ~ '@' ~ mirror_registry_vm.domain
+      }}
+    mirror_registry_guest_managed_cert_path: >-
+      {{
+        mirror_registry_service.managed_cert_path
+        if mirror_registry_service.managed_cert_path | length > 0
+        else '/etc/pki/tls/certs/' ~ mirror_registry_vm.name ~ '.' ~
+        mirror_registry_vm.domain ~ '.crt'
+      }}
+    mirror_registry_guest_managed_key_path: >-
+      {{
+        mirror_registry_service.managed_key_path
+        if mirror_registry_service.managed_key_path | length > 0
+        else '/etc/pki/tls/private/' ~ mirror_registry_vm.name ~ '.' ~
+        mirror_registry_vm.domain ~ '.key'
+      }}
+    mirror_registry_guest_install_cert_dir: /var/lib/mirror-registry/install-certs
+    mirror_registry_guest_install_cert_path: >-
+      /var/lib/mirror-registry/install-certs/ssl.cert
+    mirror_registry_guest_install_key_path: >-
+      /var/lib/mirror-registry/install-certs/ssl.key
+
+- name: Derive the effective mirror workflow from the requested mirror mode
+  ansible.builtin.set_fact:
+    mirror_registry_guest_effective_workflow: >-
+      {{
+        mirror_registry_content.workflow
+        if mirror_registry_content.mirror_mode == 'advanced'
+        else 'direct'
+        if mirror_registry_content.mirror_mode == 'direct'
+        else 'm2d'
+        if mirror_registry_content.mirror_mode == 'portable'
+        else 'd2m'
+      }}
+
+- name: Derive the effective mirror execution and reset flags
+  ansible.builtin.set_fact:
+    mirror_registry_guest_execute_mirror: >-
+      {{
+        mirror_registry_execute_mirror_requested | bool
+        if mirror_registry_execute_mirror_requested is defined
+        else mirror_registry_content.execute_mirror | bool
+      }}
+    mirror_registry_guest_reset_storage: >-
+      {{
+        mirror_registry_reset_storage_requested | bool
+        or mirror_registry_service.reset_storage | bool
+      }}
+
+- name: Validate the mirror registry guest configuration data
+  ansible.builtin.assert:
+    that:
+      - mirror_registry_guest_ipa_domain | length > 0
+      - mirror_registry_guest_ipa_realm | length > 0
+      - mirror_registry_guest_ipa_server | length > 0
+      - mirror_registry_client.admin_principal | length > 0
+      - mirror_registry_guest_ipa_admin_password | length > 0
+      - mirror_registry_client.packages | length > 0
+      - mirror_registry_guest_registry_host | length > 0
+      - mirror_registry_service.init_user | length > 0
+      - mirror_registry_service.init_password | length > 0
+      - mirror_registry_guest_init_email | length > 0
+      - mirror_registry_service.packages | length > 0
+      - mirror_registry_service.cert_path | length > 0
+      - mirror_registry_service.key_path | length > 0
+      - mirror_registry_guest_managed_cert_path | length > 0
+      - mirror_registry_guest_managed_key_path | length > 0
+      - mirror_registry_guest_install_cert_path | length > 0
+      - mirror_registry_guest_install_key_path | length > 0
+      - mirror_registry_service.oc_mirror_binary | length > 0
+      - mirror_registry_service.storage_volumes | length > 0
+      - >-
+        mirror_registry_content.mirror_mode in
+        ['direct', 'portable', 'import', 'advanced']
+      - mirror_registry_guest_registry_endpoint | length > 0
+      - mirror_registry_content.destination.namespace | length > 0
+      - mirror_registry_content.auth.control_node_pull_secret_file | length > 0
+      - mirror_registry_guest_effective_workflow in ['direct', 'm2d', 'd2m']
+      - mirror_registry_content.auth.source_pull_secret_file | length > 0
+      - mirror_registry_content.auth.local_registry_auth_file | length > 0
+      - mirror_registry_content.auth.merged_auth_file | length > 0
+      - mirror_registry_content.workspace.root | length > 0
+      - mirror_registry_content.workspace.config_file | length > 0
+      - mirror_registry_content.archive.root | length > 0
+      - mirror_registry_content.archive.from | length > 0
+      - mirror_registry_content.platform.channel | length > 0
+      - mirror_registry_content.platform.architectures | length > 0
+      - mirror_registry_content.operators.catalogs | length > 0
+      - >-
+        (
+          mirror_registry_content.operators.catalogs
+          | map(attribute='packages')
+          | flatten
+          | list
+          | length
+        ) > 0
+    fail_msg: >-
+      vars/guests/mirror_registry_vm.yml is missing required mirror registry client
+      settings for guest configuration.
+
+- name: Ensure insights-client is installed on the mirror registry guest
+  ansible.builtin.package:
+    name: insights-client
+    state: present
+  when: mirror_registry_vm.subscription.enabled | bool
+
+- name: Check current Insights registration status on the mirror registry guest
+  ansible.builtin.stat:
+    path: /etc/insights-client/.registered
+  register: mirror_registry_guest_insights_registered
+  when: mirror_registry_vm.subscription.enabled | bool
+
+- name: Register the mirror registry guest with Red Hat Insights
+  ansible.builtin.command:
+    argv:
+      - insights-client
+      - --register
+  when:
+    - mirror_registry_vm.subscription.enabled | bool
+    - not mirror_registry_guest_insights_registered.stat.exists
+  changed_when: true
+
+- name: Update all packages on the mirror registry guest
+  ansible.builtin.dnf:
+    name: "*"
+    state: latest
+    update_only: true
+  register: mirror_registry_guest_package_update
+
+- name: Power-cycle the mirror registry domain after guest updates so persistent XML changes take effect
+  block:
+    - name: Request a mirror registry guest poweroff after updates
+      ansible.builtin.shell: |
+        nohup bash -c 'sleep 5; systemctl poweroff' >/dev/null 2>&1 &
+      args:
+        executable: /bin/bash
+      async: 30
+      poll: 0
+      changed_when: true
+
+    - name: Wait for the mirror registry libvirt domain to power off
+      ansible.builtin.command:
+        argv:
+          - virsh
+          - domstate
+          - "{{ mirror_registry_guest_vm_fqdn }}"
+      register: mirror_registry_guest_domain_state_after_update
+      until: >-
+        'shut off' in (mirror_registry_guest_domain_state_after_update.stdout | lower)
+      retries: 90
+      delay: 10
+      changed_when: false
+      delegate_to: "{{ mirror_registry_guest_hypervisor_host }}"
+
+    - name: Identify matching mirror registry cloud-init CD-ROM targets in persistent XML
+      ansible.builtin.shell: |
+        set -euo pipefail
+        virsh domblklist "{{ mirror_registry_guest_vm_fqdn }}" --details \
+          | awk -v media="{{ mirror_registry_guest_cloudinit_iso }}" \
+              '$2 == "cdrom" && ($4 == media || $4 == "-") {print $3}'
+      args:
+        executable: /bin/bash
+      register: mirror_registry_guest_cdrom_targets
+      changed_when: false
+      delegate_to: "{{ mirror_registry_guest_hypervisor_host }}"
+
+    - name: Remove mirror registry cloud-init CD-ROM devices from persistent XML
+      ansible.builtin.command:
+        argv:
+          - virt-xml
+          - "{{ mirror_registry_guest_vm_fqdn }}"
+          - --remove-device
+          - --disk
+          - "target={{ item }}"
+      loop: "{{ mirror_registry_guest_cdrom_targets.stdout_lines }}"
+      register: mirror_registry_guest_remove_cdrom_result
+      failed_when:
+        - mirror_registry_guest_remove_cdrom_result.rc != 0
+        - "'did not find' not in mirror_registry_guest_remove_cdrom_result.stderr"
+        - "'No disk found' not in mirror_registry_guest_remove_cdrom_result.stderr"
+      changed_when: mirror_registry_guest_remove_cdrom_result.rc == 0
+      delegate_to: "{{ mirror_registry_guest_hypervisor_host }}"
+
+    - name: Reset mirror registry guest boot order to disk only
+      ansible.builtin.command:
+        argv:
+          - virt-xml
+          - "{{ mirror_registry_guest_vm_fqdn }}"
+          - --edit
+          - --boot
+          - hd
+      changed_when: true
+      delegate_to: "{{ mirror_registry_guest_hypervisor_host }}"
+
+    - name: Remove the mirror registry cloud-init ISO from the hypervisor
+      ansible.builtin.file:
+        path: "{{ mirror_registry_guest_cloudinit_iso }}"
+        state: absent
+      delegate_to: "{{ mirror_registry_guest_hypervisor_host }}"
+
+    - name: Start the mirror registry libvirt domain after offline media cleanup
+      ansible.builtin.command:
+        argv:
+          - virsh
+          - start
+          - "{{ mirror_registry_guest_vm_fqdn }}"
+      changed_when: true
+      delegate_to: "{{ mirror_registry_guest_hypervisor_host }}"
+  when: mirror_registry_guest_package_update.changed
+
+- name: Wait for the mirror registry guest after the optional domain restart
+  ansible.builtin.wait_for_connection:
+    timeout: 1800
+    sleep: 10
+  when: mirror_registry_guest_package_update.changed
+
+- name: Refresh facts after the optional update reboot
+  ansible.builtin.setup:
+
+- name: Ensure mirror registry client packages are installed
+  ansible.builtin.package:
+    name: >-
+      {{
+        (
+          mirror_registry_client.packages +
+          ['oddjob', 'oddjob-mkhomedir'] +
+          mirror_registry_service.packages
+        ) | unique
+      }}
+    state: present
+
+- name: Ensure firewalld is enabled on the mirror registry guest
+  ansible.builtin.systemd_service:
+    name: firewalld
+    state: started
+    enabled: true
+
+- name: Ensure cockpit socket is enabled on the mirror registry guest
+  ansible.builtin.systemd_service:
+    name: cockpit.socket
+    state: started
+    enabled: true
+
+- name: Ensure oddjobd is enabled on the mirror registry guest
+  ansible.builtin.systemd_service:
+    name: oddjobd.service
+    state: started
+    enabled: true
+
+- name: Check which mirror registry firewall services are already enabled
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --permanent
+      - --query-service={{ item }}
+  register: mirror_registry_guest_firewall_service_queries
+  changed_when: false
+  failed_when: false
+  loop: "{{ mirror_registry_client.firewall_services }}"
+
+- name: Open requested guest firewall services
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --permanent
+      - --add-service={{ item.item }}
+  loop: "{{ mirror_registry_guest_firewall_service_queries.results }}"
+  when: item.rc != 0
+  register: mirror_registry_guest_firewall_service_changes
+  changed_when: true
+
+- name: Reload the guest firewall when services changed
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --reload
+  when: >-
+    mirror_registry_guest_firewall_service_changes is defined and
+    (
+      mirror_registry_guest_firewall_service_changes.results
+      | selectattr('changed')
+      | list
+      | length > 0
+    )
+  changed_when: true
+
+- name: Check whether the mirror registry guest is already enrolled in IPA
+  ansible.builtin.stat:
+    path: /etc/ipa/default.conf
+  register: mirror_registry_guest_ipa_default_conf
+
+- name: Refresh the local IdM CA file from the active IdM server before IPA enrollment checks
+  ansible.builtin.get_url:
+    url: "http://{{ mirror_registry_guest_ipa_server }}/ipa/config/ca.crt"
+    dest: "{{ mirror_registry_service.idm_ca_path }}"
+    mode: "0644"
+
+- name: Trust the active IdM CA before IPA enrollment checks
+  ansible.builtin.copy:
+    src: "{{ mirror_registry_service.idm_ca_path }}"
+    dest: /etc/pki/ca-trust/source/anchors/idm-rootCA.pem
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Refresh the guest CA trust before IPA enrollment checks
+  ansible.builtin.command:
+    argv:
+      - update-ca-trust
+      - extract
+  changed_when: false
+
+- name: Acquire an IPA admin ticket before validating mirror registry host state
+  ansible.builtin.command:
+    argv:
+      - kinit
+      - "{{ mirror_registry_guest_ipa_admin_principal }}"
+    stdin: "{{ mirror_registry_guest_ipa_admin_password }}\n"
+  changed_when: true
+
+- name: Check whether the mirror registry host object already exists in IdM
+  ansible.builtin.command:
+    argv:
+      - ipa
+      - host-show
+      - "{{ mirror_registry_guest_vm_fqdn }}"
+  register: mirror_registry_guest_ipa_host_show
+  changed_when: false
+  failed_when: false
+
+- name: Determine whether the mirror registry guest must rejoin IdM
+  ansible.builtin.set_fact:
+    mirror_registry_guest_ipa_rejoin_required: >-
+      {{
+        (not mirror_registry_guest_ipa_default_conf.stat.exists)
+        or mirror_registry_guest_ipa_host_show.rc != 0
+      }}
+
+- name: Wait for the IDM server HTTPS endpoint before joining the domain
+  ansible.builtin.wait_for:
+    host: "{{ idm_vm.network.ipv4_address }}"
+    port: 443
+    timeout: 900
+    sleep: 10
+  when: mirror_registry_guest_ipa_rejoin_required
+
+- name: Uninstall the stale mirror registry IPA client before rejoining
+  ansible.builtin.command:
+    argv:
+      - ipa-client-install
+      - --uninstall
+      - -U
+  when:
+    - mirror_registry_guest_ipa_rejoin_required
+    - mirror_registry_guest_ipa_default_conf.stat.exists
+  changed_when: true
+
+- name: Join the mirror registry guest to the IDM domain
+  ansible.builtin.command:
+    argv:
+      - ipa-client-install
+      - -U
+      - --hostname={{ mirror_registry_guest_vm_fqdn }}
+      - --domain={{ mirror_registry_guest_ipa_domain }}
+      - --realm={{ mirror_registry_guest_ipa_realm }}
+      - --server={{ mirror_registry_guest_ipa_server }}
+      - --principal={{ mirror_registry_client.admin_principal }}
+      - --password={{ mirror_registry_guest_ipa_admin_password }}
+      - --force-join
+      - --mkhomedir
+      - --enable-dns-updates
+  when: mirror_registry_guest_ipa_rejoin_required
+  changed_when: true
+
+- name: Wait for the mirror registry guest after the optional IdM rejoin
+  ansible.builtin.wait_for_connection:
+    timeout: 300
+    sleep: 10
+  when: mirror_registry_guest_ipa_rejoin_required
+
+- name: Reacquire an IPA admin ticket after the optional mirror registry rejoin
+  ansible.builtin.command:
+    argv:
+      - kinit
+      - "{{ mirror_registry_guest_ipa_admin_principal }}"
+    stdin: "{{ mirror_registry_guest_ipa_admin_password }}\n"
+  when: mirror_registry_guest_ipa_rejoin_required
+  changed_when: true
+
+- name: Confirm the mirror registry host object exists in IdM after the optional rejoin
+  ansible.builtin.command:
+    argv:
+      - ipa
+      - host-show
+      - "{{ mirror_registry_guest_vm_fqdn }}"
+  register: mirror_registry_guest_ipa_host_show_after_join
+  changed_when: false
+  until: mirror_registry_guest_ipa_host_show_after_join.rc == 0
+  retries: 20
+  delay: 15
+
+- name: Check the current authselect profile on the mirror registry guest
+  ansible.builtin.command:
+    argv:
+      - authselect
+      - current
+      - --raw
+  register: mirror_registry_guest_authselect_current
+  changed_when: false
+
+- name: Enable authselect mkhomedir support on the mirror registry guest
+  ansible.builtin.command:
+    argv:
+      - authselect
+      - select
+      - sssd
+      - with-mkhomedir
+      - with-sudo
+      - --force
+  when: >-
+    'with-mkhomedir' not in mirror_registry_guest_authselect_current.stdout or
+    'with-sudo' not in mirror_registry_guest_authselect_current.stdout
+  changed_when: true
+  notify: Restart sssd
+
+- name: Ensure mirror registry working directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ mirror_registry_service.workspace_root }}"
+    - "{{ mirror_registry_service.download_root }}"
+    - "{{ mirror_registry_service.extract_root }}"
+    - "{{ mirror_registry_service.quay_root }}"
+    - "{{ mirror_registry_service.cert_dir }}"
+    - "{{ mirror_registry_service.bundle_root }}"
+    - "{{ mirror_registry_service.auth_file | dirname }}"
+    - "{{ mirror_registry_content.workspace.root }}"
+    - "{{ mirror_registry_content.workspace.results_dir }}"
+    - "{{ mirror_registry_content.archive.root }}"
+    - "{{ mirror_registry_guest_install_cert_dir }}"
+
+- name: Ensure certmonger is enabled when using IdM-issued registry certificates
+  ansible.builtin.systemd_service:
+    name: certmonger
+    state: started
+    enabled: true
+  when: mirror_registry_service.use_idm_cert | bool
+
+- name: Install the mirror registry container restart helper
+  ansible.builtin.copy:
+    dest: /usr/local/sbin/restart-mirror-registry-containers.sh
+    owner: root
+    group: root
+    mode: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      systemctl restart quay-redis.service quay-app.service
+  when: mirror_registry_service.use_idm_cert | bool
+
+- name: Check whether the IdM certificate request already exists
+  ansible.builtin.command:
+    argv:
+      - getcert
+      - list
+      - -i
+      - "{{ mirror_registry_service.cert_request_id }}"
+  register: mirror_registry_guest_getcert_request
+  changed_when: false
+  failed_when: false
+  when: mirror_registry_service.use_idm_cert | bool
+
+- name: Check whether the managed IdM certificate artifacts already exist
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ mirror_registry_guest_managed_cert_path }}"
+    - "{{ mirror_registry_guest_managed_key_path }}"
+  register: mirror_registry_guest_managed_cert_stats
+  when: mirror_registry_service.use_idm_cert | bool
+
+- name: Verify the managed IdM certificate against the active IdM CA
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - verify
+      - -CAfile
+      - "{{ mirror_registry_service.idm_ca_path }}"
+      - "{{ mirror_registry_guest_managed_cert_path }}"
+  register: mirror_registry_guest_managed_cert_verify
+  changed_when: false
+  failed_when: false
+  when:
+    - mirror_registry_service.use_idm_cert | bool
+    - mirror_registry_guest_managed_cert_stats.results[0].stat.exists
+
+- name: Acquire an IPA admin ticket for mirror registry service changes
+  ansible.builtin.command:
+    argv:
+      - kinit
+      - "{{ mirror_registry_guest_ipa_admin_principal }}"
+    stdin: "{{ mirror_registry_guest_ipa_admin_password }}\n"
+  when: mirror_registry_service.use_idm_cert | bool
+  changed_when: true
+
+- name: Check whether the mirror registry HTTP service principal already exists
+  ansible.builtin.command:
+    argv:
+      - ipa
+      - service-show
+      - "HTTP/{{ mirror_registry_guest_vm_fqdn }}"
+  register: mirror_registry_guest_http_service_show
+  changed_when: false
+  failed_when: false
+  when: mirror_registry_service.use_idm_cert | bool
+
+- name: Create the mirror registry HTTP service principal in IdM
+  ansible.builtin.command:
+    argv:
+      - ipa
+      - service-add
+      - "HTTP/{{ mirror_registry_guest_vm_fqdn }}"
+  when:
+    - mirror_registry_service.use_idm_cert | bool
+    - mirror_registry_guest_http_service_show.rc != 0
+  changed_when: true
+
+- name: Request an IdM-issued certificate for the mirror registry
+  ansible.builtin.command:
+    argv:
+      - ipa-getcert
+      - request
+      - -w
+      - -I
+      - "{{ mirror_registry_service.cert_request_id }}"
+      - -f
+      - "{{ mirror_registry_guest_managed_cert_path }}"
+      - -k
+      - "{{ mirror_registry_guest_managed_key_path }}"
+      - -K
+      - HTTP/{{ mirror_registry_guest_vm_fqdn }}
+      - -D
+      - "{{ mirror_registry_guest_vm_fqdn }}"
+      - -g
+      - "2048"
+      - -C
+      - /usr/local/sbin/restart-mirror-registry-containers.sh
+  when:
+    - mirror_registry_service.use_idm_cert | bool
+    - mirror_registry_guest_getcert_request.rc != 0
+  changed_when: true
+  notify: Restart mirror registry containers
+
+- name: Resubmit the existing IdM certificate request when artifacts are missing
+  ansible.builtin.command:
+    argv:
+      - getcert
+      - resubmit
+      - -i
+      - "{{ mirror_registry_service.cert_request_id }}"
+  when:
+    - mirror_registry_service.use_idm_cert | bool
+    - mirror_registry_guest_getcert_request.rc == 0
+    - >-
+      (
+        mirror_registry_guest_managed_cert_stats.results
+        | selectattr('stat.exists', 'equalto', false)
+        | list
+        | length
+      ) > 0 or (
+        mirror_registry_guest_managed_cert_verify is defined and
+        mirror_registry_guest_managed_cert_verify.rc != 0
+      )
+  changed_when: true
+  notify: Restart mirror registry containers
+
+- name: Wait for the managed IdM certificate to validate against the active IdM CA
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - verify
+      - -CAfile
+      - "{{ mirror_registry_service.idm_ca_path }}"
+      - "{{ mirror_registry_guest_managed_cert_path }}"
+  register: mirror_registry_guest_managed_cert_verify_after_request
+  changed_when: false
+  until: mirror_registry_guest_managed_cert_verify_after_request.rc == 0
+  retries: 30
+  delay: 10
+  when: mirror_registry_service.use_idm_cert | bool
+
+- name: Build the IdM-issued registry certificate chain for Quay
+  ansible.builtin.shell: >-
+    cat {{ mirror_registry_guest_managed_cert_path | quote }}
+    {{ mirror_registry_service.idm_ca_path | quote }}
+    > {{ mirror_registry_guest_install_cert_path | quote }}
+  args:
+    executable: /bin/bash
+  when: mirror_registry_service.use_idm_cert | bool
+  changed_when: true
+  notify: Restart mirror registry containers
+
+- name: Ensure the staged IdM-issued registry certificate chain permissions
+  ansible.builtin.file:
+    path: "{{ mirror_registry_guest_install_cert_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: mirror_registry_service.use_idm_cert | bool
+
+- name: Ensure the staged IdM-issued registry key is present for install
+  ansible.builtin.copy:
+    src: "{{ mirror_registry_guest_managed_key_path }}"
+    dest: "{{ mirror_registry_guest_install_key_path }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  when: mirror_registry_service.use_idm_cert | bool
+
+- name: Ensure the staged install certificate directory is readable
+  ansible.builtin.file:
+    path: "{{ mirror_registry_guest_install_cert_dir }}"
+    owner: root
+    group: root
+    mode: "0755"
+  when: mirror_registry_service.use_idm_cert | bool
+
+- name: Normalize the staged IdM-backed install cert and key permissions
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - "{{ mirror_registry_guest_install_cert_path }}"
+    - "{{ mirror_registry_guest_install_key_path }}"
+  when: mirror_registry_service.use_idm_cert | bool
+
+- name: Sync the active Quay certificate from the staged IdM-backed cert chain
+  ansible.builtin.copy:
+    src: "{{ mirror_registry_guest_install_cert_path }}"
+    dest: "{{ mirror_registry_service.cert_path }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  when: mirror_registry_service.use_idm_cert | bool
+  notify: Restart mirror registry containers
+
+- name: Sync the active Quay key from the staged IdM-backed key
+  ansible.builtin.copy:
+    src: "{{ mirror_registry_guest_install_key_path }}"
+    dest: "{{ mirror_registry_service.key_path }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  when: mirror_registry_service.use_idm_cert | bool
+  notify: Restart mirror registry containers
+
+- name: Check which mirror registry firewall ports are already enabled
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --permanent
+      - --query-port={{ item }}
+  register: mirror_registry_guest_firewall_port_queries
+  changed_when: false
+  failed_when: false
+  loop: "{{ mirror_registry_service.firewall_ports }}"
+
+- name: Open requested mirror registry firewall ports
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --permanent
+      - --add-port={{ item.item }}
+  loop: "{{ mirror_registry_guest_firewall_port_queries.results }}"
+  when: item.rc != 0
+  register: mirror_registry_guest_firewall_port_changes
+  changed_when: true
+
+- name: Reload the guest firewall when mirror registry ports changed
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --reload
+  when: >-
+    mirror_registry_guest_firewall_port_changes is defined and
+    (
+      mirror_registry_guest_firewall_port_changes.results
+      | selectattr('changed')
+      | list
+      | length > 0
+    )
+  changed_when: true
+
+- name: Download the mirror registry tooling archives
+  ansible.builtin.get_url:
+    url: "{{ item.value.url }}"
+    dest: "{{ mirror_registry_service.download_root }}/{{ item.value.archive }}"
+    mode: "0644"
+  loop: "{{ mirror_registry_service.downloads | dict2items }}"
+  register: mirror_registry_guest_downloads
+
+- name: Create extraction directories for mirror registry tooling
+  ansible.builtin.file:
+    path: "{{ mirror_registry_service.extract_root }}/{{ item.key }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ mirror_registry_service.downloads | dict2items }}"
+
+- name: Extract the mirror registry tooling archives
+  ansible.builtin.unarchive:
+    src: "{{ mirror_registry_service.download_root }}/{{ item.value.archive }}"
+    dest: "{{ mirror_registry_service.extract_root }}/{{ item.key }}"
+    remote_src: true
+  loop: "{{ mirror_registry_service.downloads | dict2items }}"
+
+- name: Find the mirror-registry installer binary
+  ansible.builtin.find:
+    paths: "{{ mirror_registry_service.extract_root }}/mirror_registry"
+    recurse: true
+    patterns: mirror-registry
+    file_type: file
+  register: mirror_registry_guest_mirror_registry_binary
+
+- name: Stage the mirror-registry bundle files
+  ansible.builtin.copy:
+    src: >-
+      {{ mirror_registry_service.extract_root }}/mirror_registry/{{ item }}
+    dest: "{{ mirror_registry_service.bundle_root }}/{{ item }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ mirror_registry_service.downloads.mirror_registry.bundle_files }}"
+
+- name: Remove the standalone mirror-registry binary before linking the bundle
+  ansible.builtin.file:
+    path: /usr/local/bin/mirror-registry
+    state: absent
+
+- name: Install the mirror-registry command symlink
+  ansible.builtin.file:
+    src: "{{ mirror_registry_service.bundle_root }}/mirror-registry"
+    dest: /usr/local/bin/mirror-registry
+    state: link
+    owner: root
+    group: root
+
+- name: Find the OpenShift client binaries
+  ansible.builtin.find:
+    paths: "{{ mirror_registry_service.extract_root }}/openshift_client"
+    recurse: true
+    patterns: "{{ item }}"
+    file_type: file
+  loop: "{{ mirror_registry_service.downloads.openshift_client.binaries }}"
+  register: mirror_registry_guest_client_binaries
+
+- name: Install the OpenShift client binaries
+  ansible.builtin.copy:
+    src: "{{ item.files[0].path }}"
+    dest: "/usr/local/bin/{{ item.item }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ mirror_registry_guest_client_binaries.results }}"
+
+- name: Find the oc-mirror binary
+  ansible.builtin.find:
+    paths: "{{ mirror_registry_service.extract_root }}/oc_mirror"
+    recurse: true
+    patterns: "{{ mirror_registry_service.downloads.oc_mirror.binary_name }}"
+    file_type: file
+  register: mirror_registry_guest_oc_mirror_binary
+
+- name: Install the oc-mirror binary
+  ansible.builtin.copy:
+    src: "{{ mirror_registry_guest_oc_mirror_binary.files[0].path }}"
+    dest: /usr/local/bin/oc-mirror
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Check whether the mirror registry root CA already exists
+  ansible.builtin.stat:
+    path: "{{ mirror_registry_service.quay_root }}/quay-rootCA/rootCA.pem"
+  register: mirror_registry_guest_root_ca_stat
+
+- name: Check whether the mirror registry API is already healthy before install
+  ansible.builtin.uri:
+    url: >-
+      https://{{ mirror_registry_guest_registry_host }}:{{
+      mirror_registry_service.registry_port }}/health/instance
+    method: GET
+    status_code:
+      - 200
+    validate_certs: false
+  register: mirror_registry_guest_registry_health_preinstall
+  changed_when: false
+  failed_when: false
+  when: mirror_registry_service.install_enabled | bool
+
+- name: Stop Quay services before resetting registry storage
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: stopped
+  loop:
+    - quay-app.service
+    - quay-redis.service
+  failed_when: false
+  when: mirror_registry_guest_reset_storage | bool
+
+- name: Inspect mirror-registry Podman volumes for storage reset
+  ansible.builtin.command:
+    argv:
+      - podman
+      - volume
+      - inspect
+      - "{{ item }}"
+      - --format
+      - "{{ '{{.Mountpoint}}' }}"
+  loop: "{{ mirror_registry_service.storage_volumes }}"
+  register: mirror_registry_guest_volume_inspect
+  changed_when: false
+  failed_when: false
+  when: mirror_registry_guest_reset_storage | bool
+
+- name: Wipe mirror-registry storage volume contents
+  ansible.builtin.file:
+    path: "{{ item.stdout }}"
+    state: absent
+  loop: >-
+    {{
+      mirror_registry_guest_volume_inspect.results
+      | selectattr('rc', 'equalto', 0)
+      | list
+    }}
+  when: mirror_registry_guest_reset_storage | bool
+
+- name: Recreate emptied mirror-registry storage volume mountpoints
+  ansible.builtin.file:
+    path: "{{ item.stdout }}"
+    state: directory
+    owner: "{{ mirror_registry_service.storage_owner }}"
+    group: "{{ mirror_registry_service.storage_group }}"
+    mode: "{{ mirror_registry_service.storage_mode }}"
+  loop: >-
+    {{
+      mirror_registry_guest_volume_inspect.results
+      | selectattr('rc', 'equalto', 0)
+      | list
+    }}
+  when: mirror_registry_guest_reset_storage | bool
+
+- name: Remove the Quay Redis secret before reinstall after storage reset
+  ansible.builtin.command:
+    argv:
+      - podman
+      - secret
+      - rm
+      - redis_pass
+  register: mirror_registry_guest_redis_secret_rm
+  changed_when: mirror_registry_guest_redis_secret_rm.rc == 0
+  failed_when: false
+  when: mirror_registry_guest_reset_storage | bool
+
+- name: Remove any existing Quay Redis secret before running mirror-registry install
+  ansible.builtin.command:
+    argv:
+      - podman
+      - secret
+      - rm
+      - redis_pass
+  register: mirror_registry_guest_redis_secret_rm_before_install
+  changed_when: mirror_registry_guest_redis_secret_rm_before_install.rc == 0
+  failed_when: false
+  when: >-
+    (
+      mirror_registry_guest_registry_health_preinstall.status | default(0)
+    ) != 200 or
+    mirror_registry_guest_reset_storage | bool
+
+- name: Build the mirror registry installer command line
+  ansible.builtin.set_fact:
+    mirror_registry_guest_install_argv: >-
+      {{
+        [
+          mirror_registry_service.bundle_root ~ '/mirror-registry',
+          'install',
+          '--quayHostname',
+          mirror_registry_guest_registry_host,
+          '--quayRoot',
+          mirror_registry_service.quay_root,
+          '--initUser',
+          mirror_registry_service.init_user,
+          '--initPassword',
+          mirror_registry_service.init_password
+        ] +
+        (
+          [
+            '--sslCert',
+            mirror_registry_guest_install_cert_path,
+            '--sslKey',
+            mirror_registry_guest_install_key_path
+          ]
+          if mirror_registry_service.use_idm_cert | bool
+          else []
+        )
+      }}
+
+- name: Install the mirror registry service
+  ansible.builtin.command:
+    argv: "{{ mirror_registry_guest_install_argv }}"
+  when: >-
+    (
+      mirror_registry_guest_registry_health_preinstall.status | default(0)
+    ) != 200 or
+    mirror_registry_guest_reset_storage | bool
+  changed_when: true
+
+- name: Read the generated mirror registry config for post-install secrets
+  ansible.builtin.slurp:
+    path: "{{ mirror_registry_service.cert_dir }}/config.yaml"
+  register: mirror_registry_guest_config_yaml_slurp
+  when: mirror_registry_service.install_enabled | bool
+
+- name: Derive the redis password from the generated mirror registry config
+  ansible.builtin.set_fact:
+    mirror_registry_guest_redis_password: >-
+      {{
+        (
+          mirror_registry_guest_config_yaml_slurp.content
+          | b64decode
+          | from_yaml
+        ).BUILDLOGS_REDIS.password
+      }}
+  when: mirror_registry_service.install_enabled | bool
+
+- name: Check whether the mirror registry Redis secret already exists
+  ansible.builtin.command:
+    argv:
+      - podman
+      - secret
+      - inspect
+      - redis_pass
+  register: mirror_registry_guest_redis_secret_inspect
+  changed_when: false
+  failed_when: false
+  when: mirror_registry_service.install_enabled | bool
+
+- name: Create the mirror registry Redis secret when it is missing
+  ansible.builtin.command:
+    argv:
+      - podman
+      - secret
+      - create
+      - redis_pass
+      - "-"
+    stdin: "{{ mirror_registry_guest_redis_password }}"
+  when:
+    - mirror_registry_service.install_enabled | bool
+    - mirror_registry_guest_redis_secret_inspect.rc != 0
+  changed_when: true
+
+- name: Ensure mirror registry services are started after install
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - quay-pod.service
+    - quay-redis.service
+    - quay-app.service
+  when: mirror_registry_service.install_enabled | bool
+
+- name: Trust the active mirror registry CA on the guest
+  ansible.builtin.copy:
+    src: >-
+      {{
+        mirror_registry_service.idm_ca_path
+        if mirror_registry_service.use_idm_cert | bool
+        else mirror_registry_service.quay_root ~ '/quay-rootCA/rootCA.pem'
+      }}
+    dest: >-
+      /etc/pki/ca-trust/source/anchors/{{
+      mirror_registry_guest_registry_host }}-rootCA.pem
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Update mirror registry CA trust
+
+- name: Ensure the container registry trust directory exists
+  ansible.builtin.file:
+    path: >-
+      /etc/containers/certs.d/{{
+      mirror_registry_guest_registry_host }}:{{
+      mirror_registry_service.registry_port }}
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Trust the mirror registry CA for container tooling
+  ansible.builtin.copy:
+    src: >-
+      {{
+        mirror_registry_service.idm_ca_path
+        if mirror_registry_service.use_idm_cert | bool
+        else mirror_registry_service.quay_root ~ '/quay-rootCA/rootCA.pem'
+      }}
+    dest: >-
+      /etc/containers/certs.d/{{
+      mirror_registry_guest_registry_host }}:{{
+      mirror_registry_service.registry_port }}/ca.crt
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Apply mirror registry CA trust changes before local registry login
+  ansible.builtin.meta: flush_handlers
+
+- name: Restart mirror registry containers after IdM certificate issuance
+  ansible.builtin.command:
+    argv:
+      - /usr/local/sbin/restart-mirror-registry-containers.sh
+  when:
+    - mirror_registry_service.use_idm_cert | bool
+    - mirror_registry_guest_getcert_request is defined
+    - mirror_registry_guest_getcert_request.rc != 0
+    - mirror_registry_guest_root_ca_stat.stat.exists
+  changed_when: true
+
+- name: Wait for the mirror registry service port to listen before login
+  ansible.builtin.wait_for:
+    host: "{{ mirror_registry_vm.network.ipv4_address }}"
+    port: "{{ mirror_registry_service.registry_port }}"
+    timeout: 300
+    sleep: 5
+
+- name: Wait for the mirror registry API to become ready
+  ansible.builtin.uri:
+    url: >-
+      https://{{ mirror_registry_guest_registry_host }}:{{
+      mirror_registry_service.registry_port }}/v2/
+    method: GET
+    status_code:
+      - 200
+      - 401
+    validate_certs: true
+  register: mirror_registry_guest_registry_api_ready
+  retries: 30
+  delay: 10
+  until: mirror_registry_guest_registry_api_ready.status in [200, 401]
+
+- name: Check whether the local registry authfile already has usable credentials
+  ansible.builtin.command:
+    argv:
+      - podman
+      - login
+      - --get-login
+      - --authfile
+      - "{{ mirror_registry_service.auth_file }}"
+      - >-
+        {{ mirror_registry_guest_registry_host }}:{{
+        mirror_registry_service.registry_port }}
+  register: mirror_registry_guest_existing_login
+  changed_when: false
+  failed_when: false
+
+- name: Check whether the plain mirror registry init credentials can obtain a token
+  ansible.builtin.uri:
+    url: >-
+      https://{{ mirror_registry_guest_registry_host }}:{{
+      mirror_registry_service.registry_port }}/v2/auth?service={{
+      mirror_registry_guest_registry_host }}:{{
+      mirror_registry_service.registry_port }}
+    method: GET
+    user: "{{ mirror_registry_service.init_user }}"
+    password: "{{ mirror_registry_service.init_password }}"
+    force_basic_auth: true
+    status_code:
+      - 200
+      - 401
+    validate_certs: true
+  register: mirror_registry_guest_plain_token_check
+  changed_when: false
+  when: mirror_registry_guest_existing_login.rc != 0
+
+- name: Initialize the first Quay user when plain credentials are not yet usable
+  ansible.builtin.uri:
+    url: >-
+      https://{{ mirror_registry_guest_registry_host }}:{{
+      mirror_registry_service.registry_port }}/api/v1/user/initialize
+    method: POST
+    body_format: json
+    body:
+      username: "{{ mirror_registry_service.init_user }}"
+      password: "{{ mirror_registry_service.init_password }}"
+      email: "{{ mirror_registry_guest_init_email }}"
+    status_code:
+      - 200
+      - 400
+      - 409
+    return_content: true
+    validate_certs: true
+  register: mirror_registry_guest_initialize_user
+  changed_when: mirror_registry_guest_initialize_user.status == 200
+  when:
+    - mirror_registry_guest_existing_login.rc != 0
+    - mirror_registry_guest_plain_token_check.status == 401
+
+- name: Derive the effective registry CLI password
+  ansible.builtin.set_fact:
+    mirror_registry_guest_effective_registry_password: >-
+      {{
+        (
+          mirror_registry_guest_initialize_user.get('json', {}).get('encrypted_password')
+          if (
+            mirror_registry_guest_initialize_user is defined and
+            mirror_registry_guest_initialize_user.get('status') == 200 and
+            'encrypted_password' in
+            mirror_registry_guest_initialize_user.get('json', {})
+          )
+          else mirror_registry_service.init_password
+        )
+      }}
+  when: mirror_registry_guest_existing_login.rc != 0
+
+- name: Log in to the local mirror registry with Podman
+  ansible.builtin.command:
+    argv:
+      - podman
+      - login
+      - >-
+        {{ mirror_registry_guest_registry_host }}:{{
+        mirror_registry_service.registry_port }}
+      - --username
+      - "{{ mirror_registry_service.init_user }}"
+      - --password
+      - >-
+        {{
+          mirror_registry_guest_effective_registry_password
+          if mirror_registry_guest_effective_registry_password is defined
+          else mirror_registry_service.init_password
+        }}
+      - --authfile
+      - "{{ mirror_registry_service.auth_file }}"
+  register: mirror_registry_guest_podman_login
+  when: mirror_registry_guest_existing_login.rc != 0
+  retries: 10
+  delay: 10
+  until: mirror_registry_guest_podman_login.rc == 0
+  changed_when: >-
+    'Login Succeeded!' in mirror_registry_guest_podman_login.stdout
+
+- name: Render the disconnected content ImageSetConfiguration
+  ansible.builtin.template:
+    src: imageset-config.yaml.j2
+    dest: "{{ mirror_registry_content.workspace.config_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: mirror_registry_content.enabled | bool
+
+- name: Check whether the control-node pull secret exists
+  ansible.builtin.stat:
+    path: "{{ mirror_registry_content.auth.control_node_pull_secret_file }}"
+  delegate_to: localhost
+  become: false
+  register: mirror_registry_guest_control_pull_secret_stat
+  when:
+    - mirror_registry_content.enabled | bool
+    - mirror_registry_guest_execute_mirror | bool
+    - mirror_registry_guest_effective_workflow in ['direct', 'm2d']
+
+- name: Require the control-node pull secret for connected mirroring workflows
+  ansible.builtin.assert:
+    that:
+      - mirror_registry_guest_control_pull_secret_stat.stat.exists
+    fail_msg: >-
+      The control-node pull secret file {{
+      mirror_registry_content.auth.control_node_pull_secret_file }} is
+      missing. Provide the Red Hat/OpenShift pull secret there before running
+      connected mirroring workflows.
+  when:
+    - mirror_registry_content.enabled | bool
+    - mirror_registry_guest_execute_mirror | bool
+    - mirror_registry_guest_effective_workflow in ['direct', 'm2d']
+
+- name: Copy the Red Hat pull secret from the control node to the guest
+  ansible.builtin.copy:
+    src: "{{ mirror_registry_content.auth.control_node_pull_secret_file }}"
+    dest: "{{ mirror_registry_content.auth.source_pull_secret_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  when:
+    - mirror_registry_content.enabled | bool
+    - mirror_registry_guest_execute_mirror | bool
+    - mirror_registry_guest_effective_workflow in ['direct', 'm2d']
+
+- name: Check whether the source pull secret exists for content mirroring
+  ansible.builtin.stat:
+    path: "{{ mirror_registry_content.auth.source_pull_secret_file }}"
+  register: mirror_registry_guest_pull_secret_stat
+  when:
+    - mirror_registry_content.enabled | bool
+    - mirror_registry_guest_effective_workflow in ['direct', 'm2d']
+
+- name: Require a source pull secret before mirroring disconnected content
+  ansible.builtin.assert:
+    that:
+      - mirror_registry_guest_pull_secret_stat.stat.exists
+    fail_msg: >-
+      The source pull secret file {{
+      mirror_registry_content.auth.source_pull_secret_file }} is missing on
+      the mirror registry guest. Place a Red Hat/OpenShift pull secret there
+      before running the mirroring workflow.
+  when:
+    - mirror_registry_content.enabled | bool
+    - mirror_registry_guest_execute_mirror | bool
+    - mirror_registry_guest_effective_workflow in ['direct', 'm2d']
+
+- name: Check whether the m2d archive source exists for d2m workflow
+  ansible.builtin.stat:
+    path: "{{ mirror_registry_content.archive.from }}"
+  register: mirror_registry_guest_archive_source_stat
+  when:
+    - mirror_registry_content.enabled | bool
+    - mirror_registry_guest_effective_workflow == 'd2m'
+
+- name: Require an m2d archive before running d2m workflow
+  ansible.builtin.assert:
+    that:
+      - mirror_registry_guest_archive_source_stat.stat.exists
+    fail_msg: >-
+      The archive source path {{ mirror_registry_content.archive.from }} is
+      missing on the mirror registry guest. Populate it with a prior m2d run
+      before running the d2m workflow.
+  when:
+    - mirror_registry_content.enabled | bool
+    - mirror_registry_guest_execute_mirror | bool
+    - mirror_registry_guest_effective_workflow == 'd2m'
+
+- name: Merge the Red Hat pull secret with the local registry credentials
+  ansible.builtin.shell: >-
+    set -o pipefail &&
+    jq -s
+    '{auths: (reduce .[] as $item ({}; . + ($item.auths // {})))}'
+    {{ mirror_registry_content.auth.source_pull_secret_file | quote }}
+    {{ mirror_registry_content.auth.local_registry_auth_file | quote }}
+    > {{ mirror_registry_content.auth.merged_auth_file | quote }}
+  args:
+    executable: /bin/bash
+  when:
+    - mirror_registry_content.enabled | bool
+    - mirror_registry_guest_execute_mirror | bool
+    - mirror_registry_guest_effective_workflow in ['direct', 'm2d']
+    - mirror_registry_guest_pull_secret_stat.stat.exists
+  changed_when: true
+
+- name: Build the oc-mirror target references
+  ansible.builtin.set_fact:
+    mirror_registry_guest_oc_mirror_destination: >-
+      docker://{{ mirror_registry_guest_registry_endpoint }}/{{
+      mirror_registry_content.destination.namespace }}
+    mirror_registry_guest_oc_mirror_archive: >-
+      file://{{ mirror_registry_content.archive.root }}
+    mirror_registry_guest_oc_mirror_from: >-
+      file://{{ mirror_registry_content.archive.from }}
+  when: mirror_registry_content.enabled | bool
+
+- name: Select the oc-mirror authfile for the requested workflow
+  ansible.builtin.set_fact:
+    mirror_registry_guest_oc_mirror_authfile: >-
+      {{
+        mirror_registry_content.auth.merged_auth_file
+        if mirror_registry_guest_effective_workflow in ['direct', 'm2d']
+        else mirror_registry_content.auth.local_registry_auth_file
+      }}
+  when: mirror_registry_content.enabled | bool
+
+- name: Build the oc-mirror dry-run command
+  ansible.builtin.set_fact:
+    mirror_registry_guest_oc_mirror_dry_run_argv: >-
+      {{
+        [
+          mirror_registry_service.oc_mirror_binary,
+          '--v2',
+          '--config',
+          mirror_registry_content.workspace.config_file
+        ] +
+        (
+          [
+            '--workspace',
+            'file://' ~ mirror_registry_content.workspace.root,
+            '--authfile',
+            mirror_registry_guest_oc_mirror_authfile,
+            '--dry-run',
+            mirror_registry_guest_oc_mirror_destination
+          ]
+          if mirror_registry_guest_effective_workflow == 'direct'
+          else [
+            '--authfile',
+            mirror_registry_guest_oc_mirror_authfile,
+            '--dry-run',
+            mirror_registry_guest_oc_mirror_archive
+          ]
+          if mirror_registry_guest_effective_workflow == 'm2d'
+          else [
+            '--authfile',
+            mirror_registry_guest_oc_mirror_authfile,
+            '--dry-run',
+            '--from',
+            mirror_registry_guest_oc_mirror_from,
+            mirror_registry_guest_oc_mirror_destination
+          ]
+        )
+      }}
+  when: mirror_registry_content.enabled | bool
+
+- name: Build the oc-mirror execution command
+  ansible.builtin.set_fact:
+    mirror_registry_guest_oc_mirror_run_argv: >-
+      {{
+        [
+          mirror_registry_service.oc_mirror_binary,
+          '--v2',
+          '--config',
+          mirror_registry_content.workspace.config_file
+        ] +
+        (
+          [
+            '--workspace',
+            'file://' ~ mirror_registry_content.workspace.root,
+            '--authfile',
+            mirror_registry_guest_oc_mirror_authfile,
+            mirror_registry_guest_oc_mirror_destination
+          ]
+          if mirror_registry_guest_effective_workflow == 'direct'
+          else [
+            '--authfile',
+            mirror_registry_guest_oc_mirror_authfile,
+            mirror_registry_guest_oc_mirror_archive
+          ]
+          if mirror_registry_guest_effective_workflow == 'm2d'
+          else [
+            '--authfile',
+            mirror_registry_guest_oc_mirror_authfile,
+            '--from',
+            mirror_registry_guest_oc_mirror_from,
+            mirror_registry_guest_oc_mirror_destination
+          ]
+        )
+      }}
+  when: mirror_registry_content.enabled | bool
+
+- name: Derive oc-mirror log file paths
+  ansible.builtin.set_fact:
+    mirror_registry_guest_oc_mirror_dry_run_log: >-
+      /var/log/oc-mirror-{{ mirror_registry_guest_effective_workflow }}-dry-run.log
+    mirror_registry_guest_oc_mirror_run_log: >-
+      /var/log/oc-mirror-{{ mirror_registry_guest_effective_workflow }}.log
+  when: mirror_registry_content.enabled | bool
+
+- name: Validate the ImageSetConfiguration with oc-mirror dry run
+  ansible.builtin.shell: |
+    set -o pipefail
+    {
+      printf 'timestamp=%s\n' "$(date -Is)"
+      printf 'mode=%s\n' {{ mirror_registry_guest_effective_workflow | quote }}
+      printf 'phase=dry-run\n'
+      printf 'command=%s\n' {{ (mirror_registry_guest_oc_mirror_dry_run_argv | map('quote') | join(' ')) | quote }}
+      printf '\n'
+      {{ mirror_registry_guest_oc_mirror_dry_run_argv | map('quote') | join(' ') }}
+    } 2>&1 | tee {{ mirror_registry_guest_oc_mirror_dry_run_log | quote }}
+  args:
+    executable: /bin/bash
+  when:
+    - mirror_registry_content.enabled | bool
+    - mirror_registry_guest_execute_mirror | bool
+    - mirror_registry_content.validate_with_dry_run | bool
+  changed_when: false
+
+- name: Mirror the OpenShift disconnected content into the local registry
+  ansible.builtin.shell: |
+    set -o pipefail
+    {
+      printf 'timestamp=%s\n' "$(date -Is)"
+      printf 'mode=%s\n' {{ mirror_registry_guest_effective_workflow | quote }}
+      printf 'phase=run\n'
+      printf 'command=%s\n' {{ (mirror_registry_guest_oc_mirror_run_argv | map('quote') | join(' ')) | quote }}
+      printf '\n'
+      {{ mirror_registry_guest_oc_mirror_run_argv | map('quote') | join(' ') }}
+    } 2>&1 | tee {{ mirror_registry_guest_oc_mirror_run_log | quote }}
+  args:
+    executable: /bin/bash
+  when:
+    - mirror_registry_content.enabled | bool
+    - mirror_registry_guest_execute_mirror | bool
+  register: mirror_registry_guest_oc_mirror_run
+  changed_when: true
+
+# ---------------------------------------------------------------------------
+# Portable mode (m2d) second phase: push the archive into the local registry.
+# The "portable" mirror_mode pulls content to a disk archive (m2d) and then
+# immediately imports it into the local Quay registry (d2m) in the same run.
+# Without this step, a portable-mode run would leave content on disk only.
+# ---------------------------------------------------------------------------
+
+- name: Build the d2m import command for portable workflow
+  ansible.builtin.set_fact:
+    mirror_registry_guest_oc_mirror_d2m_argv: >-
+      {{
+        [
+          mirror_registry_service.oc_mirror_binary,
+          '--v2',
+          '--config',
+          mirror_registry_content.workspace.config_file,
+          '--authfile',
+          mirror_registry_content.auth.local_registry_auth_file,
+          '--from',
+          mirror_registry_guest_oc_mirror_from,
+          mirror_registry_guest_oc_mirror_destination
+        ]
+      }}
+    mirror_registry_guest_oc_mirror_d2m_log: /var/log/oc-mirror-d2m.log
+  when:
+    - mirror_registry_content.enabled | bool
+    - mirror_registry_guest_execute_mirror | bool
+    - mirror_registry_content.mirror_mode == 'portable'
+
+- name: Import the m2d archive into the local mirror registry (d2m)
+  ansible.builtin.shell: |
+    set -o pipefail
+    {
+      printf 'timestamp=%s\n' "$(date -Is)"
+      printf 'mode=d2m\n'
+      printf 'phase=run\n'
+      printf 'command=%s\n' {{ (mirror_registry_guest_oc_mirror_d2m_argv | map('quote') | join(' ')) | quote }}
+      printf '\n'
+      {{ mirror_registry_guest_oc_mirror_d2m_argv | map('quote') | join(' ') }}
+    } 2>&1 | tee {{ mirror_registry_guest_oc_mirror_d2m_log | quote }}
+  args:
+    executable: /bin/bash
+  when:
+    - mirror_registry_content.enabled | bool
+    - mirror_registry_guest_execute_mirror | bool
+    - mirror_registry_content.mirror_mode == 'portable'
+  register: mirror_registry_guest_oc_mirror_d2m_run
+  changed_when: true

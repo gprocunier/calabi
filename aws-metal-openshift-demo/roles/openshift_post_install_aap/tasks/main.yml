@@ -1,0 +1,586 @@
+---
+- name: Derive OpenShift AAP orchestration context
+  ansible.builtin.set_fact:
+    openshift_post_install_aap_base_dn: >-
+      {{
+        idm_vm.domain.split('.')
+        | map('regex_replace', '^', 'dc=')
+        | join(',')
+      }}
+
+- name: Derive remaining OpenShift AAP orchestration context
+  ansible.builtin.set_fact:
+    openshift_post_install_aap_oc_local_path: >-
+      {{ lab_execution_tools_root }}/{{ mirror_registry_ocp_release }}/bin/oc
+    openshift_post_install_aap_kubeconfig_local_path: >-
+      {{ lab_execution_ocp_generated_root }}/auth/kubeconfig
+    openshift_post_install_aap_idm_ca_local_path: >-
+      {{ lab_execution_ocp_generated_root }}/idm-ca.crt
+    openshift_post_install_aap_remote_oc_path: >-
+      {{ openshift_post_install_aap_remote_dir }}/oc
+    openshift_post_install_aap_remote_kubeconfig_path: >-
+      {{ openshift_post_install_aap_remote_dir }}/kubeconfig
+    openshift_post_install_aap_remote_idm_ca_path: >-
+      {{ openshift_post_install_aap_remote_dir }}/idm-ca.crt
+    openshift_post_install_aap_remote_operatorgroup_path: >-
+      {{ openshift_post_install_aap_remote_dir }}/operatorgroup.yaml
+    openshift_post_install_aap_remote_subscription_path: >-
+      {{ openshift_post_install_aap_remote_dir }}/subscription.yaml
+    openshift_post_install_aap_remote_instance_path: >-
+      {{ openshift_post_install_aap_remote_dir }}/ansibleautomationplatform.yaml
+    openshift_post_install_aap_remote_authenticator_payload_path: >-
+      {{ openshift_post_install_aap_remote_dir }}/ldap-authenticator.json
+    openshift_post_install_aap_remote_allow_map_payload_path: >-
+      {{ openshift_post_install_aap_remote_dir }}/ldap-allow-map.json
+    openshift_post_install_aap_remote_superuser_map_payload_path: >-
+      {{ openshift_post_install_aap_remote_dir }}/ldap-superuser-map.json
+    openshift_post_install_aap_ldap_bind_dn: >-
+      {{
+        openshift_aap.ldap.bind_dn
+        if openshift_aap.ldap.bind_dn | length > 0
+        else 'uid=admin,cn=users,cn=accounts,' ~ openshift_post_install_aap_base_dn
+      }}
+    openshift_post_install_aap_ldap_user_search_base_dn: >-
+      {{
+        openshift_aap.ldap.user_search_base_dn
+        if openshift_aap.ldap.user_search_base_dn | length > 0
+        else 'cn=users,cn=accounts,' ~ openshift_post_install_aap_base_dn
+      }}
+    openshift_post_install_aap_ldap_group_search_base_dn: >-
+      {{
+        openshift_aap.ldap.group_search_base_dn
+        if openshift_aap.ldap.group_search_base_dn | length > 0
+        else 'cn=groups,cn=accounts,' ~ openshift_post_install_aap_base_dn
+      }}
+    openshift_post_install_aap_ldap_require_group_dns: >-
+      {{
+        openshift_aap.ldap.require_group_dns
+        if openshift_aap.ldap.require_group_dns | length > 0
+        else ['cn=openshift-admin,cn=groups,cn=accounts,' ~ openshift_post_install_aap_base_dn]
+      }}
+
+- name: Assert local AAP orchestration artifacts exist
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  delegate_to: localhost
+  become: false
+  loop:
+    - "{{ openshift_post_install_aap_oc_local_path }}"
+    - "{{ openshift_post_install_aap_kubeconfig_local_path }}"
+    - "{{ openshift_post_install_aap_idm_ca_local_path }}"
+  register: openshift_post_install_aap_local_stats
+
+- name: Fail when required AAP orchestration artifacts are missing
+  ansible.builtin.assert:
+    that:
+      - openshift_post_install_aap_local_stats.results | map(attribute='stat.exists') | min
+    fail_msg: >-
+      OpenShift AAP orchestration requires generated oc, kubeconfig, and
+      idm-ca.crt artifacts.
+
+- name: Create remote AAP workspace
+  ansible.builtin.file:
+    path: "{{ openshift_post_install_aap_remote_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Copy pinned oc binary to remote AAP workspace
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_aap_oc_local_path }}"
+    dest: "{{ openshift_post_install_aap_remote_oc_path }}"
+    mode: "0755"
+
+- name: Copy generated kubeconfig to remote AAP workspace
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_aap_kubeconfig_local_path }}"
+    dest: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+    mode: "0600"
+
+- name: Copy IdM CA to remote AAP workspace
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_aap_idm_ca_local_path }}"
+    dest: "{{ openshift_post_install_aap_remote_idm_ca_path }}"
+    mode: "0644"
+
+- name: Render AAP operator group manifest
+  ansible.builtin.template:
+    src: operatorgroup.yaml.j2
+    dest: "{{ openshift_post_install_aap_remote_operatorgroup_path }}"
+    mode: "0644"
+
+- name: Render AAP subscription manifest
+  ansible.builtin.template:
+    src: subscription.yaml.j2
+    dest: "{{ openshift_post_install_aap_remote_subscription_path }}"
+    mode: "0644"
+
+- name: Render AAP instance manifest
+  ansible.builtin.template:
+    src: ansibleautomationplatform.yaml.j2
+    dest: "{{ openshift_post_install_aap_remote_instance_path }}"
+    mode: "0644"
+
+- name: Ensure AAP namespace exists
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_aap_remote_oc_path }}" create namespace \
+      "{{ openshift_aap.namespace }}" --dry-run=client -o yaml \
+    | "{{ openshift_post_install_aap_remote_oc_path }}" apply -f -
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Create AAP admin password secret
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_aap_remote_oc_path }}" create secret generic \
+      "{{ openshift_aap.admin_password_secret_name }}" \
+      -n "{{ openshift_aap.namespace }}" \
+      --from-literal=password='{{ openshift_aap.admin_password }}' \
+      --dry-run=client -o yaml \
+    | "{{ openshift_post_install_aap_remote_oc_path }}" apply -f -
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Create AAP IdM CA bundle secret
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_aap_remote_oc_path }}" create secret generic \
+      "{{ openshift_aap.idm_ca_secret_name }}" \
+      -n "{{ openshift_aap.namespace }}" \
+      --from-file=bundle-ca.crt="{{ openshift_post_install_aap_remote_idm_ca_path }}" \
+      --dry-run=client -o yaml \
+    | "{{ openshift_post_install_aap_remote_oc_path }}" apply -f -
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Apply AAP operator group
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_aap_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_aap_remote_operatorgroup_path }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Apply AAP subscription
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_aap_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_aap_remote_subscription_path }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Wait for AAP operator CSV to be selected
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_aap_remote_oc_path }}" get subscription \
+      "{{ openshift_aap.subscription_name }}" \
+      -n "{{ openshift_aap.namespace }}" \
+      -o jsonpath='{.status.currentCSV}' | tr -d '\n'
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+  register: openshift_post_install_aap_current_csv
+  changed_when: false
+  retries: 60
+  delay: 10
+  until: openshift_post_install_aap_current_csv.stdout | length > 0
+
+- name: Wait for AAP operator CSV phase Succeeded
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_aap_remote_oc_path }}"
+      - get
+      - csv
+      - "{{ openshift_post_install_aap_current_csv.stdout }}"
+      - -n
+      - "{{ openshift_aap.namespace }}"
+      - -o
+      - jsonpath={.status.phase}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+  register: openshift_post_install_aap_csv_phase
+  changed_when: false
+  retries: 60
+  delay: 10
+  until: openshift_post_install_aap_csv_phase.stdout == 'Succeeded'
+
+- name: Apply AAP instance
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_aap_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_aap_remote_instance_path }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Wait for AAP gateway deployment to exist
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_aap_remote_oc_path }}"
+      - get
+      - deployment
+      - "{{ openshift_aap.instance_name }}-gateway"
+      - -n
+      - "{{ openshift_aap.namespace }}"
+      - -o
+      - name
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+  register: openshift_post_install_aap_gateway_deployment
+  changed_when: false
+  retries: 90
+  delay: 10
+  until: openshift_post_install_aap_gateway_deployment.rc == 0
+
+- name: Wait for AAP gateway deployment rollout
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_aap_remote_oc_path }}"
+      - rollout
+      - status
+      - "deployment/{{ openshift_aap.instance_name }}-gateway"
+      - -n
+      - "{{ openshift_aap.namespace }}"
+      - --timeout=15m
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+  changed_when: false
+
+- name: Wait for AAP controller deployment to exist
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_aap_remote_oc_path }}"
+      - get
+      - automationcontroller
+      - "{{ openshift_aap.controller.name }}"
+      - -n
+      - "{{ openshift_aap.namespace }}"
+      - -o
+      - name
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+  register: openshift_post_install_aap_controller_deployment_name
+  changed_when: false
+  retries: 90
+  delay: 10
+  until: openshift_post_install_aap_controller_deployment_name.stdout | length > 0
+
+- name: Wait for AAP controller-web deployment object to exist
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_aap_remote_oc_path }}"
+      - get
+      - "deployment/{{ openshift_aap.controller.name }}-web"
+      - -n
+      - "{{ openshift_aap.namespace }}"
+      - -o
+      - name
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+  register: openshift_post_install_aap_controller_web_deploy
+  changed_when: false
+  retries: 90
+  delay: 10
+  until: openshift_post_install_aap_controller_web_deploy.rc == 0
+
+- name: Wait for primary AAP controller web deployment rollout
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_aap_remote_oc_path }}"
+      - rollout
+      - status
+      - "deployment/{{ openshift_aap.controller.name }}-web"
+      - -n
+      - "{{ openshift_aap.namespace }}"
+      - --timeout=20m
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+  changed_when: false
+
+- name: Wait for primary AAP controller task deployment rollout
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_aap_remote_oc_path }}"
+      - rollout
+      - status
+      - "deployment/{{ openshift_aap.controller.name }}-task"
+      - -n
+      - "{{ openshift_aap.namespace }}"
+      - --timeout=20m
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+  changed_when: false
+
+- name: Render AAP LDAP authenticator payload
+  ansible.builtin.copy:
+    dest: "{{ openshift_post_install_aap_remote_authenticator_payload_path }}"
+    mode: "0600"
+    content: |-
+      {
+        "name": {{ openshift_aap.ldap.authenticator_name | to_json }},
+        "enabled": {{ openshift_aap.ldap.enabled | to_json }},
+        "create_objects": {{ openshift_aap.ldap.create_objects | to_json }},
+        "remove_users": {{ openshift_aap.ldap.remove_users | to_json }},
+        "type": "ansible_base.authentication.authenticator_plugins.ldap",
+        "order": 2,
+        "configuration": {
+          "SERVER_URI": [{{ openshift_aap.ldap.server_uri | to_json }}],
+          "BIND_DN": {{ openshift_post_install_aap_ldap_bind_dn | to_json }},
+          "BIND_PASSWORD": {{ openshift_aap.ldap.bind_password | to_json }},
+          "GROUP_TYPE": {{ openshift_aap.ldap.group_type | to_json }},
+          "GROUP_TYPE_PARAMS": {{ openshift_aap.ldap.group_type_parameters | to_json }},
+          "GROUP_SEARCH": [
+            {{ openshift_post_install_aap_ldap_group_search_base_dn | to_json }},
+            "SCOPE_SUBTREE",
+            {{ openshift_aap.ldap.group_search_filter | to_json }}
+          ],
+          "USER_ATTR_MAP": {
+            "username": "uid",
+            "email": "mail",
+            "first_name": "givenName",
+            "last_name": "sn"
+          },
+          "USER_SEARCH": [
+            {{ openshift_post_install_aap_ldap_user_search_base_dn | to_json }},
+            "SCOPE_SUBTREE",
+            {{ openshift_aap.ldap.user_search_filter | to_json }}
+          ]
+        }
+      }
+
+- name: Render AAP LDAP superuser-map payload
+  ansible.builtin.copy:
+    dest: "{{ openshift_post_install_aap_remote_superuser_map_payload_path }}"
+    mode: "0600"
+    content: |-
+      {
+        "name": "openshift-admin AAP superuser",
+        "map_type": "is_superuser",
+        "revoke": true,
+        "triggers": {
+          "groups": {
+            "has_or": {{ openshift_post_install_aap_ldap_require_group_dns | to_json }}
+          }
+        }
+      }
+
+- name: Wait for AAP route to answer
+  ansible.builtin.command:
+    argv:
+      - curl
+      - -sk
+      - -o
+      - /dev/null
+      - -w
+      - "%{http_code}"
+      - "https://{{ openshift_aap.route_host }}/api/gateway/v1/ui_auth/"
+  register: openshift_post_install_aap_ui_auth_status
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_aap_ui_auth_status.stdout == '200'
+
+- name: Look up existing AAP LDAP authenticator
+  ansible.builtin.shell: |
+    set -o pipefail
+    curl -sku {{ openshift_aap.admin_username | quote }}:{{ openshift_aap.admin_password | quote }} \
+      -k \
+      https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticators/ \
+      -o {{ openshift_post_install_aap_remote_dir }}/authenticators.json
+    curl -sku {{ openshift_aap.admin_username | quote }}:{{ openshift_aap.admin_password | quote }} \
+      -k \
+      https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticators/ \
+      -o /dev/null >/dev/null 2>&1
+    python3 - <<'PY'
+    import json,sys
+    data=json.load(open("{{ openshift_post_install_aap_remote_dir }}/authenticators.json"))
+    matches=[x for x in data.get("results", []) if x.get("name") == {{ openshift_aap.ldap.authenticator_name | to_json }}]
+    print(matches[0]["id"] if matches else "")
+    PY
+  args:
+    executable: /bin/bash
+  register: openshift_post_install_aap_existing_authenticator_id
+  changed_when: false
+
+- name: Create AAP LDAP authenticator when absent
+  ansible.builtin.shell: |
+    set -euo pipefail
+    curl -sku {{ openshift_aap.admin_username | quote }}:{{ openshift_aap.admin_password | quote }} \
+      -k \
+      --fail-with-body \
+      -H 'Content-Type: application/json' \
+      -X POST \
+      https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticators/ \
+      --data-binary @{{ openshift_post_install_aap_remote_authenticator_payload_path }} \
+      -o {{ openshift_post_install_aap_remote_dir }}/authenticator-create.json
+    python3 - <<'PY'
+    import json
+    data=json.load(open("{{ openshift_post_install_aap_remote_dir }}/authenticator-create.json"))
+    print(data.get("id", ""))
+    PY
+  args:
+    executable: /bin/bash
+  register: openshift_post_install_aap_create_authenticator_id
+  changed_when: true
+  when: openshift_post_install_aap_existing_authenticator_id.stdout | length == 0
+
+- name: Seed resulting AAP LDAP authenticator id from existing or create response
+  ansible.builtin.set_fact:
+    openshift_post_install_aap_authenticator_id_seed: >-
+      {{
+        openshift_post_install_aap_existing_authenticator_id.stdout
+        if openshift_post_install_aap_existing_authenticator_id.stdout | length > 0
+        else (
+          openshift_post_install_aap_create_authenticator_id.stdout
+          | default('')
+        )
+      }}
+
+- name: Look up resulting AAP LDAP authenticator id
+  ansible.builtin.shell: |
+    set -o pipefail
+    if [[ -n {{ openshift_post_install_aap_authenticator_id_seed | quote }} ]]; then
+      printf '%s\n' {{ openshift_post_install_aap_authenticator_id_seed | quote }}
+      exit 0
+    fi
+    curl -sku {{ openshift_aap.admin_username | quote }}:{{ openshift_aap.admin_password | quote }} \
+      -k \
+      https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticators/ \
+      -o {{ openshift_post_install_aap_remote_dir }}/authenticators.json
+    curl -sku {{ openshift_aap.admin_username | quote }}:{{ openshift_aap.admin_password | quote }} \
+      -k \
+      https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticators/ \
+      -o /dev/null >/dev/null 2>&1
+    python3 - <<'PY'
+    import json,sys
+    data=json.load(open("{{ openshift_post_install_aap_remote_dir }}/authenticators.json"))
+    matches=[x for x in data.get("results", []) if x.get("name") == {{ openshift_aap.ldap.authenticator_name | to_json }}]
+    print(matches[0]["id"] if matches else "")
+    PY
+  args:
+    executable: /bin/bash
+  register: openshift_post_install_aap_authenticator_id
+  changed_when: false
+  retries: 12
+  delay: 5
+  until: openshift_post_install_aap_authenticator_id.stdout | length > 0
+
+- name: Assert AAP LDAP authenticator exists
+  ansible.builtin.assert:
+    that:
+      - openshift_post_install_aap_authenticator_id.stdout | length > 0
+    fail_msg: AAP LDAP authenticator was not created successfully.
+
+- name: Look up existing AAP authenticator maps
+  ansible.builtin.shell: |
+    set -o pipefail
+    curl -sku {{ openshift_aap.admin_username | quote }}:{{ openshift_aap.admin_password | quote }} \
+      -k \
+      https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticator_maps/ \
+      -o {{ openshift_post_install_aap_remote_dir }}/authenticator-maps.json
+    curl -sku {{ openshift_aap.admin_username | quote }}:{{ openshift_aap.admin_password | quote }} \
+      -k \
+      https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticator_maps/ \
+      -o /dev/null >/dev/null 2>&1
+    python3 - <<'PY'
+    import json,sys
+    data=json.load(open("{{ openshift_post_install_aap_remote_dir }}/authenticator-maps.json"))
+    names={item["name"] for item in data.get("results", [])}
+    print("\n".join(sorted(names)))
+    PY
+  args:
+    executable: /bin/bash
+  register: openshift_post_install_aap_existing_map_names
+  changed_when: false
+
+- name: Create AAP LDAP superuser map when absent
+  ansible.builtin.shell: |
+    set -o pipefail
+    python3 - <<'PY' > {{ openshift_post_install_aap_remote_dir }}/ldap-superuser-map-final.json
+    import json
+    payload=json.load(open({{ openshift_post_install_aap_remote_superuser_map_payload_path | to_json }}))
+    payload["authenticator"]={{ openshift_post_install_aap_authenticator_id.stdout | int }}
+    print(json.dumps(payload))
+    PY
+    curl -sku {{ openshift_aap.admin_username | quote }}:{{ openshift_aap.admin_password | quote }} \
+      -k \
+      --fail-with-body \
+      -H 'Content-Type: application/json' \
+      -X POST \
+      https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticator_maps/ \
+      --data-binary @{{ openshift_post_install_aap_remote_dir }}/ldap-superuser-map-final.json
+  args:
+    executable: /bin/bash
+  changed_when: true
+  when: "'openshift-admin AAP superuser' not in openshift_post_install_aap_existing_map_names.stdout_lines"
+
+- name: Restart AAP gateway deployment after CA bundle/auth changes
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_aap_remote_oc_path }}"
+      - rollout
+      - restart
+      - "deployment/{{ openshift_aap.instance_name }}-gateway"
+      - -n
+      - "{{ openshift_aap.namespace }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Wait for AAP gateway rollout after LDAP changes
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_aap_remote_oc_path }}"
+      - rollout
+      - status
+      - "deployment/{{ openshift_aap.instance_name }}-gateway"
+      - -n
+      - "{{ openshift_aap.namespace }}"
+      - --timeout=15m
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+  changed_when: false
+
+- name: Validate AAP LDAP login for the configured user
+  ansible.builtin.shell: |
+    set -o pipefail
+    TMPDIR="$(mktemp -d)"
+    trap 'rm -rf "${TMPDIR}"' EXIT
+    curl -skc "${TMPDIR}/cookies.txt" \
+      https://{{ openshift_aap.route_host }}/api/gateway/v1/login/ \
+      -o /dev/null
+    CSRF_TOKEN="$(awk '/csrftoken/ {print $7}' "${TMPDIR}/cookies.txt" | tail -n1)"
+    curl -skb "${TMPDIR}/cookies.txt" -c "${TMPDIR}/cookies.txt" \
+      -e https://{{ openshift_aap.route_host }}/api/gateway/v1/login/ \
+      -X POST \
+      https://{{ openshift_aap.route_host }}/api/gateway/v1/login/ \
+      --data-urlencode "csrfmiddlewaretoken=${CSRF_TOKEN}" \
+      --data-urlencode "username={{ openshift_aap.validation_username }}" \
+      --data-urlencode "password={{ openshift_aap.validation_password }}" \
+      --data-urlencode "next=/api/gateway/v1/" \
+      -o /dev/null -w "%{http_code}"
+  args:
+    executable: /bin/bash
+  register: openshift_post_install_aap_ldap_login_status
+  changed_when: false
+  retries: 1
+  delay: 1
+  until: openshift_post_install_aap_ldap_login_status.stdout == '302'

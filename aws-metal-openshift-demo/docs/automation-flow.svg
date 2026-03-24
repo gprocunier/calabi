@@ -1,0 +1,349 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1480" viewBox="0 0 1600 1480" role="img" aria-labelledby="title desc">
+  <title id="title">Automation Flow</title>
+  <desc id="desc">Phase-based automation flow for the Calabi OpenShift lab, from outer infrastructure through bootstrap, bastion-side lab work, and cluster plus day-2 operations.</desc>
+
+  <defs>
+    <linearGradient id="pageBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fafafa"/>
+      <stop offset="100%" stop-color="#f1f1f1"/>
+    </linearGradient>
+    <linearGradient id="phaseBg" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#f7f7f7"/>
+    </linearGradient>
+    <linearGradient id="redBand" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ee0000"/>
+      <stop offset="100%" stop-color="#c9190b"/>
+    </linearGradient>
+    <filter id="cardShadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#151515" flood-opacity="0.10"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6a6e73"/>
+    </marker>
+    <style><![CDATA[
+      .title {
+        font-family: "Red Hat Display", "Red Hat Text", Arial, sans-serif;
+        font-size: 36px;
+        font-weight: 700;
+        fill: #151515;
+      }
+      .subtitle {
+        font-family: "Red Hat Text", Arial, sans-serif;
+        font-size: 16px;
+        fill: #4d4d4d;
+      }
+      .phase {
+        fill: url(#phaseBg);
+        stroke: #d2d2d2;
+        stroke-width: 1;
+        rx: 24;
+      }
+      .phaseTag {
+        fill: url(#redBand);
+        rx: 999;
+      }
+      .phaseMeta {
+        font-family: "Red Hat Text", Arial, sans-serif;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        fill: #ffffff;
+      }
+      .phaseTitle {
+        font-family: "Red Hat Text", Arial, sans-serif;
+        font-size: 20px;
+        font-weight: 700;
+        fill: #151515;
+      }
+      .phaseBody {
+        font-family: "Red Hat Text", Arial, sans-serif;
+        font-size: 13px;
+        fill: #4d4d4d;
+      }
+      .card {
+        fill: #ffffff;
+        stroke: #d2d2d2;
+        stroke-width: 1.2;
+        rx: 18;
+        filter: url(#cardShadow);
+      }
+      .cardAccent {
+        fill: #ee0000;
+      }
+      .cardTitle {
+        font-family: "Red Hat Text", Arial, sans-serif;
+        font-size: 18px;
+        font-weight: 700;
+        fill: #151515;
+      }
+      .cardPath {
+        font-family: "Red Hat Mono", "Courier New", monospace;
+        font-size: 11px;
+        fill: #6a6e73;
+      }
+      .cardBody {
+        font-family: "Red Hat Text", Arial, sans-serif;
+        font-size: 13px;
+        fill: #4d4d4d;
+      }
+      .arrow {
+        fill: none;
+        stroke: #6a6e73;
+        stroke-width: 3;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        marker-end: url(#arrow);
+      }
+      .downArrow {
+        fill: none;
+        stroke: #6a6e73;
+        stroke-width: 4;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        marker-end: url(#arrow);
+      }
+    ]]></style>
+  </defs>
+
+  <rect x="0" y="0" width="1600" height="1480" fill="url(#pageBg)"/>
+
+  <!-- Phase 1 -->
+  <g transform="translate(56,40)">
+    <rect class="phase" x="0" y="0" width="1488" height="252"/>
+    <rect class="phaseTag" x="26" y="22" width="330" height="30"/>
+    <text class="phaseMeta" x="44" y="42">PHASE 1  ·  OUTER INFRASTRUCTURE</text>
+    <text class="phaseTitle" x="28" y="86">Create the substrate and land on the metal host</text>
+    <text class="phaseBody" x="28" y="112">
+      <tspan x="28" dy="0">This phase creates the public-cloud network and the metal instance, then hands off to the operator-facing bootstrap path.</tspan>
+    </text>
+
+    <g transform="translate(130,136)">
+      <rect class="card" x="0" y="0" width="340" height="104"/>
+      <rect class="cardAccent" x="0" y="0" width="340" height="8" rx="18"/>
+      <text class="cardTitle" x="20" y="34">Tenant Stack</text>
+      <text class="cardPath" x="20" y="54">cloudformation/deploy-stack.sh tenant</text>
+      <text class="cardBody" x="20" y="74">
+        <tspan x="20" dy="0">VPC, subnet, routing, and the</tspan>
+        <tspan x="20" dy="16">persistent public endpoint.</tspan>
+      </text>
+    </g>
+
+    <g transform="translate(574,136)">
+      <rect class="card" x="0" y="0" width="340" height="104"/>
+      <rect class="cardAccent" x="0" y="0" width="340" height="8" rx="18"/>
+      <text class="cardTitle" x="20" y="34">Host Stack</text>
+      <text class="cardPath" x="20" y="54">cloudformation/deploy-stack.sh host</text>
+      <text class="cardBody" x="20" y="74">
+        <tspan x="20" dy="0">Creates `virt-01`, first boot config,</tspan>
+        <tspan x="20" dy="16">and the guest volume substrate.</tspan>
+      </text>
+    </g>
+
+    <path class="arrow" d="M 470 188 H 554"/>
+  </g>
+
+  <path class="downArrow" d="M 800 304 V 344"/>
+
+  <!-- Phase 2 -->
+  <g transform="translate(56,350)">
+    <rect class="phase" x="0" y="0" width="1488" height="304"/>
+    <rect class="phaseTag" x="26" y="22" width="356" height="30"/>
+    <text class="phaseMeta" x="44" y="42">PHASE 2  ·  WORKSTATION TO VIRT-01</text>
+    <text class="phaseTitle" x="28" y="86">Prepare the host, build support services, then stage onto bastion</text>
+    <text class="phaseBody" x="28" y="112">
+      <tspan x="28" dy="0">This is the transition from generic infrastructure to a usable lab environment.</tspan>
+      <tspan x="28" dy="18">The operator still drives the flow from the workstation, but the end goal is to shift execution into the management network.</tspan>
+    </text>
+
+    <g transform="translate(80,180)">
+      <rect class="card" x="0" y="0" width="300" height="112"/>
+      <rect class="cardAccent" x="0" y="0" width="300" height="8" rx="18"/>
+      <text class="cardTitle" x="20" y="34">site-bootstrap</text>
+      <text class="cardPath" x="20" y="54">playbooks/site-bootstrap.yml</text>
+      <text class="cardBody" x="20" y="74">
+        <tspan x="20" dy="0">Outside-facing orchestration</tspan>
+        <tspan x="20" dy="16">from the operator workstation.</tspan>
+      </text>
+    </g>
+
+    <g transform="translate(430,180)">
+      <rect class="card" x="0" y="0" width="300" height="112"/>
+      <rect class="cardAccent" x="0" y="0" width="300" height="8" rx="18"/>
+      <text class="cardTitle" x="20" y="34">Prepare virt-01</text>
+      <text class="cardPath" x="20" y="54">playbooks/bootstrap/site.yml</text>
+      <text class="cardBody" x="20" y="74">
+        <tspan x="20" dy="0">KVM, libvirt, OVS, NAT, RHSM,</tspan>
+        <tspan x="20" dy="16">updates, Cockpit, and host policy.</tspan>
+      </text>
+    </g>
+
+    <g transform="translate(780,180)">
+      <rect class="card" x="0" y="0" width="300" height="112"/>
+      <rect class="cardAccent" x="0" y="0" width="300" height="8" rx="18"/>
+      <text class="cardTitle" x="20" y="34">Build Support Guests</text>
+      <text class="cardPath" x="20" y="54">
+        <tspan x="20" dy="0">bootstrap/idm.yml ·</tspan>
+        <tspan x="20" dy="14">bootstrap/bastion.yml</tspan>
+      </text>
+      <text class="cardBody" x="20" y="86">
+        <tspan x="20" dy="0">Build `idm-01` and `bastion-01`,</tspan>
+        <tspan x="20" dy="16">then align them to the lab model.</tspan>
+      </text>
+    </g>
+
+    <g transform="translate(1130,180)">
+      <rect class="card" x="0" y="0" width="272" height="112"/>
+      <rect class="cardAccent" x="0" y="0" width="272" height="8" rx="18"/>
+      <text class="cardTitle" x="20" y="34">Stage To Bastion</text>
+      <text class="cardPath" x="20" y="54">
+        <tspan x="20" dy="0">playbooks/bootstrap/</tspan>
+        <tspan x="20" dy="14">bastion-stage.yml</tspan>
+      </text>
+      <text class="cardBody" x="20" y="86">
+        <tspan x="20" dy="0">Refresh the staged repo, secrets,</tspan>
+        <tspan x="20" dy="16">and helper shell environment.</tspan>
+      </text>
+    </g>
+
+    <path class="arrow" d="M 380 236 H 410"/>
+    <path class="arrow" d="M 730 236 H 760"/>
+    <path class="arrow" d="M 1080 236 H 1110"/>
+  </g>
+
+  <path class="downArrow" d="M 800 650 V 690"/>
+
+  <!-- Phase 3 -->
+  <g transform="translate(56,696)">
+    <rect class="phase" x="0" y="0" width="1488" height="330"/>
+    <rect class="phaseTag" x="26" y="22" width="304" height="30"/>
+    <text class="phaseMeta" x="44" y="42">PHASE 3  ·  BASTION-SIDE LAB</text>
+    <text class="phaseTitle" x="28" y="86">Build lab services and prepare the installer inputs</text>
+    <text class="phaseBody" x="28" y="112">
+      <tspan x="28" dy="0">Once bastion is staged, the work shifts inside the management network.</tspan>
+      <tspan x="28" dy="18">This phase gets the mirror registry ready, publishes DNS, and produces the binaries, configs, and agent media the cluster needs.</tspan>
+    </text>
+
+    <g transform="translate(80,190)">
+      <rect class="card" x="0" y="0" width="250" height="112"/>
+      <rect class="cardAccent" x="0" y="0" width="250" height="8" rx="18"/>
+      <text class="cardTitle" x="20" y="34">site-lab</text>
+      <text class="cardPath" x="20" y="54">playbooks/site-lab.yml</text>
+      <text class="cardBody" x="20" y="76">
+        <tspan x="20" dy="0">Main bastion-side entrypoint</tspan>
+        <tspan x="20" dy="16">for inside-facing lab work.</tspan>
+      </text>
+    </g>
+
+    <g transform="translate(382,190)">
+      <rect class="card" x="0" y="0" width="250" height="112"/>
+      <rect class="cardAccent" x="0" y="0" width="250" height="8" rx="18"/>
+      <text class="cardTitle" x="20" y="34">Mirror Registry</text>
+      <text class="cardPath" x="20" y="54">
+        <tspan x="20" dy="0">playbooks/lab/</tspan>
+        <tspan x="20" dy="14">mirror-registry.yml</tspan>
+      </text>
+      <text class="cardBody" x="20" y="86">
+        <tspan x="20" dy="0">Build Quay, join IdM, and run</tspan>
+        <tspan x="20" dy="16">the disconnected mirror path.</tspan>
+      </text>
+    </g>
+
+    <g transform="translate(684,190)">
+      <rect class="card" x="0" y="0" width="250" height="112"/>
+      <rect class="cardAccent" x="0" y="0" width="250" height="8" rx="18"/>
+      <text class="cardTitle" x="20" y="34">OpenShift DNS</text>
+      <text class="cardPath" x="20" y="54">
+        <tspan x="20" dy="0">playbooks/lab/</tspan>
+        <tspan x="20" dy="14">openshift-dns.yml</tspan>
+      </text>
+      <text class="cardBody" x="20" y="86">
+        <tspan x="20" dy="0">Publish cluster zones and</tspan>
+        <tspan x="20" dy="16">records into IdM.</tspan>
+      </text>
+    </g>
+
+    <g transform="translate(986,190)">
+      <rect class="card" x="0" y="0" width="422" height="112"/>
+      <rect class="cardAccent" x="0" y="0" width="422" height="8" rx="18"/>
+      <text class="cardTitle" x="20" y="34">Installer Inputs</text>
+      <text class="cardPath" x="20" y="54">
+        <tspan x="20" dy="0">installer-binaries.yml · install-artifacts.yml</tspan>
+        <tspan x="20" dy="14">agent-media.yml</tspan>
+      </text>
+      <text class="cardBody" x="20" y="86">
+        <tspan x="20" dy="0">Download tools, render cluster config,</tspan>
+        <tspan x="20" dy="16">and generate or publish the agent ISO.</tspan>
+      </text>
+    </g>
+
+    <path class="arrow" d="M 330 246 H 362"/>
+    <path class="arrow" d="M 632 246 H 664"/>
+    <path class="arrow" d="M 934 246 H 966"/>
+  </g>
+
+  <path class="downArrow" d="M 800 1038 V 1078"/>
+
+  <!-- Phase 4 -->
+  <g transform="translate(56,1084)">
+    <rect class="phase" x="0" y="0" width="1488" height="282"/>
+    <rect class="phaseTag" x="26" y="22" width="320" height="30"/>
+    <text class="phaseMeta" x="44" y="42">PHASE 4  ·  CLUSTER AND DAY-2</text>
+    <text class="phaseTitle" x="28" y="86">Create the cluster, wait for install completion, then normalize and configure it</text>
+    <text class="phaseBody" x="28" y="112">
+      <tspan x="28" dy="0">The last phase builds the guest shells, waits for the OpenShift install to converge, removes install media, and applies the baseline day-2 configuration.</tspan>
+    </text>
+
+    <g transform="translate(120,150)">
+      <rect class="card" x="0" y="0" width="310" height="104"/>
+      <rect class="cardAccent" x="0" y="0" width="310" height="8" rx="18"/>
+      <text class="cardTitle" x="20" y="34">Cluster Shells</text>
+      <text class="cardPath" x="20" y="54">cluster/openshift-cluster.yml</text>
+      <text class="cardBody" x="20" y="74">
+        <tspan x="20" dy="0">Create the nine guest shells and</tspan>
+        <tspan x="20" dy="16">attach agent boot media.</tspan>
+      </text>
+    </g>
+
+    <g transform="translate(488,150)">
+      <rect class="card" x="0" y="0" width="310" height="104"/>
+      <rect class="cardAccent" x="0" y="0" width="310" height="8" rx="18"/>
+      <text class="cardTitle" x="20" y="34">Install And Normalize</text>
+      <text class="cardPath" x="20" y="54">
+        <tspan x="20" dy="0">install-wait.yml ·</tspan>
+        <tspan x="20" dy="14">detach-install-media.yml</tspan>
+      </text>
+      <text class="cardBody" x="20" y="80">
+        <tspan x="20" dy="0">Wait for install completion,</tspan>
+        <tspan x="20" dy="16">then restore disk-first boot intent.</tspan>
+      </text>
+    </g>
+
+    <g transform="translate(856,150)">
+      <rect class="card" x="0" y="0" width="310" height="104"/>
+      <rect class="cardAccent" x="0" y="0" width="310" height="8" rx="18"/>
+      <text class="cardTitle" x="20" y="34">Day-2 Baseline</text>
+      <text class="cardPath" x="20" y="54">day2/openshift-post-install.yml</text>
+      <text class="cardBody" x="20" y="74">
+        <tspan x="20" dy="0">Apply the default post-install</tspan>
+        <tspan x="20" dy="16">platform and operator configuration.</tspan>
+      </text>
+    </g>
+
+    <g transform="translate(1224,150)">
+      <rect class="card" x="0" y="0" width="200" height="104"/>
+      <rect class="cardAccent" x="0" y="0" width="200" height="8" rx="18"/>
+      <text class="cardTitle" x="20" y="34">Cleanup</text>
+      <text class="cardPath" x="20" y="54">maintenance/cleanup.yml</text>
+      <text class="cardBody" x="20" y="74">
+        <tspan x="20" dy="0">Keep teardown as the</tspan>
+        <tspan x="20" dy="16">reset path.</tspan>
+      </text>
+    </g>
+
+    <path class="arrow" d="M 430 202 H 468"/>
+    <path class="arrow" d="M 798 202 H 836"/>
+    <path class="arrow" d="M 1166 202 H 1204"/>
+  </g>
+
+</svg>

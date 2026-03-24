@@ -1,0 +1,374 @@
+---
+- name: Derive bastion VM facts from the orchestration data
+  ansible.builtin.set_fact:
+    bastion_role_vm_fqdn: "{{ bastion_vm.name }}.{{ bastion_vm.domain }}"
+    bastion_role_vm_ip_cidr: >-
+      {{ bastion_vm.network.ipv4_address }}/{{ bastion_vm.network.prefix_length }}
+    bastion_role_runtime_dir: /var/lib/aws-metal-openshift-demo/{{ bastion_vm.name }}
+    bastion_role_cloudinit_dir: >-
+      /var/lib/aws-metal-openshift-demo/{{ bastion_vm.name }}/cloudinit
+    bastion_role_cloudinit_iso: >-
+      /var/lib/aws-metal-openshift-demo/{{ bastion_vm.name }}/{{ bastion_vm.name }}-cidata.iso
+    bastion_role_performance_domain_settings: >-
+      {{
+        lab_host_resource_management.performance_domains[
+          bastion_vm.performance_domain.tier
+        ]
+      }}
+
+- name: Initialize the bastion virt-install cputune entries
+  ansible.builtin.set_fact:
+    bastion_role_cputune_entries: >-
+      {{
+        [
+          'shares=' ~
+          (bastion_role_performance_domain_settings.cpu_shares | string),
+          'emulatorpin.cpuset=' ~
+          lab_host_resource_management.cpu_pools.host_emulator
+        ]
+        + (
+          [
+            'iothreadpin0.iothread=1',
+            'iothreadpin0.cpuset=' ~
+            lab_host_resource_management.cpu_pools.host_emulator
+          ]
+          if (bastion_vm.performance_domain.iothreads | int) > 0
+          else []
+        )
+      }}
+
+- name: Add bastion vCPU pinning entries to the virt-install cputune list
+  ansible.builtin.set_fact:
+    bastion_role_cputune_entries: >-
+      {{
+        bastion_role_cputune_entries
+        + [
+            'vcpupin' ~ (item | string) ~ '.vcpu=' ~ (item | string),
+            'vcpupin' ~ (item | string) ~ '.cpuset=' ~
+            lab_host_resource_management.cpu_pools.guest_domain
+          ]
+      }}
+  loop: "{{ range(0, bastion_vm.resources.vcpus | int) | list }}"
+
+- name: Derive bastion virt-install performance-domain arguments
+  ansible.builtin.set_fact:
+    bastion_role_performance_args: >-
+      {{
+        [
+          '--resource',
+          'partition=' ~ bastion_role_performance_domain_settings.partition,
+          '--cputune',
+          bastion_role_cputune_entries | join(',')
+        ]
+        + (
+          [
+            '--iothreads',
+            'iothreads=' ~ (bastion_vm.performance_domain.iothreads | string)
+          ]
+          if (bastion_vm.performance_domain.iothreads | int) > 0
+          else []
+        )
+      }}
+
+- name: Validate the bastion VM orchestration data
+  ansible.builtin.assert:
+    that:
+      - bastion_vm.name | length > 0
+      - bastion_vm.domain | length > 0
+      - bastion_vm.source_image | length > 0
+      - bastion_vm.disk_path | length > 0
+      - bastion_vm.network.libvirt_network | length > 0
+      - bastion_vm.network.libvirt_portgroup | length > 0
+      - bastion_vm.network.interface_name | length > 0
+      - bastion_vm.network.mac_address | length > 0
+      - bastion_vm.network.ipv4_address | length > 0
+      - (bastion_vm.network.prefix_length | int) > 0
+      - bastion_vm.network.gateway | length > 0
+      - bastion_vm.access.admin_user | length > 0
+    fail_msg: >-
+      vars/guests/bastion_vm.yml is missing required bastion guest settings.
+
+- name: Validate RHSM data when bastion guest registration is enabled
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          bastion_vm.subscription.activation_key | length > 0 and
+          bastion_vm.subscription.organization_id | length > 0
+        ) or (
+          bastion_vm.subscription.username | length > 0 and
+          bastion_vm.subscription.password | length > 0
+        )
+    fail_msg: >-
+      Bastion subscription enablement requires either activation_key
+      + organization_id or username + password in vars/guests/bastion_vm.yml.
+  when: bastion_vm.subscription.enabled | bool
+
+- name: Install packages needed for the bastion VM build workflow
+  ansible.builtin.package:
+    name:
+      - qemu-img
+      - qemu-kvm
+      - virt-install
+      - xorriso
+    state: present
+
+- name: Check whether the bastion block device is present
+  ansible.builtin.stat:
+    path: "{{ bastion_vm.disk_path }}"
+  register: bastion_role_block_device_stat
+
+- name: Fail when the bastion block device is missing
+  ansible.builtin.assert:
+    that:
+      - bastion_role_block_device_stat.stat.exists
+    fail_msg: >-
+      Bastion block device {{ bastion_vm.disk_path }} was not found.
+
+- name: Check whether the base QCOW2 image is present
+  ansible.builtin.stat:
+    path: "{{ bastion_vm.source_image }}"
+  register: bastion_role_source_image_stat
+
+- name: Inspect the bastion block device partition table
+  ansible.builtin.command:
+    argv:
+      - lsblk
+      - -nro
+      - PTTYPE
+      - "{{ bastion_vm.disk_path }}"
+  register: bastion_role_disk_pttype
+  changed_when: false
+  failed_when: false
+
+- name: Derive whether the bastion disk must be seeded from the image
+  ansible.builtin.set_fact:
+    bastion_role_seed_disk_from_image: >-
+      {{
+        (bastion_vm.provisioning.rebuild_disk_from_image | bool) or
+        (bastion_role_disk_pttype.stdout | trim | length == 0)
+      }}
+
+- name: Fail when the base QCOW2 image is missing
+  ansible.builtin.assert:
+    that:
+      - bastion_role_source_image_stat.stat.exists
+    fail_msg: >-
+      Bastion source image {{ bastion_vm.source_image }} was not found on
+      the managed hypervisor.
+  when: bastion_role_seed_disk_from_image | bool
+
+- name: Check whether the bastion libvirt domain already exists
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - dominfo
+      - "{{ bastion_role_vm_fqdn }}"
+  register: bastion_role_domain_info
+  changed_when: false
+  failed_when: false
+
+- name: Stop the existing bastion VM before disk reseed or recreation
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - destroy
+      - "{{ bastion_role_vm_fqdn }}"
+  when:
+    - >-
+      bastion_vm.provisioning.recreate_domain | bool or
+      bastion_role_seed_disk_from_image | bool
+    - bastion_role_domain_info.rc == 0
+  changed_when: true
+  failed_when: false
+
+- name: Undefine the existing bastion VM before reseeding the disk
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - undefine
+      - "{{ bastion_role_vm_fqdn }}"
+      - --nvram
+  when:
+    - >-
+      bastion_vm.provisioning.recreate_domain | bool or
+      bastion_role_seed_disk_from_image | bool
+    - bastion_role_domain_info.rc == 0
+  changed_when: true
+  failed_when: false
+
+- name: Create the bastion working directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ bastion_role_cloudinit_dir }}"
+    - "{{ bastion_role_cloudinit_iso | dirname }}"
+
+- name: Render bastion cloud-init metadata
+  ansible.builtin.template:
+    src: meta-data.j2
+    dest: "{{ bastion_role_cloudinit_dir }}/meta-data"
+    mode: "0644"
+
+- name: Render bastion cloud-init user-data
+  ansible.builtin.template:
+    src: user-data.j2
+    dest: "{{ bastion_role_cloudinit_dir }}/user-data"
+    mode: "0600"
+
+- name: Render bastion cloud-init network-config
+  ansible.builtin.template:
+    src: network-config.j2
+    dest: "{{ bastion_role_cloudinit_dir }}/network-config"
+    mode: "0644"
+
+- name: Stage the bastion SSH public key for offline guest injection
+  ansible.builtin.copy:
+    content: "{{ bastion_vm.access.ssh_authorized_keys | first }}\n"
+    dest: "{{ bastion_role_cloudinit_dir }}/access.pub"
+    owner: root
+    group: root
+    mode: "0600"
+  when:
+    - bastion_role_seed_disk_from_image | bool
+    - (bastion_vm.access.ssh_authorized_keys | length) > 0
+
+- name: Rebuild the bastion disk from the QCOW2 image when requested
+  ansible.builtin.command:
+    argv:
+      - qemu-img
+      - convert
+      - -p
+      - -f
+      - qcow2
+      - -O
+      - raw
+      - "{{ bastion_vm.source_image }}"
+      - "{{ bastion_vm.disk_path }}"
+  when: bastion_role_seed_disk_from_image | bool
+  changed_when: true
+
+- name: Force the kernel to reread the bastion block device partition table
+  ansible.builtin.command:
+    argv:
+      - blockdev
+      - --rereadpt
+      - "{{ bastion_vm.disk_path }}"
+  when: bastion_role_seed_disk_from_image | bool
+  changed_when: true
+
+- name: Inject bastion access credentials into the reseeded guest disk
+  ansible.builtin.command:
+    argv: >-
+      {{
+        ['virt-customize', '-a', bastion_vm.disk_path]
+        + [
+            '--run-command',
+            'id -u ' ~ bastion_vm.access.admin_user ~
+            ' >/dev/null 2>&1 || useradd -m -G wheel -s /bin/bash ' ~
+            bastion_vm.access.admin_user,
+            '--run-command',
+            'usermod -aG wheel ' ~ bastion_vm.access.admin_user,
+            '--run-command',
+            'printf ''%s\\n'' ' ~
+            (bastion_vm.access.admin_user ~ ' ALL=(ALL) NOPASSWD:ALL' | quote) ~
+            ' > /etc/sudoers.d/90-' ~ bastion_vm.access.admin_user,
+            '--run-command',
+            'chmod 0440 /etc/sudoers.d/90-' ~ bastion_vm.access.admin_user
+          ]
+        + (
+          [
+            '--ssh-inject',
+            bastion_vm.access.admin_user ~ ':file:' ~
+            bastion_role_cloudinit_dir ~ '/access.pub'
+          ]
+          if (bastion_vm.access.ssh_authorized_keys | length) > 0
+          else []
+        )
+        + (
+          [
+            '--password',
+            bastion_vm.access.admin_user ~ ':password:' ~
+            bastion_vm.access.admin_password,
+            '--password-crypto',
+            'sha512'
+          ]
+          if (bastion_vm.access.admin_password | length) > 0
+          else []
+        )
+      }}
+  when: bastion_role_seed_disk_from_image | bool
+  changed_when: true
+
+- name: Generate the bastion cloud-init ISO
+  ansible.builtin.command:
+    argv:
+      - xorriso
+      - -as
+      - mkisofs
+      - -o
+      - "{{ bastion_role_cloudinit_iso }}"
+      - -V
+      - CIDATA
+      - -J
+      - -R
+      - -graft-points
+      - user-data={{ bastion_role_cloudinit_dir }}/user-data
+      - meta-data={{ bastion_role_cloudinit_dir }}/meta-data
+      - network-config={{ bastion_role_cloudinit_dir }}/network-config
+  changed_when: true
+
+- name: Ensure libvirt can read the bastion cloud-init ISO
+  ansible.builtin.file:
+    path: "{{ bastion_role_cloudinit_iso }}"
+    owner: qemu
+    group: qemu
+    mode: "0644"
+
+- name: Install the bastion VM when absent or recreation was requested
+  ansible.builtin.command:
+    argv: >-
+      {{
+        [
+          'virt-install',
+          '--name', bastion_role_vm_fqdn,
+          '--osinfo', bastion_vm.osinfo,
+          '--boot', bastion_vm.boot.firmware,
+          '--machine', bastion_vm.boot.machine,
+          '--memory', (bastion_vm.resources.memory_mb | string),
+          '--vcpus', (bastion_vm.resources.vcpus | string),
+          '--cpu', bastion_vm.boot.cpu_model,
+          '--controller', 'type=scsi,model=virtio-scsi',
+          '--disk',
+          'path=' ~ bastion_vm.disk_path ~
+          ',format=raw,bus=scsi,cache=none,io=native,discard=unmap,' ~
+          'rotation_rate=1',
+          '--disk',
+          'path=' ~ bastion_role_cloudinit_iso ~ ',device=cdrom',
+          '--network',
+          'network=' ~ bastion_vm.network.libvirt_network ~
+          ',portgroup=' ~ bastion_vm.network.libvirt_portgroup ~
+          ',model=virtio,mac=' ~ bastion_vm.network.mac_address,
+          '--rng', 'builtin',
+          '--import',
+          '--graphics', 'none',
+          '--console', 'pty,target_type=serial',
+          '--autostart',
+          '--noautoconsole'
+        ]
+        + bastion_role_performance_args +
+        (
+          ['--tpm', 'none']
+          if not (bastion_vm.boot.tpm_enabled | default(false) | bool)
+          else []
+        )
+      }}
+  when: >-
+    bastion_role_domain_info.rc != 0 or
+    bastion_vm.provisioning.recreate_domain | bool or
+    bastion_role_seed_disk_from_image | bool
+  changed_when: true

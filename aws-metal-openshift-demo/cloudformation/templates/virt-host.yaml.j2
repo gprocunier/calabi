@@ -1,0 +1,222 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Host-only AWS IaaS stack for the OpenShift nested-virtualization lab. Reuses an
+  existing VPC and subnet, creates the {{ virt_host.name }} security group and
+  instance, and attaches the guest EBS volumes required by the lab.
+
+Parameters:
+  LabPrefix:
+    Type: String
+    Default: workshop
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+    Description: Prefix used for AWS resource names and tags.
+
+  AvailabilityZone:
+    Type: AWS::EC2::AvailabilityZone::Name
+    Default: {{ availability_zone }}
+    Description: Availability Zone used for the instance and EBS volumes.
+
+  ExistingVpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Existing VPC used by {{ virt_host.name }}.
+
+  ExistingSubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Existing subnet used by {{ virt_host.name }}.
+
+  PersistentPublicIpAllocationId:
+    Type: String
+    Default: ""
+    Description: >-
+      Optional existing Elastic IP allocation ID to associate with
+      {{ virt_host.name }}. Leave empty to use an ephemeral public IP.
+
+  VirtHostPrivateIp:
+    Type: String
+    Default: 10.0.8.207
+    Description: Static private IP for {{ virt_host.name }}.
+
+  AdminIngressCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: Source CIDR allowed to access SSH and ICMP on {{ virt_host.name }}.
+    AllowedPattern: '^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])$'
+
+  VirtHostInstanceType:
+    Type: String
+    Default: m5.metal
+    Description: EC2 instance type for {{ virt_host.name }}.
+
+  RedHatRhelPrivateAmiId:
+    Type: AWS::EC2::Image::Id
+    Description: Private or shared Red Hat RHEL AMI ID used for {{ virt_host.name }}.
+
+  ImportedKeyPairName:
+    Type: String
+    AllowedPattern: '^[a-zA-Z0-9._@-]+$'
+    Description: AWS EC2 key pair name to create and associate with {{ virt_host.name }}.
+
+  ImportedPublicKeyMaterial:
+    Type: String
+    NoEcho: true
+    Description: OpenSSH-formatted public key material added to ec2-user by cloud-init.
+
+  Ec2UserPasswordHash:
+    Type: String
+    NoEcho: true
+    Description: SHA-512 password hash assigned to ec2-user for Cockpit login.
+
+  RootVolumeSizeGiB:
+    Type: Number
+    Default: {{ virt_host.root_volume.size_gib }}
+    Description: Root volume size for {{ virt_host.name }}.
+
+  RootVolumeIops:
+    Type: Number
+    Default: {{ virt_host.root_volume.iops }}
+    Description: Root gp3 IOPS for {{ virt_host.name }}.
+
+  RootVolumeThroughput:
+    Type: Number
+    Default: {{ virt_host.root_volume.throughput_mbps }}
+    Description: Root gp3 throughput (MiB/s) for {{ virt_host.name }}.
+
+Conditions:
+  UsePersistentElasticIp: !Not [!Equals [!Ref PersistentPublicIpAllocationId, ""]]
+
+Resources:
+  VirtHostSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for {{ virt_host.name }}
+      GroupName: {{ virt_host.name }}
+      VpcId: !Ref ExistingVpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AdminIngressCidr
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: !Ref AdminIngressCidr
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: {{ virt_host.name }}
+
+  VirtHostKeyPair:
+    Type: AWS::EC2::KeyPair
+    Properties:
+      KeyName: !Ref ImportedKeyPairName
+      PublicKeyMaterial: !Ref ImportedPublicKeyMaterial
+      Tags:
+        - Key: Name
+          Value: !Ref ImportedKeyPairName
+
+  VirtHostInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref RedHatRhelPrivateAmiId
+      InstanceType: !Ref VirtHostInstanceType
+      AvailabilityZone: !Ref AvailabilityZone
+      KeyName: !Ref VirtHostKeyPair
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: !If [UsePersistentElasticIp, false, true]
+          DeviceIndex: 0
+          DeleteOnTermination: true
+          GroupSet:
+            - !Ref VirtHostSecurityGroup
+          PrivateIpAddress: !Ref VirtHostPrivateIp
+          SubnetId: !Ref ExistingSubnetId
+      SourceDestCheck: true
+      BlockDeviceMappings:
+        - DeviceName: {{ virt_host.root_volume.device_name }}
+          Ebs:
+            VolumeType: {{ virt_host.root_volume.volume_type }}
+            VolumeSize: !Ref RootVolumeSizeGiB
+            Iops: !Ref RootVolumeIops
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub |
+          #cloud-config
+          hostname: {{ virt_host.name }}
+          fqdn: {{ virt_host.name }}.{{ virt_host.domain }}
+          prefer_fqdn_over_hostname: true
+          manage_etc_hosts: true
+          package_update: true
+          package_upgrade: false
+          packages:
+            - cockpit
+          ssh_pwauth: false
+          users:
+            - default
+            - name: ec2-user
+              lock_passwd: false
+              inactive: false
+              passwd: ${Ec2UserPasswordHash}
+              ssh_authorized_keys:
+                - ${ImportedPublicKeyMaterial}
+          runcmd:
+            - [usermod, -U, ec2-user]
+            - [systemctl, enable, --now, cockpit.socket]
+      Tags:
+        - Key: Name
+          Value: {{ virt_host.name }}
+        - Key: Role
+          Value: virt-host
+
+  VirtHostElasticIpAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Condition: UsePersistentElasticIp
+    Properties:
+      AllocationId: !Ref PersistentPublicIpAllocationId
+      InstanceId: !Ref VirtHostInstance
+
+{% for volume in guest_volumes %}
+  Volume{{ volume.logical_suffix }}:
+    Type: AWS::EC2::Volume
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone
+      VolumeType: {{ volume.volume_type }}
+      Size: {{ volume.size_gib }}
+      Iops: {{ volume.iops }}
+      Throughput: {{ volume.throughput_mbps }}
+      Tags:
+        - Key: Name
+          Value: {{ volume.name }}
+        - Key: GuestDisk
+          Value: {{ volume.name }}
+        - Key: Purpose
+          Value: {{ volume.purpose }}
+
+  AttachVolume{{ volume.logical_suffix }}:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: {{ volume.aws_device_name }}
+      InstanceId: !Ref VirtHostInstance
+      VolumeId: !Ref Volume{{ volume.logical_suffix }}
+
+{% endfor %}
+Outputs:
+  SecurityGroupId:
+    Description: Security group attached to {{ virt_host.name }}.
+    Value: !Ref VirtHostSecurityGroup
+
+  ImportedKeyPairName:
+    Description: EC2 key pair created for {{ virt_host.name }}.
+    Value: !Ref VirtHostKeyPair
+
+  VirtHostInstanceId:
+    Description: EC2 instance ID for {{ virt_host.name }}.
+    Value: !Ref VirtHostInstance
+
+  VirtHostPrivateIp:
+    Description: Private IP address assigned to {{ virt_host.name }}.
+    Value: !Ref VirtHostPrivateIp
+
+  VirtHostPublicIpMode:
+    Description: Whether the stack is using an Elastic IP or an ephemeral public IP.
+    Value: !If [UsePersistentElasticIp, elastic-ip, ephemeral-public-ip]

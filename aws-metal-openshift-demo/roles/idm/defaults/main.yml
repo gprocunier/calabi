@@ -1,0 +1,3 @@
+---
+# Role-internal defaults. Guest-specific settings belong in vars/guests/idm_vm.yml.
+idm_runtime_root: /var/lib/aws-metal-openshift-demo

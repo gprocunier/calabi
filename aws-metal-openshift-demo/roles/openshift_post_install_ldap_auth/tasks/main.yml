@@ -1,0 +1,490 @@
+---
+- name: Derive the LDAP base DN from the IdM domain
+  ansible.builtin.set_fact:
+    openshift_post_install_ldap_auth_base_dn: >-
+      {{
+        idm_vm.domain.split('.')
+        | map('regex_replace', '^', 'dc=')
+        | join(',')
+      }}
+
+- name: Derive post-install LDAP auth paths and DNs
+  ansible.builtin.set_fact:
+    openshift_post_install_ldap_auth_oc_local_path: >-
+      {{ lab_execution_tools_root }}/{{
+      mirror_registry_ocp_release }}/bin/oc
+    openshift_post_install_ldap_auth_kubeconfig_local_path: >-
+      {{ lab_execution_ocp_generated_root }}/auth/kubeconfig
+    openshift_post_install_ldap_auth_idm_ca_local_path: >-
+      {{ lab_execution_ocp_generated_root }}/idm-ca.crt
+    openshift_post_install_ldap_auth_remote_dir: >-
+      /var/tmp/openshift-post-install-ldap-auth
+    openshift_post_install_ldap_auth_remote_oc_path: >-
+      /var/tmp/openshift-post-install-ldap-auth/oc
+    openshift_post_install_ldap_auth_remote_kubeconfig_path: >-
+      /var/tmp/openshift-post-install-ldap-auth/kubeconfig
+    openshift_post_install_ldap_auth_remote_idm_ca_path: >-
+      /var/tmp/openshift-post-install-ldap-auth/idm-ca.crt
+    openshift_post_install_ldap_auth_remote_bind_password_path: >-
+      /var/tmp/openshift-post-install-ldap-auth/ldap-bind-password
+    openshift_post_install_ldap_auth_remote_group_sync_config_path: >-
+      /var/tmp/openshift-post-install-ldap-auth/ldap-group-sync.yaml
+    openshift_post_install_ldap_auth_remote_group_whitelist_path: >-
+      /var/tmp/openshift-post-install-ldap-auth/ldap-group-whitelist.txt
+    openshift_post_install_ldap_auth_remote_group_sync_script_path: >-
+      /usr/local/sbin/openshift-ldap-group-sync
+    openshift_post_install_ldap_auth_bind_dn: >-
+      {{
+        openshift_ldap_auth.bind_dn
+        if openshift_ldap_auth.bind_dn | length > 0
+        else 'uid=admin,cn=users,cn=accounts,' ~
+        openshift_post_install_ldap_auth_base_dn
+      }}
+    openshift_post_install_ldap_auth_user_search_base_dn: >-
+      {{
+        openshift_ldap_auth.user_search_base_dn
+        if openshift_ldap_auth.user_search_base_dn | length > 0
+        else 'cn=users,cn=accounts,' ~
+        openshift_post_install_ldap_auth_base_dn
+      }}
+    openshift_post_install_ldap_auth_group_search_base_dn: >-
+      {{
+        openshift_ldap_auth.group_search_base_dn
+        if openshift_ldap_auth.group_search_base_dn | length > 0
+        else 'cn=groups,cn=accounts,' ~
+        openshift_post_install_ldap_auth_base_dn
+      }}
+    openshift_post_install_ldap_auth_login_url: >-
+      {{
+        openshift_ldap_auth.login_url
+        if openshift_ldap_auth.login_url | length > 0
+        else 'ldaps://' ~ idm_vm.name ~ '.' ~ idm_vm.domain ~ '/' ~
+        (
+          openshift_ldap_auth.user_search_base_dn
+          if openshift_ldap_auth.user_search_base_dn | length > 0
+          else 'cn=users,cn=accounts,' ~
+          openshift_post_install_ldap_auth_base_dn
+        ) ~ '?uid?sub?(objectClass=person)'
+      }}
+    openshift_post_install_ldap_auth_whitelist_group_dns: >-
+      {{
+        openshift_ldap_auth.group_sync.whitelist_groups
+        | map('regex_replace', '^', 'cn=')
+        | map('regex_replace', '$',
+          ',cn=groups,cn=accounts,' ~ openshift_post_install_ldap_auth_base_dn)
+        | list
+      }}
+
+- name: Assert local LDAP auth artifacts exist
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  delegate_to: localhost
+  become: true
+  loop:
+    - "{{ openshift_post_install_ldap_auth_oc_local_path }}"
+    - "{{ openshift_post_install_ldap_auth_kubeconfig_local_path }}"
+    - "{{ openshift_post_install_ldap_auth_idm_ca_local_path }}"
+  register: openshift_post_install_ldap_auth_local_stats
+
+- name: Fail when required local LDAP auth artifacts are missing
+  ansible.builtin.assert:
+    that:
+      - >-
+        openshift_post_install_ldap_auth_local_stats.results
+        | map(attribute='stat.exists')
+        | min
+    fail_msg: >-
+      Expected local LDAP auth artifacts were not found. Ensure generated oc,
+      kubeconfig, and idm-ca.crt exist first.
+
+- name: Create remote LDAP auth workspace
+  ansible.builtin.file:
+    path: "{{ openshift_post_install_ldap_auth_remote_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Copy pinned oc binary to the hypervisor
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_ldap_auth_oc_local_path }}"
+    dest: "{{ openshift_post_install_ldap_auth_remote_oc_path }}"
+    mode: "0755"
+
+- name: Copy generated kubeconfig to the hypervisor
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_ldap_auth_kubeconfig_local_path }}"
+    dest: "{{ openshift_post_install_ldap_auth_remote_kubeconfig_path }}"
+    mode: "0600"
+
+- name: Copy IdM CA to the hypervisor
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_ldap_auth_idm_ca_local_path }}"
+    dest: "{{ openshift_post_install_ldap_auth_remote_idm_ca_path }}"
+    mode: "0644"
+
+- name: Detect whether the LDAP identity provider is already configured
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_ldap_auth_remote_oc_path }}"
+      - get
+      - oauth
+      - cluster
+      - -o
+      - jsonpath={.spec.identityProviders[*].name}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_ldap_auth_remote_kubeconfig_path }}"
+  register: openshift_post_install_ldap_auth_existing_idps
+  changed_when: false
+  failed_when: false
+
+- name: Detect whether the authentication operator is already healthy
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_ldap_auth_remote_oc_path }}"
+      - get
+      - clusteroperator
+      - authentication
+      - -o
+      - jsonpath={.status.conditions[?(@.type=="Available")].status},{.status.conditions[?(@.type=="Progressing")].status},{.status.conditions[?(@.type=="Degraded")].status}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_ldap_auth_remote_kubeconfig_path }}"
+  register: openshift_post_install_ldap_auth_operator_health
+  changed_when: false
+  failed_when: false
+
+- name: Derive whether LDAP auth configuration can be reused as-is
+  ansible.builtin.set_fact:
+    openshift_post_install_ldap_auth_reuse_existing: >-
+      {{
+        openshift_ldap_auth.identity_provider_name in
+        (openshift_post_install_ldap_auth_existing_idps.stdout | default('')).split()
+        and
+        openshift_post_install_ldap_auth_operator_health.stdout == 'True,False,False'
+      }}
+
+- name: Configure LDAP auth resources when reuse is not possible
+  when: not openshift_post_install_ldap_auth_reuse_existing
+  block:
+    - name: Stage LDAP bind password on the hypervisor
+      ansible.builtin.copy:
+        content: "{{ openshift_ldap_auth.bind_password }}"
+        dest: "{{ openshift_post_install_ldap_auth_remote_bind_password_path }}"
+        mode: "0600"
+
+    - name: Render LDAP group sync config on the hypervisor
+      ansible.builtin.template:
+        src: ldap-group-sync.yaml.j2
+        dest: "{{ openshift_post_install_ldap_auth_remote_group_sync_config_path }}"
+        mode: "0600"
+
+    - name: Render LDAP group sync whitelist on the hypervisor
+      ansible.builtin.template:
+        src: ldap-group-whitelist.txt.j2
+        dest: "{{ openshift_post_install_ldap_auth_remote_group_whitelist_path }}"
+        mode: "0600"
+
+    - name: Render LDAP group sync script on the hypervisor
+      ansible.builtin.template:
+        src: ldap-group-sync.sh.j2
+        dest: "{{ openshift_post_install_ldap_auth_remote_group_sync_script_path }}"
+        mode: "0750"
+      become: true
+
+    - name: Create the OpenShift LDAP bind secret
+      ansible.builtin.shell: >-
+        set -o pipefail &&
+        {{ openshift_post_install_ldap_auth_remote_oc_path }}
+        create secret generic ldap-bind-password
+        -n openshift-config
+        --from-literal=bindPassword='{{ openshift_ldap_auth.bind_password }}'
+        --dry-run=client -o yaml
+        | {{ openshift_post_install_ldap_auth_remote_oc_path }} apply -f -
+      args:
+        executable: /bin/bash
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_ldap_auth_remote_kubeconfig_path }}"
+      register: openshift_post_install_ldap_auth_bind_secret
+      changed_when: >-
+        'created' in openshift_post_install_ldap_auth_bind_secret.stdout
+        or 'configured' in openshift_post_install_ldap_auth_bind_secret.stdout
+
+    - name: Create the OpenShift LDAP CA config map
+      ansible.builtin.shell: >-
+        set -o pipefail &&
+        {{ openshift_post_install_ldap_auth_remote_oc_path }}
+        create configmap ldap-ca
+        -n openshift-config
+        --from-file=ca.crt={{ openshift_post_install_ldap_auth_remote_idm_ca_path }}
+        --dry-run=client -o yaml
+        | {{ openshift_post_install_ldap_auth_remote_oc_path }} apply -f -
+      args:
+        executable: /bin/bash
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_ldap_auth_remote_kubeconfig_path }}"
+      register: openshift_post_install_ldap_auth_ca_configmap
+      changed_when: >-
+        'created' in openshift_post_install_ldap_auth_ca_configmap.stdout
+        or 'configured' in openshift_post_install_ldap_auth_ca_configmap.stdout
+
+    - name: Apply the OAuth LDAP identity provider configuration
+      ansible.builtin.template:
+        src: oauth-ldap.yaml.j2
+        dest: "{{ openshift_post_install_ldap_auth_remote_dir }}/oauth-ldap.yaml"
+        mode: "0600"
+
+    - name: Apply the OAuth resource with the LDAP identity provider
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_ldap_auth_remote_oc_path }}"
+          - apply
+          - -f
+          - "{{ openshift_post_install_ldap_auth_remote_dir }}/oauth-ldap.yaml"
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_ldap_auth_remote_kubeconfig_path }}"
+      register: openshift_post_install_ldap_auth_oauth_apply
+      changed_when: >-
+        'configured' in openshift_post_install_ldap_auth_oauth_apply.stdout
+        or 'created' in openshift_post_install_ldap_auth_oauth_apply.stdout
+
+    - name: Wait for the authentication cluster operator to be available
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_ldap_auth_remote_oc_path }}"
+          - get
+          - clusteroperator
+          - authentication
+          - -o
+          - jsonpath={.status.conditions[?(@.type=="Available")].status}
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_ldap_auth_remote_kubeconfig_path }}"
+      register: openshift_post_install_ldap_auth_authentication_available
+      changed_when: false
+      retries: 30
+      delay: 10
+      until: >-
+        openshift_post_install_ldap_auth_authentication_available.stdout == 'True'
+
+- name: Publish LDAP auth reuse decision
+  ansible.builtin.debug:
+    msg: >-
+      Reusing existing LDAP/OAuth configuration:
+      {{ openshift_post_install_ldap_auth_reuse_existing }}
+
+- name: Run an immediate LDAP group sync
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_ldap_auth_remote_group_sync_script_path }}"
+  register: openshift_post_install_ldap_auth_group_sync_run
+  changed_when: true
+  become: true
+
+- name: Install recurring LDAP group sync cron job
+  ansible.builtin.copy:
+    dest: /etc/cron.d/openshift-ldap-group-sync
+    mode: "0644"
+    content: |-
+      SHELL=/bin/bash
+      PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      {{ openshift_ldap_auth.group_sync.schedule }} root \
+      {{ openshift_post_install_ldap_auth_remote_group_sync_script_path }} \
+      >> /var/log/openshift-ldap-group-sync.log 2>&1
+  become: true
+
+- name: Render cluster-admin binding for the synced openshift-admin group
+  ansible.builtin.copy:
+    dest: >-
+      {{ openshift_post_install_ldap_auth_remote_dir }}/
+      openshift-admin-cluster-admin.yaml
+    mode: "0600"
+    content: |-
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: openshift-admin-cluster-admin
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: cluster-admin
+      subjects:
+        - apiGroup: rbac.authorization.k8s.io
+          kind: Group
+          name: {{ openshift_ldap_auth.authorization.cluster_admin_group }}
+
+- name: Apply cluster-admin access for the synced openshift-admin group
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_ldap_auth_remote_oc_path }}"
+      - apply
+      - -f
+      - >-
+        {{ openshift_post_install_ldap_auth_remote_dir }}/
+        openshift-admin-cluster-admin.yaml
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_ldap_auth_remote_kubeconfig_path }}"
+  register: openshift_post_install_ldap_auth_cluster_admin_binding
+  changed_when: >-
+    'created' in openshift_post_install_ldap_auth_cluster_admin_binding.stdout
+    or 'configured' in
+    openshift_post_install_ldap_auth_cluster_admin_binding.stdout
+
+- name: Capture the synced LDAP groups
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_ldap_auth_remote_oc_path }}"
+      - get
+      - groups
+      - "{{ item }}"
+      - -o
+      - yaml
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_ldap_auth_remote_kubeconfig_path }}"
+  loop: "{{ openshift_ldap_auth.group_sync.whitelist_groups }}"
+  register: openshift_post_install_ldap_auth_group_summary
+  changed_when: false
+
+- name: Publish LDAP auth and group sync summary
+  ansible.builtin.debug:
+    msg:
+      - >-
+        LDAP login option '{{ openshift_ldap_auth.identity_provider_name }}'
+        is configured against {{ idm_vm.name }}.{{ idm_vm.domain }}.
+      - >-
+        Group sync ran immediately and is scheduled as
+        '{{ openshift_ldap_auth.group_sync.schedule }}'.
+      - >-
+        {{
+          openshift_post_install_ldap_auth_group_summary.results
+          | map(attribute='stdout_lines')
+          | list
+        }}
+
+# ---------------------------------------------------------------------------
+# Smoke test: verify a real LDAP-authenticated login works end-to-end.
+# Logs in as the first identity_user in the openshift-admin group using the
+# LDAP IDP, confirms the resulting token resolves the correct username, then
+# immediately revokes the token.  A dedicated kubeconfig is used so this
+# test never touches the admin kubeconfig.
+# ---------------------------------------------------------------------------
+
+- name: Wait for the authentication cluster operator to finish progressing
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_ldap_auth_remote_oc_path }}"
+      - get
+      - clusteroperator
+      - authentication
+      - -o
+      - >-
+        jsonpath={.status.conditions[?(@.type=="Progressing")].status}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_ldap_auth_remote_kubeconfig_path }}"
+  register: openshift_post_install_ldap_auth_authentication_settled
+  changed_when: false
+  retries: 60
+  delay: 10
+  until: >-
+    openshift_post_install_ldap_auth_authentication_settled.stdout == 'False'
+
+- name: Set LDAP auth smoke test facts
+  ansible.builtin.set_fact:
+    openshift_post_install_ldap_auth_test_user: >-
+      {{
+        idm_server.identity_users
+        | selectattr('groups', 'contains', 'openshift-admin')
+        | map(attribute='name')
+        | first
+      }}
+    openshift_post_install_ldap_auth_test_kubeconfig: >-
+      {{ openshift_post_install_ldap_auth_remote_dir }}/kubeconfig-ldap-test
+    openshift_post_install_ldap_auth_api_url: >-
+      https://api.{{ openshift_install_cluster.name }}.{{
+      openshift_install_cluster.base_domain }}:6443
+
+- name: Capture the OAuth route hostname for the LDAP smoke test
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_ldap_auth_remote_oc_path }}"
+      - get
+      - route
+      - oauth-openshift
+      - -n
+      - openshift-authentication
+      - -o
+      - jsonpath={.spec.host}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_ldap_auth_remote_kubeconfig_path }}"
+  register: openshift_post_install_ldap_auth_oauth_route
+  changed_when: false
+
+- name: Wait for the OAuth route to answer health checks before the LDAP smoke test
+  ansible.builtin.command:
+    argv:
+      - curl
+      - -skf
+      - https://{{ openshift_post_install_ldap_auth_oauth_route.stdout }}/healthz
+  register: openshift_post_install_ldap_auth_oauth_health
+  changed_when: false
+  retries: 18
+  delay: 10
+  until: openshift_post_install_ldap_auth_oauth_health.rc == 0
+
+- name: Obtain an LDAP token by logging in as the test user
+  ansible.builtin.shell: |
+    set -o pipefail
+    {{ openshift_post_install_ldap_auth_remote_oc_path }} login \
+      {{ openshift_post_install_ldap_auth_api_url }} \
+      --username={{ openshift_post_install_ldap_auth_test_user | quote }} \
+      --password={{ lab_default_password | quote }} \
+      --insecure-skip-tls-verify \
+      --kubeconfig={{ openshift_post_install_ldap_auth_test_kubeconfig | quote }}
+  args:
+    executable: /bin/bash
+  register: openshift_post_install_ldap_auth_login_result
+  changed_when: false
+  retries: 18
+  delay: 10
+  until: openshift_post_install_ldap_auth_login_result.rc == 0
+  no_log: true
+
+- name: Confirm the LDAP token resolves the correct username
+  ansible.builtin.shell: |
+    set -o pipefail
+    {{ openshift_post_install_ldap_auth_remote_oc_path }} whoami \
+      --kubeconfig={{ openshift_post_install_ldap_auth_test_kubeconfig | quote }}
+  args:
+    executable: /bin/bash
+  register: openshift_post_install_ldap_auth_whoami
+  changed_when: false
+
+- name: Assert the logged-in user matches the expected LDAP username
+  ansible.builtin.assert:
+    that:
+      - >-
+        openshift_post_install_ldap_auth_whoami.stdout | trim ==
+        openshift_post_install_ldap_auth_test_user
+    fail_msg: >-
+      LDAP smoke test failed: expected username
+      '{{ openshift_post_install_ldap_auth_test_user }}' but got
+      '{{ openshift_post_install_ldap_auth_whoami.stdout | trim }}'.
+
+- name: Revoke the LDAP test token
+  ansible.builtin.shell: |
+    set -o pipefail
+    {{ openshift_post_install_ldap_auth_remote_oc_path }} logout \
+      --kubeconfig={{ openshift_post_install_ldap_auth_test_kubeconfig | quote }}
+  args:
+    executable: /bin/bash
+  register: openshift_post_install_ldap_auth_logout
+  changed_when: false
+  ignore_errors: true
+
+- name: Remove the LDAP test kubeconfig
+  ansible.builtin.file:
+    path: "{{ openshift_post_install_ldap_auth_test_kubeconfig }}"
+    state: absent
+
+- name: Publish LDAP smoke test result
+  ansible.builtin.debug:
+    msg: >-
+      LDAP smoke test passed: '{{ openshift_post_install_ldap_auth_test_user }}'
+      authenticated successfully via '{{ openshift_ldap_auth.identity_provider_name }}'
+      and token was revoked.

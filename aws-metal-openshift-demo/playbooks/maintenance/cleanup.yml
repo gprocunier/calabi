@@ -1,0 +1,266 @@
+---
+- name: Clean up the IDM virtual machine
+  hosts: aws_metal
+  become: true
+  gather_facts: "{{ cleanup_scope_all or (cleanup_destroy_idm | default(false) | bool) }}"
+  vars_files:
+    - ../../vars/guests/idm_vm.yml
+  vars:
+    cleanup_scope_all: >-
+      {{
+        not (
+          cleanup_destroy_idm | default(false) | bool or
+          cleanup_destroy_mirror_registry | default(false) | bool or
+          cleanup_destroy_bastion | default(false) | bool or
+          cleanup_destroy_openshift_cluster | default(false) | bool or
+          cleanup_destroy_idm_certs | default(false) | bool or
+          cleanup_destroy_lab_networking | default(false) | bool
+        )
+      }}
+    idm_cleanup_remove_runtime_dir: true
+    idm_cleanup_wipe_block_device: false
+
+  roles:
+    - role: idm_cleanup
+      when: cleanup_scope_all or (cleanup_destroy_idm | default(false) | bool)
+      tags:
+        - idm_cleanup
+
+- name: Clean up the mirror registry virtual machine
+  hosts: aws_metal
+  become: true
+  gather_facts: "{{ cleanup_scope_all or (cleanup_destroy_mirror_registry | default(false) | bool) }}"
+  vars_files:
+    - ../../vars/guests/mirror_registry_vm.yml
+  vars:
+    cleanup_scope_all: >-
+      {{
+        not (
+          cleanup_destroy_idm | default(false) | bool or
+          cleanup_destroy_mirror_registry | default(false) | bool or
+          cleanup_destroy_bastion | default(false) | bool or
+          cleanup_destroy_openshift_cluster | default(false) | bool or
+          cleanup_destroy_idm_certs | default(false) | bool or
+          cleanup_destroy_lab_networking | default(false) | bool
+        )
+      }}
+    mirror_registry_cleanup_remove_runtime_dir: true
+    mirror_registry_cleanup_wipe_block_device: false
+
+  roles:
+    - role: mirror_registry_cleanup
+      when: cleanup_scope_all or (cleanup_destroy_mirror_registry | default(false) | bool)
+      tags:
+        - mirror_registry_cleanup
+
+- name: Clean up the bastion virtual machine
+  hosts: aws_metal
+  become: true
+  gather_facts: "{{ cleanup_scope_all or (cleanup_destroy_bastion | default(false) | bool) }}"
+  vars_files:
+    - ../../vars/guests/bastion_vm.yml
+  vars:
+    cleanup_scope_all: >-
+      {{
+        not (
+          cleanup_destroy_idm | default(false) | bool or
+          cleanup_destroy_mirror_registry | default(false) | bool or
+          cleanup_destroy_bastion | default(false) | bool or
+          cleanup_destroy_openshift_cluster | default(false) | bool or
+          cleanup_destroy_idm_certs | default(false) | bool or
+          cleanup_destroy_lab_networking | default(false) | bool
+        )
+      }}
+    bastion_cleanup_remove_runtime_dir: true
+    bastion_cleanup_wipe_block_device: false
+
+  roles:
+    - role: bastion_cleanup
+      when: cleanup_scope_all or (cleanup_destroy_bastion | default(false) | bool)
+      tags:
+        - bastion_cleanup
+
+- name: Clean up the OpenShift cluster virtual machines
+  hosts: aws_metal
+  become: true
+  gather_facts: "{{ cleanup_scope_all or (cleanup_destroy_openshift_cluster | default(false) | bool) }}"
+  vars_files:
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/guests/openshift_cluster_vm.yml
+  vars:
+    cleanup_scope_all: >-
+      {{
+        not (
+          cleanup_destroy_idm | default(false) | bool or
+          cleanup_destroy_mirror_registry | default(false) | bool or
+          cleanup_destroy_bastion | default(false) | bool or
+          cleanup_destroy_openshift_cluster | default(false) | bool or
+          cleanup_destroy_idm_certs | default(false) | bool or
+          cleanup_destroy_lab_networking | default(false) | bool
+        )
+      }}
+    openshift_cluster_cleanup_wipe_block_devices: false
+
+  roles:
+    - role: openshift_cluster_cleanup
+      when: cleanup_scope_all or (cleanup_destroy_openshift_cluster | default(false) | bool)
+      tags:
+        - openshift_cluster_cleanup
+
+- name: Remove stale OpenShift cluster artifacts from the bastion
+  hosts: aws_metal
+  become: false
+  gather_facts: false
+  vars_files:
+    - ../../vars/guests/bastion_vm.yml
+  vars:
+    cleanup_scope_all: >-
+      {{
+        not (
+          cleanup_destroy_idm | default(false) | bool or
+          cleanup_destroy_mirror_registry | default(false) | bool or
+          cleanup_destroy_bastion | default(false) | bool or
+          cleanup_destroy_openshift_cluster | default(false) | bool or
+          cleanup_destroy_idm_certs | default(false) | bool or
+          cleanup_destroy_lab_networking | default(false) | bool
+        )
+      }}
+  tasks:
+    - name: Check whether the bastion libvirt domain exists
+      ansible.builtin.command:
+        argv:
+          - virsh
+          - dominfo
+          - "{{ bastion_vm.name }}.{{ bastion_vm.domain }}"
+      become: true
+      register: cleanup_bastion_domain_info
+      changed_when: false
+      failed_when: false
+      when:
+        - cleanup_scope_all or (cleanup_destroy_openshift_cluster | default(false) | bool)
+        - not (cleanup_destroy_bastion | default(false) | bool)
+
+    - name: Remove stale tracked-run state files from the bastion
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ssh \
+          -i {{ bastion_client.controller_ssh_private_key_file | quote }} \
+          -o BatchMode=yes \
+          -o IdentitiesOnly=yes \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o ProxyCommand="ssh -i {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{ hostvars[inventory_hostname].ansible_user }}@{{ hostvars[inventory_hostname].ansible_host }} -W %h:%p" \
+          {{ bastion_vm.access.admin_user }}@{{ bastion_vm.network.ipv4_address }} \
+          "sudo bash -lc 'if [ -d /var/tmp/bastion-playbooks ]; then find /var/tmp/bastion-playbooks -maxdepth 1 -type f \\( -name \"*.pid\" -o -name \"*.rc\" -o -name \"*.log\" -o -name \"*.runner.sh\" \\) -delete; fi'"
+      args:
+        executable: /bin/bash
+      delegate_to: localhost
+      register: cleanup_bastion_tracked_state_cleanup
+      changed_when: false
+      retries: 12
+      delay: 5
+      until: cleanup_bastion_tracked_state_cleanup.rc == 0
+      when:
+        - cleanup_bastion_domain_info.rc == 0
+
+    - name: Remove the generated OpenShift cluster artifact root from the bastion
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ssh \
+          -i {{ bastion_client.controller_ssh_private_key_file | quote }} \
+          -o BatchMode=yes \
+          -o IdentitiesOnly=yes \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o ProxyCommand="ssh -i {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{ hostvars[inventory_hostname].ansible_user }}@{{ hostvars[inventory_hostname].ansible_host }} -W %h:%p" \
+          {{ bastion_vm.access.admin_user }}@{{ bastion_vm.network.ipv4_address }} \
+          "sudo rm -rf {{ bastion_client.cluster_artifact_root | quote }}"
+      args:
+        executable: /bin/bash
+      delegate_to: localhost
+      changed_when: true
+      when:
+        - cleanup_bastion_domain_info.rc == 0
+
+    - name: Recreate the clean OpenShift cluster artifact directories on the bastion
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ssh \
+          -i {{ bastion_client.controller_ssh_private_key_file | quote }} \
+          -o BatchMode=yes \
+          -o IdentitiesOnly=yes \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o ProxyCommand="ssh -i {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{ hostvars[inventory_hostname].ansible_user }}@{{ hostvars[inventory_hostname].ansible_host }} -W %h:%p" \
+          {{ bastion_vm.access.admin_user }}@{{ bastion_vm.network.ipv4_address }} \
+          "sudo install -d -o {{ bastion_vm.access.admin_user }} -g {{ bastion_vm.access.admin_user }} -m 0755 {{ bastion_client.cluster_artifact_root | quote }} {{ (bastion_client.cluster_artifact_root ~ '/auth') | quote }}"
+      args:
+        executable: /bin/bash
+      delegate_to: localhost
+      changed_when: true
+      when:
+        - cleanup_bastion_domain_info.rc == 0
+
+- name: Remove OpenShift IdM certificate configuration
+  hosts: aws_metal
+  become: true
+  gather_facts: "{{ cleanup_scope_all or (cleanup_destroy_idm_certs | default(false) | bool) }}"
+  vars_files:
+    - ../../vars/global/mirror_content.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/day2/openshift_idm_certs.yml
+  vars:
+    cleanup_scope_all: >-
+      {{
+        not (
+          cleanup_destroy_idm | default(false) | bool or
+          cleanup_destroy_mirror_registry | default(false) | bool or
+          cleanup_destroy_bastion | default(false) | bool or
+          cleanup_destroy_openshift_cluster | default(false) | bool or
+          cleanup_destroy_idm_certs | default(false) | bool or
+          cleanup_destroy_lab_networking | default(false) | bool
+        )
+      }}
+
+  roles:
+    - role: openshift_post_install_idm_certs_cleanup
+      when: cleanup_scope_all or (cleanup_destroy_idm_certs | default(false) | bool)
+      tags:
+        - openshift_post_install_idm_certs_cleanup
+
+- name: Clean up the lab switch and OVS networking
+  hosts: aws_metal
+  become: true
+  gather_facts: "{{ cleanup_scope_all or (cleanup_destroy_lab_networking | default(false) | bool) }}"
+  vars_files:
+    - ../../vars/global/lab_switch_ports.yml
+  vars:
+    cleanup_scope_all: >-
+      {{
+        not (
+          cleanup_destroy_idm | default(false) | bool or
+          cleanup_destroy_mirror_registry | default(false) | bool or
+          cleanup_destroy_bastion | default(false) | bool or
+          cleanup_destroy_openshift_cluster | default(false) | bool or
+          cleanup_destroy_idm_certs | default(false) | bool or
+          cleanup_destroy_lab_networking | default(false) | bool
+        )
+      }}
+    lab_bridge_name: lab-switch
+    lab_switch_name: lab-switch
+    lab_switch_xml_path: /etc/libvirt/lab-switch.xml
+    lab_domain: workshop.lan
+    lab_uplink_interface: "{{ ansible_default_ipv4.interface }}"
+    lab_cleanup_remove_artifacts: true
+    lab_routed_ports: >-
+      {{ lab_switch_ports | dict2items
+      | selectattr('value.routable', 'equalto', true)
+      | list }}
+
+  roles:
+    - role: lab_cleanup
+      when: cleanup_scope_all or (cleanup_destroy_lab_networking | default(false) | bool)
+      tags:
+        - lab_cleanup

@@ -1,0 +1,15 @@
+---
+- name: Configure Kubernetes NMState on the OpenShift cluster
+  hosts: aws_metal
+  gather_facts: true
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/mirror_content.yml
+    - ../../vars/guests/mirror_registry_vm.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+  tasks:
+    - name: Configure Kubernetes NMState day-2 components
+      ansible.builtin.include_role:
+        name: openshift_post_install_nmstate

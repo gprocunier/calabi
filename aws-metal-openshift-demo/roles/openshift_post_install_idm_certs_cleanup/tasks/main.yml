@@ -1,0 +1,176 @@
+---
+- name: Derive post-install IdM certificate cleanup paths
+  ansible.builtin.set_fact:
+    openshift_post_install_idm_certs_cleanup_oc_local_path: >-
+      {{ lab_execution_tools_root }}/{{
+      mirror_registry_ocp_release }}/bin/oc
+    openshift_post_install_idm_certs_cleanup_kubeconfig_local_path: >-
+      {{ lab_execution_ocp_generated_root }}/auth/kubeconfig
+    openshift_post_install_idm_certs_cleanup_remote_dir: >-
+      /var/tmp/openshift-post-install-idm-certs
+    openshift_post_install_idm_certs_cleanup_remote_oc_path: >-
+      /var/tmp/openshift-post-install-idm-certs/oc
+    openshift_post_install_idm_certs_cleanup_remote_kubeconfig_path: >-
+      /var/tmp/openshift-post-install-idm-certs/kubeconfig
+    openshift_post_install_idm_certs_cleanup_proxy_command: >-
+      ssh -i {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      -W %h:%p {{ ansible_user }}@{{ ansible_host }}
+    openshift_post_install_idm_certs_cleanup_ssh_key_local_path: >-
+      {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+
+- name: Assert local cleanup inputs exist
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  delegate_to: localhost
+  become: false
+  loop:
+    - "{{ openshift_post_install_idm_certs_cleanup_oc_local_path }}"
+    - "{{ openshift_post_install_idm_certs_cleanup_kubeconfig_local_path }}"
+  register: openshift_post_install_idm_certs_cleanup_local_stats
+
+- name: Fail when cleanup inputs are missing
+  ansible.builtin.assert:
+    that:
+      - >-
+        openshift_post_install_idm_certs_cleanup_local_stats.results
+        | map(attribute='stat.exists')
+        | min
+    fail_msg: >-
+      Expected pinned oc and generated kubeconfig to exist before running
+      OpenShift IdM certificate cleanup.
+
+- name: Ensure remote cleanup workspace exists
+  ansible.builtin.file:
+    path: "{{ openshift_post_install_idm_certs_cleanup_remote_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Copy pinned oc binary to the hypervisor for cleanup
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_idm_certs_cleanup_oc_local_path }}"
+    dest: "{{ openshift_post_install_idm_certs_cleanup_remote_oc_path }}"
+    mode: "0755"
+
+- name: Copy generated kubeconfig to the hypervisor for cleanup
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_idm_certs_cleanup_kubeconfig_local_path }}"
+    dest: >-
+      {{ openshift_post_install_idm_certs_cleanup_remote_kubeconfig_path }}
+    mode: "0600"
+
+- name: Remove custom API named certificates from APIServer
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_idm_certs_cleanup_remote_oc_path }}"
+      - --insecure-skip-tls-verify=true
+      - patch
+      - apiserver
+      - cluster
+      - --type=merge
+      - -p
+      - '{"spec":{"servingCerts":{"namedCertificates":[]}}}'
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_idm_certs_cleanup_remote_kubeconfig_path }}
+  register: openshift_post_install_idm_certs_cleanup_apiserver_reset
+  changed_when: true
+
+- name: Remove custom ingress default certificate reference
+  ansible.builtin.shell: |
+    set -euo pipefail
+    {{ openshift_post_install_idm_certs_cleanup_remote_oc_path }} \
+      --insecure-skip-tls-verify=true \
+      patch ingresscontroller/default \
+      -n openshift-ingress-operator \
+      --type=json \
+      -p='[{"op":"remove","path":"/spec/defaultCertificate"}]' \
+      >/dev/null 2>&1 || true
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_idm_certs_cleanup_remote_kubeconfig_path }}
+  changed_when: true
+
+- name: Remove IdM ingress certificate secret from OpenShift
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_idm_certs_cleanup_remote_oc_path }}"
+      - --insecure-skip-tls-verify=true
+      - -n
+      - openshift-ingress
+      - delete
+      - secret
+      - "{{ openshift_idm_certs.ingress.secret_name }}"
+      - --ignore-not-found=true
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_idm_certs_cleanup_remote_kubeconfig_path }}
+  register: openshift_post_install_idm_certs_cleanup_ingress_secret_delete
+  changed_when: >-
+    'deleted' in
+    openshift_post_install_idm_certs_cleanup_ingress_secret_delete.stdout
+
+- name: Remove derived router default certificate secret when present
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_idm_certs_cleanup_remote_oc_path }}"
+      - --insecure-skip-tls-verify=true
+      - -n
+      - openshift-ingress
+      - delete
+      - secret
+      - router-certs-default
+      - --ignore-not-found=true
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_idm_certs_cleanup_remote_kubeconfig_path }}
+  register: openshift_post_install_idm_certs_cleanup_router_secret_delete
+  changed_when: >-
+    'deleted' in
+    openshift_post_install_idm_certs_cleanup_router_secret_delete.stdout
+
+- name: Remove stale API secret from earlier experiments when present
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_idm_certs_cleanup_remote_oc_path }}"
+      - --insecure-skip-tls-verify=true
+      - -n
+      - openshift-config
+      - delete
+      - secret
+      - api-idm-serving-cert
+      - --ignore-not-found=true
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_idm_certs_cleanup_remote_kubeconfig_path }}
+  register: openshift_post_install_idm_certs_cleanup_api_secret_delete
+  changed_when: >-
+    'deleted' in
+    openshift_post_install_idm_certs_cleanup_api_secret_delete.stdout
+
+- name: Remove temporary OpenShift IdM certificate workspace from the hypervisor
+  ansible.builtin.file:
+    path: "{{ openshift_post_install_idm_certs_cleanup_remote_dir }}"
+    state: absent
+
+- name: Remove temporary OpenShift IdM certificate artifacts from IdM
+  ansible.builtin.shell: |
+    set -euo pipefail
+    ssh \
+      -o IdentitiesOnly=yes \
+      -o StrictHostKeyChecking=no \
+      -o UserKnownHostsFile=/dev/null \
+      -o "ProxyCommand={{
+      openshift_post_install_idm_certs_cleanup_proxy_command }}" \
+      -i {{ openshift_post_install_idm_certs_cleanup_ssh_key_local_path }} \
+      {{ idm_vm.access.admin_user }}@{{ idm_vm.network.ipv4_address }} \
+      'sudo rm -f /tmp/request-idm-certs.sh /tmp/apps.csr /tmp/apps.crt \
+      /tmp/apps.ext /tmp/ca-signing.p12 /tmp/ca-signing.key \
+      /tmp/ca-signing.crt /tmp/ca-signing.crt.srl /tmp/ca-export.pw'
+  args:
+    executable: /bin/bash
+  delegate_to: localhost
+  become: false
+  changed_when: true

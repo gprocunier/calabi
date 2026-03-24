@@ -1,0 +1,82 @@
+---
+- name: Install libvirt network definition for the lab switch
+  ansible.builtin.template:
+    src: lab-switch.xml.j2
+    dest: "{{ lab_switch_xml_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: lab_libvirt_switch_xml
+
+- name: Check whether the libvirt lab network already exists
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - -c
+      - qemu:///system
+      - net-info
+      - "{{ lab_switch_name }}"
+  register: lab_libvirt_switch_info
+  changed_when: false
+  failed_when: false
+
+- name: Stop the existing libvirt lab network before redefining it
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - -c
+      - qemu:///system
+      - net-destroy
+      - "{{ lab_switch_name }}"
+  when:
+    - lab_libvirt_switch_xml.changed or lab_libvirt_switch_info.rc != 0
+    - lab_libvirt_switch_info.rc == 0
+  changed_when: true
+  failed_when: false
+
+- name: Undefine the existing libvirt lab network before redefining it
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - -c
+      - qemu:///system
+      - net-undefine
+      - "{{ lab_switch_name }}"
+  when:
+    - lab_libvirt_switch_xml.changed or lab_libvirt_switch_info.rc != 0
+    - lab_libvirt_switch_info.rc == 0
+  changed_when: true
+  failed_when: false
+
+- name: Define the libvirt lab network
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - -c
+      - qemu:///system
+      - net-define
+      - "{{ lab_switch_xml_path }}"
+  when: lab_libvirt_switch_xml.changed or lab_libvirt_switch_info.rc != 0
+  changed_when: true
+
+- name: Start the libvirt lab network
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - -c
+      - qemu:///system
+      - net-start
+      - "{{ lab_switch_name }}"
+  when: lab_libvirt_switch_xml.changed or lab_libvirt_switch_info.rc != 0
+  changed_when: true
+
+- name: Mark the libvirt lab network for autostart
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - -c
+      - qemu:///system
+      - net-autostart
+      - "{{ lab_switch_name }}"
+  when: lab_libvirt_switch_xml.changed or lab_libvirt_switch_info.rc != 0
+  changed_when: true

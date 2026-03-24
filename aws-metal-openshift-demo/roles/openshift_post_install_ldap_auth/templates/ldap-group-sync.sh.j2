@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export KUBECONFIG="{{ openshift_post_install_ldap_auth_remote_kubeconfig_path }}"
+
+"{{ openshift_post_install_ldap_auth_remote_oc_path }}" adm groups sync \
+  --sync-config="{{ openshift_post_install_ldap_auth_remote_group_sync_config_path }}" \
+  --whitelist="{{ openshift_post_install_ldap_auth_remote_group_whitelist_path }}" \
+  --confirm

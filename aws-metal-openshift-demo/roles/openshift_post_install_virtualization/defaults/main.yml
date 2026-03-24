@@ -1,0 +1,65 @@
+---
+openshift_post_install_virtualization_namespace: openshift-cnv
+openshift_post_install_virtualization_subscription_name: kubevirt-hyperconverged
+openshift_post_install_virtualization_package_name: kubevirt-hyperconverged
+openshift_post_install_virtualization_channel: stable
+openshift_post_install_virtualization_source: cs-redhat-operator-index-v4-20
+openshift_post_install_virtualization_source_namespace: openshift-marketplace
+openshift_post_install_virtualization_operatorgroup_name: openshift-cnv
+openshift_post_install_virtualization_hco_name: kubevirt-hyperconverged
+openshift_post_install_virtualization_default_storage_class: >-
+  ocs-storagecluster-ceph-rbd
+openshift_post_install_virtualization_ha_namespace: >-
+  openshift-workload-availability
+openshift_post_install_virtualization_ha_operatorgroup_name: >-
+  openshift-workload-availability
+openshift_post_install_virtualization_nhc_subscription_name: >-
+  node-healthcheck-operator
+openshift_post_install_virtualization_nhc_package_name: >-
+  node-healthcheck-operator
+openshift_post_install_virtualization_nhc_channel: stable
+openshift_post_install_virtualization_nhc_source: cs-redhat-operator-index-v4-20
+openshift_post_install_virtualization_nhc_source_namespace: >-
+  openshift-marketplace
+openshift_post_install_virtualization_far_subscription_name: >-
+  fence-agents-remediation
+openshift_post_install_virtualization_far_package_name: >-
+  fence-agents-remediation
+openshift_post_install_virtualization_far_channel: stable
+openshift_post_install_virtualization_far_source: cs-redhat-operator-index-v4-20
+openshift_post_install_virtualization_far_source_namespace: >-
+  openshift-marketplace
+openshift_post_install_virtualization_nhc_deployment_name: >-
+  node-healthcheck-controller-manager
+openshift_post_install_virtualization_far_deployment_name: >-
+  fence-agents-remediation-controller-manager
+openshift_post_install_virtualization_nhc_instance_enabled: false
+openshift_post_install_virtualization_nhc_instance_name: >-
+  kubevirt-node-healthcheck
+openshift_post_install_virtualization_nhc_min_healthy: 51%
+openshift_post_install_virtualization_nhc_selector:
+  match_expressions:
+    - key: kubevirt.io/schedulable
+      operator: Exists
+openshift_post_install_virtualization_nhc_unhealthy_conditions:
+  - type: Ready
+    status: "False"
+    duration: 300s
+  - type: Ready
+    status: Unknown
+    duration: 300s
+openshift_post_install_virtualization_far_template_enabled: false
+openshift_post_install_virtualization_far_template_name: >-
+  fenceagentsremediationtemplate-default
+openshift_post_install_virtualization_far_template_namespace: >-
+  openshift-workload-availability
+openshift_post_install_virtualization_far_template_spec:
+  agent: ""
+  remediationStrategy: OutOfServiceTaint
+  retrycount: 5
+  retryinterval: 5s
+  timeout: 60s
+  sharedSecretName: ""
+  sharedparameters: {}
+  nodeparameters: {}
+  nodeSecretNames: {}

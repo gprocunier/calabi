@@ -1,0 +1,54 @@
+---
+openshift_aap:
+  namespace: aap
+  operatorgroup_name: aap
+  subscription_name: ansible-automation-platform-operator
+  channel: stable-2.6
+  source: cs-redhat-operator-index-v4-20
+  source_namespace: openshift-marketplace
+  instance_name: workshop-aap
+  admin_username: admin
+  admin_password: "{{ lab_default_password }}"
+  admin_password_secret_name: workshop-aap-admin-password
+  idm_ca_secret_name: workshop-aap-idm-ca
+  route_host: aap.apps.ocp.workshop.lan
+  bundle_cacert_secret: workshop-aap-idm-ca
+  validation_username: sysop
+  validation_password: "{{ lab_default_password }}"
+  database:
+    postgres_storage_class: ocs-storagecluster-ceph-rbd
+    storage: 20Gi
+    resource_requirements:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+  controller:
+    disabled: false
+    name: workshop-aap-controller
+  hub:
+    disabled: true
+  eda:
+    disabled: true
+  lightspeed:
+    disabled: true
+  no_log: false
+  image_pull_policy: IfNotPresent
+  ldap:
+    authenticator_name: Red Hat Identity Management
+    enabled: true
+    create_objects: true
+    remove_users: false
+    login_prompt: Red Hat Identity Management
+    server_uri: ldaps://idm-01.workshop.lan
+    bind_dn: cn=Directory Manager
+    bind_password: "{{ idm_server.ds_password }}"
+    user_search_base_dn: ""
+    group_search_base_dn: ""
+    user_search_filter: uid=%(user)s
+    group_search_filter: (objectClass=groupOfNames)
+    group_type: MemberDNGroupType
+    group_type_parameters:
+      member_attr: member
+      name_attr: cn
+    require_group_dns:
+      - cn=openshift-admin,cn=groups,cn=accounts,dc=workshop,dc=lan

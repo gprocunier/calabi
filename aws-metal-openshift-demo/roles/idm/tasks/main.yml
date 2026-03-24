@@ -1,0 +1,378 @@
+---
+- name: Derive IDM VM facts from the orchestration data
+  ansible.builtin.set_fact:
+    idm_role_vm_fqdn: "{{ idm_vm.name }}.{{ idm_vm.domain }}"
+    idm_role_vm_ip_cidr: >-
+      {{ idm_vm.network.ipv4_address }}/{{ idm_vm.network.prefix_length }}
+    idm_role_runtime_dir: "{{ idm_runtime_root }}/{{ idm_vm.name }}"
+    idm_role_cloudinit_dir: "{{ idm_runtime_root }}/{{ idm_vm.name }}/cloudinit"
+    idm_role_cloudinit_iso: >-
+      {{ idm_runtime_root }}/{{ idm_vm.name }}/{{ idm_vm.name }}-cidata.iso
+    idm_role_performance_domain_settings: >-
+      {{
+        lab_host_resource_management.performance_domains[
+          idm_vm.performance_domain.tier
+        ]
+      }}
+
+- name: Initialize the IDM virt-install cputune entries
+  ansible.builtin.set_fact:
+    idm_role_cputune_entries: >-
+      {{
+        [
+          'shares=' ~ (idm_role_performance_domain_settings.cpu_shares | string),
+          'emulatorpin.cpuset=' ~
+          lab_host_resource_management.cpu_pools.host_emulator
+        ]
+        + (
+          [
+            'iothreadpin0.iothread=1',
+            'iothreadpin0.cpuset=' ~
+            lab_host_resource_management.cpu_pools.host_emulator
+          ]
+          if (idm_vm.performance_domain.iothreads | int) > 0
+          else []
+        )
+      }}
+
+- name: Add IDM vCPU pinning entries to the virt-install cputune list
+  ansible.builtin.set_fact:
+    idm_role_cputune_entries: >-
+      {{
+        idm_role_cputune_entries
+        + [
+            'vcpupin' ~ (item | string) ~ '.vcpu=' ~ (item | string),
+            'vcpupin' ~ (item | string) ~ '.cpuset=' ~
+            lab_host_resource_management.cpu_pools.guest_domain
+          ]
+      }}
+  loop: "{{ range(0, idm_vm.resources.vcpus | int) | list }}"
+
+- name: Derive IDM virt-install performance-domain arguments
+  ansible.builtin.set_fact:
+    idm_role_performance_args: >-
+      {{
+        [
+          '--resource',
+          'partition=' ~ idm_role_performance_domain_settings.partition,
+          '--cputune',
+          idm_role_cputune_entries | join(',')
+        ]
+        + (
+          [
+            '--iothreads',
+            'iothreads=' ~ (idm_vm.performance_domain.iothreads | string)
+          ]
+          if (idm_vm.performance_domain.iothreads | int) > 0
+          else []
+        )
+      }}
+
+- name: Validate the IDM VM orchestration data
+  ansible.builtin.assert:
+    that:
+      - idm_vm.name | length > 0
+      - idm_vm.domain | length > 0
+      - idm_vm.source_image | length > 0
+      - idm_vm.disk_path | length > 0
+      - idm_vm.network.libvirt_network | length > 0
+      - idm_vm.network.libvirt_portgroup | length > 0
+      - idm_vm.network.interface_name | length > 0
+      - idm_vm.network.mac_address | length > 0
+      - idm_vm.network.ipv4_address | length > 0
+      - (idm_vm.network.prefix_length | int) > 0
+      - idm_vm.network.gateway | length > 0
+      - idm_vm.access.admin_user | length > 0
+    fail_msg: >-
+      vars/guests/idm_vm.yml is missing required IDM VM settings. Populate the guest
+      identity, disk path, and network/access data before running this role.
+
+- name: Validate RHSM data when guest registration is enabled
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          idm_vm.subscription.activation_key | length > 0 and
+          idm_vm.subscription.organization_id | length > 0
+        ) or (
+          idm_vm.subscription.username | length > 0 and
+          idm_vm.subscription.password | length > 0
+        )
+    fail_msg: >-
+      IDM subscription enablement requires either activation_key +
+      organization_id or username + password in vars/guests/idm_vm.yml.
+  when: idm_vm.subscription.enabled | bool
+
+- name: Install packages needed for the IDM VM build workflow
+  ansible.builtin.package:
+    name:
+      - xorriso
+      - qemu-kvm
+      - virt-install
+    state: present
+
+- name: Check whether the IDM block device is present
+  ansible.builtin.stat:
+    path: "{{ idm_vm.disk_path }}"
+  register: idm_role_block_device_stat
+
+- name: Fail when the IDM block device is missing
+  ansible.builtin.assert:
+    that:
+      - idm_role_block_device_stat.stat.exists
+    fail_msg: >-
+      IDM block device {{ idm_vm.disk_path }} was not found. Ensure the EBS
+      volume is attached and mapped before running the IDM role.
+
+- name: Check whether the base QCOW2 image is present
+  ansible.builtin.stat:
+    path: "{{ idm_vm.source_image }}"
+  register: idm_role_source_image_stat
+
+- name: Inspect the IDM block device partition table
+  ansible.builtin.command:
+    argv:
+      - lsblk
+      - -nro
+      - PTTYPE
+      - "{{ idm_vm.disk_path }}"
+  register: idm_role_disk_pttype
+  changed_when: false
+  failed_when: false
+
+- name: Derive whether the IDM disk must be seeded from the image
+  ansible.builtin.set_fact:
+    idm_role_seed_disk_from_image: >-
+      {{
+        (idm_vm.provisioning.rebuild_disk_from_image | bool) or
+        (idm_role_disk_pttype.stdout | trim | length == 0)
+      }}
+
+- name: Fail when the base QCOW2 image is missing
+  ansible.builtin.assert:
+    that:
+      - idm_role_source_image_stat.stat.exists
+    fail_msg: >-
+      IDM source image {{ idm_vm.source_image }} was not found. Provide a
+      RHEL 10 QCOW2 guest image on the managed hypervisor before running this
+      role.
+  when: idm_role_seed_disk_from_image | bool
+
+- name: Check whether the IDM libvirt domain already exists
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - dominfo
+      - "{{ idm_role_vm_fqdn }}"
+  register: idm_role_domain_info
+  changed_when: false
+  failed_when: false
+
+- name: Stop the existing IDM VM before disk reseed or recreation
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - destroy
+      - "{{ idm_role_vm_fqdn }}"
+  when:
+    - >-
+      idm_vm.provisioning.recreate_domain | bool or
+      idm_role_seed_disk_from_image | bool
+    - idm_role_domain_info.rc == 0
+  changed_when: true
+  failed_when: false
+
+- name: Undefine the existing IDM VM before reseeding the disk
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - undefine
+      - "{{ idm_role_vm_fqdn }}"
+      - --nvram
+  when:
+    - >-
+      idm_vm.provisioning.recreate_domain | bool or
+      idm_role_seed_disk_from_image | bool
+    - idm_role_domain_info.rc == 0
+  changed_when: true
+  failed_when: false
+
+- name: Create the IDM working directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ idm_role_cloudinit_dir }}"
+    - "{{ idm_role_cloudinit_iso | dirname }}"
+
+- name: Render IDM cloud-init metadata
+  ansible.builtin.template:
+    src: meta-data.j2
+    dest: "{{ idm_role_cloudinit_dir }}/meta-data"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Render IDM cloud-init user-data
+  ansible.builtin.template:
+    src: user-data.j2
+    dest: "{{ idm_role_cloudinit_dir }}/user-data"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Render IDM cloud-init network-config
+  ansible.builtin.template:
+    src: network-config.j2
+    dest: "{{ idm_role_cloudinit_dir }}/network-config"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Stage the IDM SSH public key for offline guest injection
+  ansible.builtin.copy:
+    content: "{{ idm_vm.access.ssh_authorized_keys | first }}\n"
+    dest: "{{ idm_role_cloudinit_dir }}/access.pub"
+    owner: root
+    group: root
+    mode: "0600"
+  when:
+    - idm_role_seed_disk_from_image | bool
+    - (idm_vm.access.ssh_authorized_keys | length) > 0
+
+- name: Rebuild the IDM disk from the QCOW2 image when requested
+  ansible.builtin.command:
+    argv:
+      - qemu-img
+      - convert
+      - -p
+      - -f
+      - qcow2
+      - -O
+      - raw
+      - "{{ idm_vm.source_image }}"
+      - "{{ idm_vm.disk_path }}"
+  when: idm_role_seed_disk_from_image | bool
+  changed_when: true
+
+- name: Force the kernel to reread the IDM block device partition table
+  ansible.builtin.command:
+    argv:
+      - blockdev
+      - --rereadpt
+      - "{{ idm_vm.disk_path }}"
+  when: idm_role_seed_disk_from_image | bool
+  changed_when: true
+
+- name: Inject IDM access credentials into the reseeded guest disk
+  ansible.builtin.command:
+    argv: >-
+      {{
+        ['virt-customize', '-a', idm_vm.disk_path]
+        + [
+            '--run-command',
+            'id -u ' ~ idm_vm.access.admin_user ~
+            ' >/dev/null 2>&1 || useradd -m -G wheel -s /bin/bash ' ~
+            idm_vm.access.admin_user,
+            '--run-command',
+            'usermod -aG wheel ' ~ idm_vm.access.admin_user,
+            '--run-command',
+            'printf ''%s\\n'' ' ~
+            (idm_vm.access.admin_user ~ ' ALL=(ALL) NOPASSWD:ALL' | quote) ~
+            ' > /etc/sudoers.d/90-' ~ idm_vm.access.admin_user,
+            '--run-command',
+            'chmod 0440 /etc/sudoers.d/90-' ~ idm_vm.access.admin_user
+          ]
+        + (
+          [
+            '--ssh-inject',
+            idm_vm.access.admin_user ~ ':file:' ~
+            idm_role_cloudinit_dir ~ '/access.pub'
+          ]
+          if (idm_vm.access.ssh_authorized_keys | length) > 0
+          else []
+        )
+        + (
+          [
+            '--password',
+            idm_vm.access.admin_user ~ ':password:' ~ idm_vm.access.admin_password,
+            '--password-crypto',
+            'sha512'
+          ]
+          if (idm_vm.access.admin_password | length) > 0
+          else []
+        )
+      }}
+  when: idm_role_seed_disk_from_image | bool
+  changed_when: true
+
+- name: Generate the IDM cloud-init ISO
+  ansible.builtin.command:
+    argv:
+      - xorriso
+      - -as
+      - mkisofs
+      - -o
+      - "{{ idm_role_cloudinit_iso }}"
+      - -V
+      - CIDATA
+      - -J
+      - -R
+      - -graft-points
+      - "user-data={{ idm_role_cloudinit_dir }}/user-data"
+      - "meta-data={{ idm_role_cloudinit_dir }}/meta-data"
+      - "network-config={{ idm_role_cloudinit_dir }}/network-config"
+  changed_when: true
+
+- name: Ensure libvirt can read the IDM cloud-init ISO
+  ansible.builtin.file:
+    path: "{{ idm_role_cloudinit_iso }}"
+    owner: qemu
+    group: qemu
+    mode: "0644"
+
+- name: Install the IDM VM when it is absent or recreation was requested
+  ansible.builtin.command:
+    argv: >-
+      {{
+        [
+          'virt-install',
+          '--name', idm_role_vm_fqdn,
+          '--osinfo', idm_vm.osinfo,
+          '--boot', idm_vm.boot.firmware,
+          '--machine', idm_vm.boot.machine,
+          '--memory', (idm_vm.resources.memory_mb | string),
+          '--vcpus', (idm_vm.resources.vcpus | string),
+          '--cpu', idm_vm.boot.cpu_model,
+          '--controller', 'type=scsi,model=virtio-scsi',
+          '--disk',
+          'path=' ~ idm_vm.disk_path ~
+          ',format=raw,bus=scsi,cache=none,io=native,discard=unmap,' ~
+          'rotation_rate=1',
+          '--disk', 'path=' ~ idm_role_cloudinit_iso ~ ',device=cdrom',
+          '--network',
+          'network=' ~ idm_vm.network.libvirt_network ~
+          ',portgroup=' ~ idm_vm.network.libvirt_portgroup ~
+          ',model=virtio,mac=' ~ idm_vm.network.mac_address,
+          '--rng', 'builtin',
+          '--import',
+          '--graphics', 'none',
+          '--console', 'pty,target_type=serial',
+          '--autostart',
+          '--noautoconsole'
+        ]
+        + idm_role_performance_args +
+        (
+          ['--tpm', 'none']
+          if not (idm_vm.boot.tpm_enabled | default(false) | bool)
+          else []
+        )
+      }}
+  when: >-
+    idm_role_domain_info.rc != 0 or
+    idm_vm.provisioning.recreate_domain | bool or
+    idm_role_seed_disk_from_image | bool
+  changed_when: true

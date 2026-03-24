@@ -1,0 +1,13 @@
+---
+- name: Install OpenShift Pipelines and Windows EFI installer pipeline
+  hosts: aws_metal
+  gather_facts: true
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/mirror_content.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/day2/openshift_pipelines.yml
+  tasks:
+    - name: Configure OpenShift Pipelines and Windows EFI installer pipeline
+      ansible.builtin.include_role:
+        name: openshift_post_install_pipelines

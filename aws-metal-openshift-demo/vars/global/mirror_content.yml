@@ -1,0 +1,148 @@
+---
+mirror_registry_ocp_release: 4.20.15
+mirror_registry_execute_mirror_requested: true
+
+mirror_registry_content:
+  enabled: true
+  execute_mirror: true
+  validate_with_dry_run: true
+  mirror_mode: "{{ mirror_registry_content_mode_override | default('portable') }}"
+  workflow: "{{ mirror_registry_content_workflow_override | default('m2d') }}"
+  destination:
+    namespace: openshift
+  auth:
+    control_node_pull_secret_file: "{{ lab_execution_pull_secret_file }}"
+    source_pull_secret_file: /opt/openshift/pull-secret.json
+    local_registry_auth_file: /root/.config/containers/auth.json
+    merged_auth_file: /opt/openshift/pull-secret-merged.json
+  workspace:
+    root: /opt/openshift/oc-mirror
+    config_file: /opt/openshift/imageset-config.yaml
+    results_dir: /opt/openshift/oc-mirror/working-dir/cluster-resources
+  archive:
+    root: /opt/openshift/oc-mirror-archive
+    from: /opt/openshift/oc-mirror-archive
+  platform:
+    release: "{{ mirror_registry_ocp_release }}"
+    channel: stable-4.20
+    min_version: "{{ mirror_registry_ocp_release }}"
+    max_version: "{{ mirror_registry_ocp_release }}"
+    graph: true
+    shortest_path: true
+    architectures:
+      - amd64
+  operators:
+    catalogs:
+      - catalog: registry.redhat.io/redhat/redhat-operator-index:v4.20
+        packages:
+          - name: odf-operator
+            default_channel: stable-4.20
+            channels:
+              - name: stable-4.20
+          - name: ocs-operator
+            default_channel: stable-4.20
+            channels:
+              - name: stable-4.20
+          - name: mcg-operator
+            default_channel: stable-4.20
+            channels:
+              - name: stable-4.20
+          - name: odf-csi-addons-operator
+            default_channel: stable-4.20
+            channels:
+              - name: stable-4.20
+          - name: ocs-client-operator
+            default_channel: stable-4.20
+            channels:
+              - name: stable-4.20
+          - name: odf-prometheus-operator
+            default_channel: stable-4.20
+            channels:
+              - name: stable-4.20
+          - name: recipe
+            default_channel: stable-4.20
+            channels:
+              - name: stable-4.20
+          - name: rook-ceph-operator
+            default_channel: stable-4.20
+            channels:
+              - name: stable-4.20
+          - name: cephcsi-operator
+            default_channel: stable-4.20
+            channels:
+              - name: stable-4.20
+          - name: odf-dependencies
+            default_channel: stable-4.20
+            channels:
+              - name: stable-4.20
+          - name: odf-external-snapshotter-operator
+            default_channel: stable-4.20
+            channels:
+              - name: stable-4.20
+          - name: local-storage-operator
+            default_channel: stable
+            channels:
+              - name: stable
+          - name: ansible-automation-platform-operator
+            default_channel: stable-2.6
+            channels:
+              - name: stable-2.6
+          - name: cluster-logging
+            default_channel: stable-6.3
+            channels:
+              - name: stable-6.3
+          - name: loki-operator
+            default_channel: stable-6.2
+            channels:
+              - name: stable-6.2
+          - name: cluster-observability-operator
+            default_channel: stable
+            channels:
+              - name: stable
+          - name: kubernetes-nmstate-operator
+            default_channel: stable
+            channels:
+              - name: stable
+          - name: metallb-operator
+            default_channel: stable
+            channels:
+              - name: stable
+          - name: kubevirt-hyperconverged
+            default_channel: stable
+            channels:
+              - name: stable
+          - name: devworkspace-operator
+            default_channel: fast
+            channels:
+              - name: fast
+          - name: openshift-pipelines-operator-rh
+            default_channel: pipelines-1.20
+            channels:
+              - name: pipelines-1.20
+          - name: netobserv-operator
+            default_channel: stable
+            channels:
+              - name: stable
+          - name: web-terminal
+            default_channel: fast
+            channels:
+              - name: fast
+          # NHC and FAR are available in both community-operator-index and
+          # redhat-operator-index.  The Red Hat supported versions are used
+          # here so the operators receive Red Hat support and security updates.
+          - name: node-healthcheck-operator
+            default_channel: stable
+            channels:
+              - name: stable
+          - name: fence-agents-remediation
+            default_channel: stable
+            channels:
+              - name: stable
+  # NOTE: The LSO console plugin was a static plugin built into the console
+  # image through OCP 4.18.  It was removed in 4.19 (RHSTOR-6927 / console
+  # PR #14740) but the planned dynamic-plugin replacement image
+  # (ose-local-storage-console-plugin-rhel9) was never published to
+  # registry.redhat.io.  There is nothing to mirror for it in 4.20.
+  # LSO CR operations (LocalVolume, LocalVolumeSet, LocalVolumeDiscovery)
+  # remain fully functional; only the console UI wizards are absent.
+  additional_images: []

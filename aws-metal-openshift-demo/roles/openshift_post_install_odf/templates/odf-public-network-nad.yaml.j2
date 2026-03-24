@@ -1,0 +1,17 @@
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: {{ openshift_post_install_odf_multus_public_network_name }}
+  namespace: {{ openshift_post_install_odf_storage_cluster_namespace }}
+spec:
+  config: |-
+    {
+      "cniVersion": "0.3.1",
+      "type": "macvlan",
+      "master": "{{ openshift_post_install_odf_multus_public_master_interface }}",
+      "mode": "bridge",
+      "ipam": {
+        "type": "whereabouts",
+        "range": "{{ openshift_post_install_odf_multus_public_ipam_range }}"
+      }
+    }

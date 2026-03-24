@@ -1,0 +1,21 @@
+case ":${PATH}:" in
+  *":$HOME/bin:"*) ;;
+  *) PATH="$HOME/bin:$PATH" ;;
+esac
+
+if [ -d "{{ bastion_client.tools_root }}/current/bin" ]; then
+  case ":${PATH}:" in
+    *":{{ bastion_client.tools_root }}/current/bin:"*) ;;
+    *) PATH="{{ bastion_client.tools_root }}/current/bin:$PATH" ;;
+  esac
+fi
+
+export PATH
+
+if [ -z "${KUBECONFIG:-}" ] && [ -r "$HOME/etc/kubeconfig" ]; then
+  export KUBECONFIG="$HOME/etc/kubeconfig"
+fi
+
+export LAB_PROJECT_ROOT="{{ bastion_stage_remote_project_root }}"
+export LAB_GENERATED_ROOT="{{ bastion_client.artifact_root }}"
+export OCP_CLUSTER_ARTIFACT_ROOT="{{ bastion_client.cluster_artifact_root }}"

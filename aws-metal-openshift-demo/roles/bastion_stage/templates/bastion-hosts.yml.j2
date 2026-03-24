@@ -1,0 +1,12 @@
+---
+all:
+  children:
+    aws_metal:
+      hosts:
+        metal-01:
+          ansible_host: 172.16.0.1
+          ansible_user: ec2-user
+          ansible_ssh_private_key_file: >-
+            {{ bastion_client.project_root }}/secrets/id_ed25519
+          ansible_ssh_common_args: >-
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null

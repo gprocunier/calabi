@@ -1,0 +1,22 @@
+---
+- name: Reboot IDM guest after updates
+  ansible.builtin.reboot:
+    msg: Reboot triggered by IDM guest package updates
+    reboot_timeout: 1800
+    post_reboot_delay: 15
+    test_command: whoami
+
+- name: Restart journald
+  ansible.builtin.systemd_service:
+    name: systemd-journald
+    state: restarted
+
+- name: Restart named
+  ansible.builtin.systemd_service:
+    name: named
+    state: restarted
+
+- name: Restart sssd
+  ansible.builtin.systemd_service:
+    name: sssd
+    state: restarted

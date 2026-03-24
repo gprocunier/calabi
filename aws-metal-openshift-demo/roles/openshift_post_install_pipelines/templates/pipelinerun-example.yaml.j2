@@ -1,0 +1,30 @@
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: {{ openshift_post_install_pipelines_default_pipeline_run_name }}
+  namespace: {{ openshift_post_install_pipelines_namespace }}
+spec:
+  pipelineRef:
+    name: {{ openshift_post_install_pipelines_pipeline_name }}
+  params:
+    - name: winImageDownloadURL
+      value: REPLACE_WITH_WINDOWS_ISO_URL
+    - name: acceptEula
+      value: "true"
+    - name: autounattendXMLConfigMapsURL
+      value: {{ openshift_post_install_pipelines_configmaps_url }}
+    - name: instanceTypeName
+      value: {{ openshift_post_install_pipelines_default_instancetype }}
+    - name: preferenceName
+      value: {{ openshift_post_install_pipelines_default_preference }}
+    - name: autounattendConfigMapName
+      value: {{ openshift_post_install_pipelines_default_autounattend_configmap }}
+    - name: virtioContainerDiskName
+      value: {{ openshift_post_install_pipelines_default_virtio_containerdisk }}
+    - name: baseDvName
+      value: {{ openshift_post_install_pipelines_default_base_dv_name }}
+    - name: isoDVName
+      value: {{ openshift_post_install_pipelines_default_iso_dv_name }}
+  taskRunTemplate:
+    serviceAccountName: pipeline

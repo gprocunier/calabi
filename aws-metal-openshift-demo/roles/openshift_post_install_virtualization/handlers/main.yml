@@ -1,0 +1,30 @@
+---
+- name: Reset workload availability CSVs
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - delete
+      - csv
+      - --all
+      - -n
+      - "{{ openshift_post_install_virtualization_ha_namespace }}"
+      - --ignore-not-found=true
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  changed_when: true
+
+- name: Reset workload availability install plans
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+      - delete
+      - installplan
+      - --all
+      - -n
+      - "{{ openshift_post_install_virtualization_ha_namespace }}"
+      - --ignore-not-found=true
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+  changed_when: true

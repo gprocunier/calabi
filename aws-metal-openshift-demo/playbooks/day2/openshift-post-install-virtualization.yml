@@ -1,0 +1,11 @@
+---
+- name: Install OpenShift Virtualization on the cluster
+  hosts: aws_metal
+  gather_facts: true
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/mirror_content.yml
+  tasks:
+    - name: Configure OpenShift Virtualization
+      ansible.builtin.include_role:
+        name: openshift_post_install_virtualization

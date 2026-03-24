@@ -1,0 +1,18 @@
+[
+  {
+    "ParameterKey": "LabPrefix",
+    "ParameterValue": "workshop"
+  },
+  {
+    "ParameterKey": "AvailabilityZone",
+    "ParameterValue": "us-east-2a"
+  },
+  {
+    "ParameterKey": "VpcCidr",
+    "ParameterValue": "10.0.0.0/16"
+  },
+  {
+    "ParameterKey": "PublicSubnetCidr",
+    "ParameterValue": "10.0.0.0/20"
+  }
+]

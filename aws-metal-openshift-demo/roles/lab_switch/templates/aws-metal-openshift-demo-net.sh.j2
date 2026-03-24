@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BRIDGE="{{ lab_bridge_name }}"
+
+command -v ovs-vsctl >/dev/null
+command -v ip >/dev/null
+
+ovs-vsctl --may-exist add-br "${BRIDGE}"
+ip link set dev "${BRIDGE}" up
+
+{% for port in lab_switch_ports | dictsort %}
+# {{ port.1.description }} (VLAN {{ port.1.vlan_id }})
+ovs-vsctl --may-exist add-port "${BRIDGE}" "{{ port.0 }}" -- set Port "{{ port.0 }}" tag={{ port.1.vlan_id }} external_ids:description="{{ port.1.description }}" -- set Interface "{{ port.0 }}" type=internal
+ip link set dev "{{ port.0 }}" up
+{% if port.1.gateway_cidr %}
+if ip -4 addr show dev "{{ port.0 }}" | grep -Fq "{{ port.1.gateway_cidr.split('/')[0] }}/"; then
+  :
+else
+  ip -4 addr flush dev "{{ port.0 }}"
+  ip -4 addr add "{{ port.1.gateway_cidr }}" dev "{{ port.0 }}"
+fi
+{% else %}
+ip -4 addr flush dev "{{ port.0 }}"
+{% endif %}
+
+{% endfor %}
+sysctl -w net.ipv4.ip_forward=1 >/dev/null
+sysctl -w net.ipv4.conf.all.rp_filter=0 >/dev/null
+sysctl -w net.ipv4.conf.default.rp_filter=0 >/dev/null

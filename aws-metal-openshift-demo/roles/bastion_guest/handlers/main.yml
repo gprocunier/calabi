@@ -1,0 +1,12 @@
+---
+- name: Reload bastion firewalld
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --reload
+  changed_when: true
+
+- name: Restart sssd
+  ansible.builtin.systemd_service:
+    name: sssd
+    state: restarted

@@ -1,0 +1,25 @@
+---
+- name: Reboot mirror registry guest after updates
+  ansible.builtin.reboot:
+    connect_timeout: 10
+    reboot_timeout: 1800
+    post_reboot_delay: 20
+    test_command: whoami
+
+- name: Update mirror registry CA trust
+  ansible.builtin.command:
+    argv:
+      - update-ca-trust
+      - extract
+  changed_when: true
+
+- name: Restart sssd
+  ansible.builtin.systemd_service:
+    name: sssd
+    state: restarted
+
+- name: Restart mirror registry containers
+  ansible.builtin.command:
+    argv:
+      - /usr/local/sbin/restart-mirror-registry-containers.sh
+  changed_when: true

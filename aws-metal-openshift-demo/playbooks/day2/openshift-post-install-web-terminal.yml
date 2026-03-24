@@ -1,0 +1,13 @@
+---
+- name: Install the OpenShift Web Terminal Operator
+  hosts: aws_metal
+  gather_facts: true
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/mirror_content.yml
+    - ../../vars/guests/mirror_registry_vm.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+  tasks:
+    - name: Install Web Terminal day-2 components
+      ansible.builtin.include_role:
+        name: openshift_post_install_web_terminal

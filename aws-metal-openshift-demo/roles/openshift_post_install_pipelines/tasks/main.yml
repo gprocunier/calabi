@@ -1,0 +1,328 @@
+---
+- name: Derive post-install OpenShift Pipelines context
+  ansible.builtin.set_fact:
+    openshift_post_install_pipelines_oc_local_path: >-
+      {{ lab_execution_tools_root }}/{{
+      mirror_registry_ocp_release }}/bin/oc
+    openshift_post_install_pipelines_kubeconfig_local_path: >-
+      {{ lab_execution_ocp_generated_root }}/auth/kubeconfig
+    openshift_post_install_pipelines_remote_oc_path: >-
+      {{ openshift_post_install_pipelines_remote_dir }}/oc
+    openshift_post_install_pipelines_remote_kubeconfig_path: >-
+      {{ openshift_post_install_pipelines_remote_dir }}/kubeconfig
+    openshift_post_install_pipelines_remote_subscription_path: >-
+      {{ openshift_post_install_pipelines_remote_dir }}/subscription.yaml
+    openshift_post_install_pipelines_remote_pipeline_path: >-
+      {{
+      openshift_post_install_pipelines_remote_dir
+      }}/windows-efi-installer.yaml
+    openshift_post_install_pipelines_remote_pipeline_rbac_path: >-
+      {{ openshift_post_install_pipelines_remote_dir }}/pipeline-rbac.yaml
+    openshift_post_install_pipelines_remote_pipelinerun_example_path: >-
+      {{
+      openshift_post_install_pipelines_remote_dir
+      }}/windows-efi-installer-run.example.yaml
+
+- name: Assert local oc binary exists for OpenShift Pipelines
+  ansible.builtin.stat:
+    path: "{{ openshift_post_install_pipelines_oc_local_path }}"
+  delegate_to: localhost
+  become: false
+  register: openshift_post_install_pipelines_oc_local_stat
+
+- name: Assert generated kubeconfig exists for OpenShift Pipelines orchestration
+  ansible.builtin.stat:
+    path: "{{ openshift_post_install_pipelines_kubeconfig_local_path }}"
+  delegate_to: localhost
+  become: false
+  register: openshift_post_install_pipelines_kubeconfig_local_stat
+
+- name: Fail when required local OpenShift Pipelines artifacts are missing
+  ansible.builtin.assert:
+    that:
+      - openshift_post_install_pipelines_oc_local_stat.stat.exists
+      - openshift_post_install_pipelines_kubeconfig_local_stat.stat.exists
+    fail_msg: >-
+      OpenShift Pipelines orchestration requires a generated oc binary and
+      kubeconfig.
+
+- name: Create remote OpenShift Pipelines workspace
+  ansible.builtin.file:
+    path: "{{ openshift_post_install_pipelines_remote_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Copy pinned oc binary to hypervisor for OpenShift Pipelines
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_pipelines_oc_local_path }}"
+    dest: "{{ openshift_post_install_pipelines_remote_oc_path }}"
+    mode: "0755"
+
+- name: Copy generated kubeconfig to hypervisor for OpenShift Pipelines
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_pipelines_kubeconfig_local_path }}"
+    dest: "{{ openshift_post_install_pipelines_remote_kubeconfig_path }}"
+    mode: "0600"
+
+- name: Render OpenShift Pipelines subscription manifest
+  ansible.builtin.template:
+    src: subscription.yaml.j2
+    dest: "{{ openshift_post_install_pipelines_remote_subscription_path }}"
+    mode: "0644"
+
+- name: Render Windows EFI installer pipeline RBAC manifest
+  ansible.builtin.template:
+    src: pipeline-rbac.yaml.j2
+    dest: "{{ openshift_post_install_pipelines_remote_pipeline_rbac_path }}"
+    mode: "0644"
+
+- name: Render Windows EFI installer PipelineRun example manifest
+  ansible.builtin.template:
+    src: pipelinerun-example.yaml.j2
+    dest: >-
+      {{
+      openshift_post_install_pipelines_remote_pipelinerun_example_path
+      }}
+    mode: "0644"
+
+- name: Ensure OpenShift Pipelines target namespace exists
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_pipelines_remote_oc_path }}" create namespace \
+      "{{ openshift_post_install_pipelines_namespace }}" \
+      --dry-run=client -o yaml \
+    | "{{ openshift_post_install_pipelines_remote_oc_path }}" apply -f -
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_pipelines_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Wait for the requested default storage class to exist
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_pipelines_remote_oc_path }}"
+      - get
+      - storageclass
+      - "{{ openshift_post_install_pipelines_default_storage_class }}"
+      - -o
+      - name
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_pipelines_remote_kubeconfig_path }}"
+  register: openshift_post_install_pipelines_storage_class_exists
+  changed_when: false
+  retries: 40
+  delay: 15
+  until: openshift_post_install_pipelines_storage_class_exists.stdout
+
+- name: Wait for ODF StorageCluster to be Available before using ODF-backed storage for Tekton
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_pipelines_remote_oc_path }}"
+      - get
+      - storagecluster
+      - "{{ openshift_post_install_pipelines_storagecluster_name }}"
+      - -n
+      - "{{ openshift_post_install_pipelines_storagecluster_namespace }}"
+      - -o
+      - jsonpath={.status.conditions[?(@.type=="Available")].status}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_pipelines_remote_kubeconfig_path }}"
+  register: openshift_post_install_pipelines_storagecluster_available
+  changed_when: false
+  failed_when: false
+  retries: 40
+  delay: 15
+  until: openshift_post_install_pipelines_storagecluster_available.stdout == 'True'
+  when: openshift_post_install_pipelines_default_storage_class.startswith('ocs-')
+
+- name: Wait for ODF StorageCluster not to be deleting before using ODF-backed storage for Tekton
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_pipelines_remote_oc_path }}"
+      - get
+      - storagecluster
+      - "{{ openshift_post_install_pipelines_storagecluster_name }}"
+      - -n
+      - "{{ openshift_post_install_pipelines_storagecluster_namespace }}"
+      - -o
+      - jsonpath={.metadata.deletionTimestamp}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_pipelines_remote_kubeconfig_path }}"
+  register: openshift_post_install_pipelines_storagecluster_deleting
+  changed_when: false
+  failed_when: false
+  retries: 20
+  delay: 15
+  until: openshift_post_install_pipelines_storagecluster_deleting.stdout == ''
+  when: openshift_post_install_pipelines_default_storage_class.startswith('ocs-')
+
+- name: Wait for CephCluster to be Ready before using ODF-backed storage for Tekton
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_pipelines_remote_oc_path }}"
+      - get
+      - cephcluster
+      - "{{ openshift_post_install_pipelines_cephcluster_name }}"
+      - -n
+      - "{{ openshift_post_install_pipelines_cephcluster_namespace }}"
+      - -o
+      - jsonpath={.status.phase}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_pipelines_remote_kubeconfig_path }}"
+  register: openshift_post_install_pipelines_cephcluster_phase
+  changed_when: false
+  failed_when: false
+  retries: 40
+  delay: 15
+  until: openshift_post_install_pipelines_cephcluster_phase.stdout == 'Ready'
+  when: openshift_post_install_pipelines_default_storage_class.startswith('ocs-')
+
+- name: Set default cluster storage class for Tekton stateful components
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_pipelines_remote_oc_path }}"
+      - annotate
+      - storageclass
+      - "{{ openshift_post_install_pipelines_default_storage_class }}"
+      - storageclass.kubernetes.io/is-default-class=true
+      - --overwrite
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_pipelines_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Apply OpenShift Pipelines subscription
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_pipelines_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_pipelines_remote_subscription_path }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_pipelines_remote_kubeconfig_path }}"
+  register: openshift_post_install_pipelines_subscription_apply
+  changed_when: >-
+    'created' in openshift_post_install_pipelines_subscription_apply.stdout or
+    'configured' in openshift_post_install_pipelines_subscription_apply.stdout
+
+- name: Wait for OpenShift Pipelines operator CSV to be selected
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_pipelines_remote_oc_path }}" get subscription \
+      "{{ openshift_post_install_pipelines_subscription_name }}" \
+      -n "{{ openshift_post_install_pipelines_operator_namespace }}" \
+      -o jsonpath='{.status.currentCSV}' | tr -d '\n'
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_pipelines_remote_kubeconfig_path }}"
+  register: openshift_post_install_pipelines_current_csv
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_pipelines_current_csv.stdout | length > 0
+
+- name: Wait for OpenShift Pipelines operator CSV phase Succeeded
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_pipelines_remote_oc_path }}"
+      - get
+      - csv
+      - "{{ openshift_post_install_pipelines_current_csv.stdout }}"
+      - -n
+      - "{{ openshift_post_install_pipelines_operator_namespace }}"
+      - -o
+      - jsonpath={.status.phase}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_pipelines_remote_kubeconfig_path }}"
+  register: openshift_post_install_pipelines_csv_phase
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_pipelines_csv_phase.stdout == 'Succeeded'
+
+- name: Wait for TektonPipeline API to become available
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_pipelines_remote_oc_path }}"
+      - get
+      - tektonpipeline
+      - pipeline
+      - -o
+      - jsonpath={.status.conditions[?(@.type=="Ready")].status}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_pipelines_remote_kubeconfig_path }}"
+  register: openshift_post_install_pipelines_tektonpipeline_ready
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_pipelines_tektonpipeline_ready.stdout == 'True'
+
+- name: Wait for TektonConfig to become Ready
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_pipelines_remote_oc_path }}"
+      - get
+      - tektonconfig
+      - config
+      - -o
+      - jsonpath={.status.conditions[?(@.type=="Ready")].status}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_pipelines_remote_kubeconfig_path }}"
+  register: openshift_post_install_pipelines_tektonconfig_ready
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_pipelines_tektonconfig_ready.stdout == 'True'
+
+- name: Download Windows EFI installer pipeline manifest
+  ansible.builtin.get_url:
+    url: "{{ openshift_post_install_pipelines_source_url }}"
+    dest: "{{ openshift_post_install_pipelines_remote_pipeline_path }}"
+    mode: "0644"
+
+- name: Apply pipeline namespace RBAC for pipeline service account
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_pipelines_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_pipelines_remote_pipeline_rbac_path }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_pipelines_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Apply Windows EFI installer pipeline manifest
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_pipelines_remote_oc_path }}"
+      - apply
+      - -n
+      - "{{ openshift_post_install_pipelines_namespace }}"
+      - -f
+      - "{{ openshift_post_install_pipelines_remote_pipeline_path }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_pipelines_remote_kubeconfig_path }}"
+  register: openshift_post_install_pipelines_pipeline_apply
+  changed_when: >-
+    'created' in openshift_post_install_pipelines_pipeline_apply.stdout
+    or 'configured' in openshift_post_install_pipelines_pipeline_apply.stdout
+
+- name: Verify Windows EFI installer pipeline exists
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_pipelines_remote_oc_path }}"
+      - get
+      - pipeline
+      - "{{ openshift_post_install_pipelines_pipeline_name }}"
+      - -n
+      - "{{ openshift_post_install_pipelines_namespace }}"
+      - -o
+      - jsonpath={.metadata.name}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_pipelines_remote_kubeconfig_path }}"
+  register: openshift_post_install_pipelines_pipeline_name_check
+  changed_when: false
+  failed_when: >-
+    openshift_post_install_pipelines_pipeline_name_check.stdout
+    != openshift_post_install_pipelines_pipeline_name

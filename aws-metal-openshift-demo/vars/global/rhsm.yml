@@ -1,0 +1,8 @@
+---
+lab_rhsm:
+  enabled: true
+  activation_key: "{{ lab_rhsm_activation_key | default('') }}"
+  organization_id: "{{ lab_rhsm_organization_id | default('') }}"
+  username: "{{ lab_rhsm_username | default('') }}"
+  password: "{{ lab_rhsm_password | default('') }}"
+  server_hostname: "{{ lab_rhsm_server_hostname | default('') }}"

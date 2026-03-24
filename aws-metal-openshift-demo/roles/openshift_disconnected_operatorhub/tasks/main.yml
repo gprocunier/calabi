@@ -1,0 +1,522 @@
+---
+- name: Derive disconnected OperatorHub orchestration paths
+  ansible.builtin.set_fact:
+    openshift_disconnected_operatorhub_oc_local_path: >-
+      {{ lab_execution_tools_root }}/{{ mirror_registry_ocp_release }}/bin/oc
+    openshift_disconnected_operatorhub_kubeconfig_local_path: >-
+      {{ lab_execution_ocp_generated_root }}/auth/kubeconfig
+    openshift_disconnected_operatorhub_local_dir: >-
+      {{ lab_execution_ocp_generated_root }}/disconnected-operatorhub
+    openshift_disconnected_operatorhub_local_kubeconfig_staged_path: >-
+      {{ lab_execution_ocp_generated_root }}/disconnected-operatorhub/kubeconfig
+    openshift_disconnected_operatorhub_remote_dir: >-
+      /var/tmp/openshift-disconnected-operatorhub
+    openshift_disconnected_operatorhub_remote_oc_path: >-
+      /var/tmp/openshift-disconnected-operatorhub/oc
+    openshift_disconnected_operatorhub_remote_kubeconfig_path: >-
+      /var/tmp/openshift-disconnected-operatorhub/kubeconfig
+    openshift_disconnected_operatorhub_catalogsource_name: >-
+      cs-redhat-operator-index-v4-20
+    openshift_disconnected_operatorhub_validation_packages:
+      - kubernetes-nmstate-operator
+      - local-storage-operator
+    openshift_disconnected_operatorhub_registry_host: >-
+      {{ mirror_registry_vm.name }}.{{ mirror_registry_vm.domain }}:{{
+      mirror_registry_service.registry_port }}
+    openshift_disconnected_operatorhub_remote_pull_secret_path: >-
+      /var/tmp/openshift-disconnected-operatorhub/pull-secret-merged.json
+    openshift_disconnected_operatorhub_remote_catalog_pull_secret_path: >-
+      /var/tmp/openshift-disconnected-operatorhub/mirror-registry-auth.json
+    openshift_disconnected_operatorhub_catalog_pull_secret_name: >-
+      mirror-registry-catalog-pull-secret
+    openshift_disconnected_operatorhub_remote_catalogsource_path: >-
+      /var/tmp/openshift-disconnected-operatorhub/cs-redhat-operator-index-v4-20.yaml
+    openshift_disconnected_operatorhub_redhat_catalog_image: >-
+      {{ mirror_registry_vm.name }}.{{ mirror_registry_vm.domain }}:{{
+      mirror_registry_service.registry_port }}/openshift/redhat/redhat-operator-index:v{{
+      mirror_registry_ocp_release.split('.')[0] }}.{{ mirror_registry_ocp_release.split('.')[1] }}
+    openshift_disconnected_operatorhub_default_catalogsources:
+      - redhat-operators
+      - certified-operators
+      - community-operators
+      - redhat-marketplace
+    openshift_disconnected_operatorhub_default_clustercatalogs:
+      - openshift-redhat-operators
+      - openshift-certified-operators
+      - openshift-community-operators
+      - openshift-redhat-marketplace
+
+- name: Derive the default OLM v1 ClusterCatalogs to disable
+  ansible.builtin.set_fact:
+    openshift_disconnected_operatorhub_disable_default_clustercatalogs: >-
+      {{ openshift_disconnected_operatorhub_default_clustercatalogs | list }}
+
+- name: Derive per-catalog config list
+  ansible.builtin.set_fact:
+    openshift_disconnected_operatorhub_catalog_configs:
+      - name: "{{ openshift_disconnected_operatorhub_catalogsource_name }}"
+        displayName: "Mirrored Red Hat Operators"
+        image: "{{ openshift_disconnected_operatorhub_redhat_catalog_image }}"
+        path: >-
+          /var/tmp/openshift-disconnected-operatorhub/{{
+          openshift_disconnected_operatorhub_catalogsource_name }}.yaml
+
+- name: Assert local oc binary exists
+  ansible.builtin.stat:
+    path: "{{ openshift_disconnected_operatorhub_oc_local_path }}"
+  delegate_to: localhost
+  become: true
+  register: openshift_disconnected_operatorhub_oc_local_stat
+
+- name: Assert generated kubeconfig exists
+  ansible.builtin.stat:
+    path: "{{ openshift_disconnected_operatorhub_kubeconfig_local_path }}"
+  delegate_to: localhost
+  become: true
+  register: openshift_disconnected_operatorhub_kubeconfig_local_stat
+
+- name: Fail when required local disconnected artifacts are missing
+  ansible.builtin.assert:
+    that:
+      - openshift_disconnected_operatorhub_oc_local_stat.stat.exists
+      - openshift_disconnected_operatorhub_kubeconfig_local_stat.stat.exists
+    fail_msg: >-
+      Expected local disconnected OperatorHub artifacts were not found.
+      Ensure installer binaries and generated auth assets exist first.
+
+- name: Create local disconnected OperatorHub artifact directory
+  ansible.builtin.file:
+    path: "{{ openshift_disconnected_operatorhub_local_dir }}"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  become: true
+
+- name: Stage generated kubeconfig into the disconnected OperatorHub workspace
+  ansible.builtin.copy:
+    src: "{{ openshift_disconnected_operatorhub_kubeconfig_local_path }}"
+    dest: "{{ openshift_disconnected_operatorhub_local_kubeconfig_staged_path }}"
+    remote_src: true
+    mode: "0644"
+  delegate_to: localhost
+  become: true
+
+- name: Create remote disconnected OperatorHub workspace
+  ansible.builtin.file:
+    path: "{{ openshift_disconnected_operatorhub_remote_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Copy pinned oc binary to the hypervisor
+  ansible.builtin.copy:
+    src: "{{ openshift_disconnected_operatorhub_oc_local_path }}"
+    dest: "{{ openshift_disconnected_operatorhub_remote_oc_path }}"
+    mode: "0755"
+
+- name: Copy generated kubeconfig to the hypervisor
+  ansible.builtin.copy:
+    src: "{{ openshift_disconnected_operatorhub_local_kubeconfig_staged_path }}"
+    dest: "{{ openshift_disconnected_operatorhub_remote_kubeconfig_path }}"
+    mode: "0600"
+
+- name: Render mirrored operator CatalogSource manifests
+  ansible.builtin.template:
+    src: catalogsource.yaml.j2
+    dest: "{{ item.path }}"
+    mode: "0644"
+  loop: "{{ openshift_disconnected_operatorhub_catalog_configs }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Disable default remote OperatorHub sources
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_disconnected_operatorhub_remote_oc_path }}"
+      - patch
+      - operatorhub
+      - cluster
+      - --type=merge
+      - -p
+      - '{"spec":{"disableAllDefaultSources":true}}'
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_disconnected_operatorhub_remote_kubeconfig_path }}
+  changed_when: true
+
+- name: Read the current cluster pull secret
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_disconnected_operatorhub_remote_oc_path }}"
+      - get
+      - secret/pull-secret
+      - -n
+      - openshift-config
+      - -o
+      - jsonpath={.data.\.dockerconfigjson}
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_disconnected_operatorhub_remote_kubeconfig_path }}
+  register: openshift_disconnected_operatorhub_pull_secret_raw
+  changed_when: false
+
+- name: Merge mirror-registry auth into the cluster pull secret
+  ansible.builtin.set_fact:
+    openshift_disconnected_operatorhub_pull_secret_merged: >-
+      {{
+        (openshift_disconnected_operatorhub_pull_secret_raw.stdout | b64decode
+        | from_json)
+        | combine(
+            {
+              'auths': (
+                (
+                  openshift_disconnected_operatorhub_pull_secret_raw.stdout
+                  | b64decode
+                  | from_json
+                ).auths
+                | combine(
+                    {
+                      openshift_disconnected_operatorhub_registry_host: {
+                        'auth': (
+                          mirror_registry_service.init_user
+                          ~ ':'
+                          ~ mirror_registry_service.init_password
+                        ) | b64encode,
+                        'email': (
+                          mirror_registry_service.init_email
+                          if mirror_registry_service.init_email | length > 0
+                          else 'unused@example.com'
+                        )
+                      }
+                    },
+                    recursive=True
+                  )
+              )
+            },
+            recursive=True
+          )
+      }}
+
+- name: Stage the merged cluster pull secret on the hypervisor
+  ansible.builtin.copy:
+    content: >-
+      {{ openshift_disconnected_operatorhub_pull_secret_merged | to_nice_json }}
+    dest: "{{ openshift_disconnected_operatorhub_remote_pull_secret_path }}"
+    mode: "0600"
+
+- name: Stage a dedicated mirror-registry pull secret for CatalogSource pods
+  ansible.builtin.copy:
+    content: >-
+      {{
+        {
+          'auths': {
+            openshift_disconnected_operatorhub_registry_host: {
+              'auth': (
+                mirror_registry_service.init_user
+                ~ ':'
+                ~ mirror_registry_service.init_password
+              ) | b64encode,
+              'email': (
+                mirror_registry_service.init_email
+                if mirror_registry_service.init_email | length > 0
+                else 'unused@example.com'
+              )
+            }
+          }
+        } | to_nice_json
+      }}
+    dest: >-
+      {{ openshift_disconnected_operatorhub_remote_catalog_pull_secret_path }}
+    mode: "0600"
+
+- name: Update the cluster global pull secret with mirror-registry auth
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_disconnected_operatorhub_remote_oc_path }}"
+      - set
+      - data
+      - secret/pull-secret
+      - -n
+      - openshift-config
+      - --from-file=.dockerconfigjson={{
+        openshift_disconnected_operatorhub_remote_pull_secret_path }}
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_disconnected_operatorhub_remote_kubeconfig_path }}
+  register: openshift_disconnected_operatorhub_pull_secret_update
+  changed_when: true
+
+- name: Create or update the mirrored catalog pull secret in openshift-marketplace
+  ansible.builtin.shell: >-
+    set -o pipefail &&
+    {{ openshift_disconnected_operatorhub_remote_oc_path }}
+    create secret generic
+    {{ openshift_disconnected_operatorhub_catalog_pull_secret_name }}
+    -n openshift-marketplace
+    --type=kubernetes.io/dockerconfigjson
+    --from-file=.dockerconfigjson={{
+    openshift_disconnected_operatorhub_remote_catalog_pull_secret_path }}
+    --dry-run=client -o yaml
+    | {{ openshift_disconnected_operatorhub_remote_oc_path }} apply -f -
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_disconnected_operatorhub_remote_kubeconfig_path }}
+  register: openshift_disconnected_operatorhub_catalog_pull_secret_apply
+  changed_when: >-
+    'created' in
+    openshift_disconnected_operatorhub_catalog_pull_secret_apply.stdout
+    or 'configured' in
+    openshift_disconnected_operatorhub_catalog_pull_secret_apply.stdout
+
+- name: Apply mirrored operator catalog sources
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_disconnected_operatorhub_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ item.path }}"
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_disconnected_operatorhub_remote_kubeconfig_path }}
+  loop: "{{ openshift_disconnected_operatorhub_catalog_configs }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: openshift_disconnected_operatorhub_apply_catalogsource
+  changed_when: >-
+    'configured' in
+    openshift_disconnected_operatorhub_apply_catalogsource.stdout
+    or 'created' in
+    openshift_disconnected_operatorhub_apply_catalogsource.stdout
+
+- name: Remove default CatalogSources after disabling OperatorHub defaults
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_disconnected_operatorhub_remote_oc_path }}"
+      - delete
+      - catalogsource
+      - "{{ item }}"
+      - -n
+      - openshift-marketplace
+      - --ignore-not-found=true
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_disconnected_operatorhub_remote_kubeconfig_path }}
+  loop: "{{ openshift_disconnected_operatorhub_default_catalogsources }}"
+  changed_when: true
+  failed_when: false
+
+- name: Disable default ClusterCatalogs for OLM v1
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_disconnected_operatorhub_remote_oc_path }}"
+      - patch
+      - clustercatalog
+      - "{{ item }}"
+      - --type=merge
+      - -p
+      - '{"spec":{"availabilityMode":"Unavailable"}}'
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_disconnected_operatorhub_remote_kubeconfig_path }}
+  loop: "{{ openshift_disconnected_operatorhub_disable_default_clustercatalogs }}"
+  changed_when: true
+  failed_when: false
+
+- name: Attach the mirrored catalog pull secret to the mirrored CatalogSources
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_disconnected_operatorhub_remote_oc_path }}"
+      - patch
+      - catalogsource
+      - "{{ item.name }}"
+      - -n
+      - openshift-marketplace
+      - --type=merge
+      - -p
+      - >-
+        {{
+          {
+            'spec': {
+              'secrets': [
+                openshift_disconnected_operatorhub_catalog_pull_secret_name
+              ]
+            }
+          } | to_json
+        }}
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_disconnected_operatorhub_remote_kubeconfig_path }}
+  loop: "{{ openshift_disconnected_operatorhub_catalog_configs }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: openshift_disconnected_operatorhub_catalogsource_secret_patch
+  changed_when: true
+
+- name: Attach the mirrored catalog pull secret to the mirrored CatalogSource service accounts
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_disconnected_operatorhub_remote_oc_path }}"
+      - patch
+      - serviceaccount
+      - "{{ item.name }}"
+      - -n
+      - openshift-marketplace
+      - --type=merge
+      - -p
+      - >-
+        {{
+          {
+            'imagePullSecrets': [
+              {
+                'name': openshift_disconnected_operatorhub_catalog_pull_secret_name
+              }
+            ]
+          } | to_json
+        }}
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_disconnected_operatorhub_remote_kubeconfig_path }}
+  loop: "{{ openshift_disconnected_operatorhub_catalog_configs }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: openshift_disconnected_operatorhub_serviceaccount_secret_patch
+  changed_when: true
+
+- name: Delete any stale mirrored catalog pods so they repull with new auth
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_disconnected_operatorhub_remote_oc_path }}"
+      - delete
+      - pod
+      - -n
+      - openshift-marketplace
+      - -l
+      - "olm.catalogSource={{ item.name }}"
+      - --ignore-not-found=true
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_disconnected_operatorhub_remote_kubeconfig_path }}
+  loop: "{{ openshift_disconnected_operatorhub_catalog_configs }}"
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: true
+  failed_when: false
+
+- name: Wait for mirrored catalog sources to report READY
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_disconnected_operatorhub_remote_oc_path }}"
+      - get
+      - catalogsource
+      - "{{ item.name }}"
+      - -n
+      - openshift-marketplace
+      - -o
+      - jsonpath={.status.connectionState.lastObservedState}
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_disconnected_operatorhub_remote_kubeconfig_path }}
+  loop: "{{ openshift_disconnected_operatorhub_catalog_configs }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: openshift_disconnected_operatorhub_catalogsource_state
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: >-
+    openshift_disconnected_operatorhub_catalogsource_state.stdout == 'READY'
+
+- name: Wait for mirrored package manifests to resolve from the mirrored catalog
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_disconnected_operatorhub_remote_oc_path }}"
+      - get
+      - packagemanifest
+      - "{{ item }}"
+      - -n
+      - openshift-marketplace
+      - -o
+      - jsonpath={.status.catalogSource}
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_disconnected_operatorhub_remote_kubeconfig_path }}
+  loop: "{{ openshift_disconnected_operatorhub_validation_packages }}"
+  register: openshift_disconnected_operatorhub_package_sources
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: >-
+    openshift_disconnected_operatorhub_package_sources.stdout
+    == openshift_disconnected_operatorhub_catalogsource_name
+
+- name: Capture live OperatorHub source state after disconnected switch
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_disconnected_operatorhub_remote_oc_path }}"
+      - get
+      - operatorhub
+      - cluster
+      - -o
+      - yaml
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_disconnected_operatorhub_remote_kubeconfig_path }}
+  register: openshift_disconnected_operatorhub_operatorhub_state
+  changed_when: false
+
+- name: Remove the samples operator for disconnected operation
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_disconnected_operatorhub_remote_oc_path }}"
+      - patch
+      - configs.samples.operator.openshift.io
+      - cluster
+      - --type=merge
+      - -p
+      - '{"spec":{"managementState":"Removed"}}'
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_disconnected_operatorhub_remote_kubeconfig_path }}
+  register: openshift_disconnected_operatorhub_samples_patch
+  changed_when: openshift_disconnected_operatorhub_samples_patch.rc == 0
+  failed_when: >-
+    openshift_disconnected_operatorhub_samples_patch.rc != 0
+    and 'NotFound' not in openshift_disconnected_operatorhub_samples_patch.stderr
+
+- name: Wait for the samples operator to report Removed
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_disconnected_operatorhub_remote_oc_path }}"
+      - get
+      - configs.samples.operator.openshift.io
+      - cluster
+      - -o
+      - jsonpath={.spec.managementState}
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_disconnected_operatorhub_remote_kubeconfig_path }}
+  register: openshift_disconnected_operatorhub_samples_state
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_disconnected_operatorhub_samples_state.stdout == 'Removed'
+  failed_when: >-
+    openshift_disconnected_operatorhub_samples_state.rc != 0
+    and 'NotFound' not in openshift_disconnected_operatorhub_samples_state.stderr
+  when: >-
+    openshift_disconnected_operatorhub_samples_patch is not defined
+    or openshift_disconnected_operatorhub_samples_patch.rc == 0
+
+- name: Publish disconnected OperatorHub summary
+  ansible.builtin.debug:
+    msg:
+      - >-
+        Default OperatorHub sources are disabled, mirrored catalogs are READY,
+        and the samples operator is Removed.
+      - >-
+        {{
+          openshift_disconnected_operatorhub_package_sources.results
+          | map(attribute='stdout')
+          | list
+        }}

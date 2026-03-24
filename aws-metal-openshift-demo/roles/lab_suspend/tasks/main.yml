@@ -1,0 +1,346 @@
+---
+- name: Derive suspend workflow paths and node lists
+  ansible.builtin.set_fact:
+    lab_suspend_local_oc_path: >-
+      {{ lab_execution_tools_root }}/{{ mirror_registry_ocp_release }}/bin/oc
+    lab_suspend_local_kubeconfig_path: >-
+      {{ lab_execution_ocp_generated_root }}/auth/kubeconfig
+    lab_suspend_worker_nodes: >-
+      {{
+        openshift_cluster_nodes
+        | selectattr('role', 'equalto', 'worker')
+        | map(attribute='name')
+        | list
+      }}
+    lab_suspend_infra_nodes: >-
+      {{
+        openshift_cluster_nodes
+        | selectattr('role', 'equalto', 'infra')
+        | map(attribute='name')
+        | list
+      }}
+    lab_suspend_master_nodes: >-
+      {{
+        openshift_cluster_nodes
+        | selectattr('role', 'equalto', 'control-plane')
+        | map(attribute='name')
+        | list
+      }}
+    lab_suspend_support_vm_domains:
+      bastion: "{{ bastion_vm.name }}.{{ bastion_vm.domain }}"
+      mirror_registry: "{{ mirror_registry_vm.name }}.{{ mirror_registry_vm.domain }}"
+      idm: "{{ idm_vm.name }}.{{ idm_vm.domain }}"
+
+- name: Assert local oc binary exists for suspend workflow
+  ansible.builtin.stat:
+    path: "{{ lab_suspend_local_oc_path }}"
+  delegate_to: localhost
+  become: false
+  register: lab_suspend_local_oc_stat
+
+- name: Assert generated kubeconfig exists for suspend workflow
+  ansible.builtin.stat:
+    path: "{{ lab_suspend_local_kubeconfig_path }}"
+  delegate_to: localhost
+  become: false
+  register: lab_suspend_local_kubeconfig_stat
+
+- name: Fail when required local suspend workflow artifacts are missing
+  ansible.builtin.assert:
+    that:
+      - lab_suspend_local_oc_stat.stat.exists
+      - lab_suspend_local_kubeconfig_stat.stat.exists
+    fail_msg: >-
+      Suspend orchestration requires a generated oc binary and kubeconfig.
+      Ensure the cluster was built and validated before running playbooks/maintenance/suspend-lab.yml.
+
+- name: Create remote suspend workspace
+  ansible.builtin.file:
+    path: "{{ lab_suspend_remote_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Copy pinned oc binary to the hypervisor for suspend orchestration
+  ansible.builtin.copy:
+    src: "{{ lab_suspend_local_oc_path }}"
+    dest: "{{ lab_suspend_remote_oc_path }}"
+    mode: "0755"
+
+- name: Copy generated kubeconfig to the hypervisor for suspend orchestration
+  ansible.builtin.copy:
+    src: "{{ lab_suspend_local_kubeconfig_path }}"
+    dest: "{{ lab_suspend_remote_kubeconfig_path }}"
+    mode: "0600"
+
+- name: Capture current cluster nodes before shutdown
+  ansible.builtin.command:
+    argv:
+      - "{{ lab_suspend_remote_oc_path }}"
+      - get
+      - nodes
+      - -o
+      - wide
+  environment:
+    KUBECONFIG: "{{ lab_suspend_remote_kubeconfig_path }}"
+  register: lab_suspend_cluster_nodes
+  changed_when: false
+
+- name: Resolve the API VIP holder MAC address on the machine network
+  ansible.builtin.shell: |
+    set -euo pipefail
+    ip neigh flush {{ openshift_install_cluster.network.api_vip }} \
+      dev vlan{{ openshift_install_cluster.network.machine_vlan_id }} >/dev/null 2>&1 || true
+    ping -c1 -W1 {{ openshift_install_cluster.network.api_vip }} >/dev/null 2>&1 || true
+    ip neigh show {{ openshift_install_cluster.network.api_vip }} \
+      dev vlan{{ openshift_install_cluster.network.machine_vlan_id }} \
+      | awk '{print $5}'
+  args:
+    executable: /bin/bash
+  register: lab_suspend_api_vip_mac
+  changed_when: false
+
+- name: Determine the master currently holding the API VIP
+  ansible.builtin.set_fact:
+    lab_suspend_vip_master: >-
+      {{
+        (
+          openshift_install_cluster.nodes
+          | selectattr('role', 'equalto', 'control-plane')
+          | selectattr('mac_address', 'equalto', (lab_suspend_api_vip_mac.stdout | trim))
+          | map(attribute='name')
+          | first
+        )
+        | default(lab_suspend_master_nodes | last, true)
+      }}
+
+- name: Derive the non-VIP masters to stop first
+  ansible.builtin.set_fact:
+    lab_suspend_non_vip_masters: >-
+      {{
+        lab_suspend_master_nodes
+        | reject('equalto', lab_suspend_vip_master)
+        | list
+      }}
+
+- name: Publish planned shutdown order
+  ansible.builtin.debug:
+    msg:
+      - "Workers: {{ lab_suspend_worker_nodes | join(', ') }}"
+      - "Infra: {{ lab_suspend_infra_nodes | join(', ') }}"
+      - "Non-VIP masters: {{ lab_suspend_non_vip_masters | join(', ') }}"
+      - "VIP master: {{ lab_suspend_vip_master }}"
+      - >-
+        Support VMs: {{
+          lab_suspend_support_vm_shutdown_order
+          | map('extract', lab_suspend_support_vm_domains)
+          | join(', ')
+        }}
+
+- name: Cordon and drain worker nodes
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export KUBECONFIG={{ lab_suspend_remote_kubeconfig_path | quote }}
+    {{ lab_suspend_remote_oc_path | quote }} adm cordon {{ item | quote }}
+    {{ lab_suspend_remote_oc_path | quote }} adm drain {{ item | quote }} \
+      --delete-emptydir-data \
+      --ignore-daemonsets=true \
+      --timeout=15s \
+      --force
+  args:
+    executable: /bin/bash
+  loop: "{{ lab_suspend_worker_nodes }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: true
+  failed_when: false
+
+- name: Gracefully ACPI-shutdown worker node VMs
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - shutdown
+      - "{{ item }}.{{ openshift_install_cluster.full_domain }}"
+  loop: "{{ lab_suspend_worker_nodes }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: true
+
+- name: Wait for worker node VMs to power off
+  ansible.builtin.shell: |
+    set -euo pipefail
+    state="$(virsh domstate {{ item }}.{{ openshift_install_cluster.full_domain }} 2>/dev/null || true)"
+    [ "$state" = "shut off" ]
+  args:
+    executable: /bin/bash
+  loop: "{{ lab_suspend_worker_nodes }}"
+  loop_control:
+    label: "{{ item }}"
+  register: lab_suspend_worker_shutdown_wait
+  retries: "{{ (lab_suspend_shutdown_timeout_seconds / lab_suspend_shutdown_poll_seconds) | int }}"
+  delay: "{{ lab_suspend_shutdown_poll_seconds }}"
+  until: lab_suspend_worker_shutdown_wait.rc == 0
+  changed_when: false
+
+- name: Cordon and drain infra nodes
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export KUBECONFIG={{ lab_suspend_remote_kubeconfig_path | quote }}
+    {{ lab_suspend_remote_oc_path | quote }} adm cordon {{ item | quote }}
+    {{ lab_suspend_remote_oc_path | quote }} adm drain {{ item | quote }} \
+      --delete-emptydir-data \
+      --ignore-daemonsets=true \
+      --timeout=15s \
+      --force
+  args:
+    executable: /bin/bash
+  loop: "{{ lab_suspend_infra_nodes }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: true
+  failed_when: false
+
+- name: Gracefully ACPI-shutdown infra node VMs
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - shutdown
+      - "{{ item }}.{{ openshift_install_cluster.full_domain }}"
+  loop: "{{ lab_suspend_infra_nodes }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: true
+
+- name: Wait for infra node VMs to power off
+  ansible.builtin.shell: |
+    set -euo pipefail
+    state="$(virsh domstate {{ item }}.{{ openshift_install_cluster.full_domain }} 2>/dev/null || true)"
+    [ "$state" = "shut off" ]
+  args:
+    executable: /bin/bash
+  loop: "{{ lab_suspend_infra_nodes }}"
+  loop_control:
+    label: "{{ item }}"
+  register: lab_suspend_infra_shutdown_wait
+  retries: "{{ (lab_suspend_shutdown_timeout_seconds / lab_suspend_shutdown_poll_seconds) | int }}"
+  delay: "{{ lab_suspend_shutdown_poll_seconds }}"
+  until: lab_suspend_infra_shutdown_wait.rc == 0
+  changed_when: false
+
+- name: Cordon and drain non-VIP masters
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export KUBECONFIG={{ lab_suspend_remote_kubeconfig_path | quote }}
+    {{ lab_suspend_remote_oc_path | quote }} adm cordon {{ item | quote }}
+    {{ lab_suspend_remote_oc_path | quote }} adm drain {{ item | quote }} \
+      --delete-emptydir-data \
+      --ignore-daemonsets=true \
+      --timeout=15s \
+      --force
+  args:
+    executable: /bin/bash
+  loop: "{{ lab_suspend_non_vip_masters }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: true
+  failed_when: false
+
+- name: Gracefully ACPI-shutdown non-VIP master VMs
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - shutdown
+      - "{{ item }}.{{ openshift_install_cluster.full_domain }}"
+  loop: "{{ lab_suspend_non_vip_masters }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: true
+
+- name: Wait for non-VIP master VMs to power off
+  ansible.builtin.shell: |
+    set -euo pipefail
+    state="$(virsh domstate {{ item }}.{{ openshift_install_cluster.full_domain }} 2>/dev/null || true)"
+    [ "$state" = "shut off" ]
+  args:
+    executable: /bin/bash
+  loop: "{{ lab_suspend_non_vip_masters }}"
+  loop_control:
+    label: "{{ item }}"
+  register: lab_suspend_non_vip_master_shutdown_wait
+  retries: "{{ (lab_suspend_shutdown_timeout_seconds / lab_suspend_shutdown_poll_seconds) | int }}"
+  delay: "{{ lab_suspend_shutdown_poll_seconds }}"
+  until: lab_suspend_non_vip_master_shutdown_wait.rc == 0
+  changed_when: false
+
+- name: Cordon and drain the final VIP-holding master
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export KUBECONFIG={{ lab_suspend_remote_kubeconfig_path | quote }}
+    {{ lab_suspend_remote_oc_path | quote }} adm cordon {{ lab_suspend_vip_master | quote }}
+    {{ lab_suspend_remote_oc_path | quote }} adm drain {{ lab_suspend_vip_master | quote }} \
+      --delete-emptydir-data \
+      --ignore-daemonsets=true \
+      --timeout=15s \
+      --force
+  args:
+    executable: /bin/bash
+  changed_when: true
+  failed_when: false
+
+- name: Gracefully ACPI-shutdown the final VIP-holding master
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - shutdown
+      - "{{ lab_suspend_vip_master }}.{{ openshift_install_cluster.full_domain }}"
+  changed_when: true
+
+- name: Wait for the final VIP-holding master to power off
+  ansible.builtin.shell: |
+    set -euo pipefail
+    state="$(virsh domstate {{ lab_suspend_vip_master }}.{{ openshift_install_cluster.full_domain }} 2>/dev/null || true)"
+    [ "$state" = "shut off" ]
+  args:
+    executable: /bin/bash
+  register: lab_suspend_vip_master_shutdown_wait
+  retries: "{{ (lab_suspend_shutdown_timeout_seconds / lab_suspend_shutdown_poll_seconds) | int }}"
+  delay: "{{ lab_suspend_shutdown_poll_seconds }}"
+  until: lab_suspend_vip_master_shutdown_wait.rc == 0
+  changed_when: false
+
+- name: Gracefully ACPI-shutdown support VMs
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - shutdown
+      - "{{ lab_suspend_support_vm_domains[item] }}"
+  loop: "{{ lab_suspend_support_vm_shutdown_order }}"
+  loop_control:
+    label: "{{ lab_suspend_support_vm_domains[item] }}"
+  changed_when: true
+  failed_when: false
+
+- name: Wait for support VMs to power off
+  ansible.builtin.shell: |
+    set -euo pipefail
+    state="$(virsh domstate {{ lab_suspend_support_vm_domains[item] }} 2>/dev/null || true)"
+    [ "$state" = "shut off" ]
+  args:
+    executable: /bin/bash
+  loop: "{{ lab_suspend_support_vm_shutdown_order }}"
+  loop_control:
+    label: "{{ lab_suspend_support_vm_domains[item] }}"
+  register: lab_suspend_support_shutdown_wait
+  retries: "{{ (lab_suspend_shutdown_timeout_seconds / lab_suspend_shutdown_poll_seconds) | int }}"
+  delay: "{{ lab_suspend_shutdown_poll_seconds }}"
+  until: lab_suspend_support_shutdown_wait.rc == 0
+  changed_when: false
+
+- name: Power off the hypervisor after the lab is suspended
+  ansible.builtin.shell: |
+    nohup bash -c "sleep {{ lab_suspend_host_poweroff_delay_seconds }}; poweroff -p" \
+      >/var/log/lab-suspend-poweroff.log 2>&1 &
+  args:
+    executable: /bin/bash
+  async: 1
+  poll: 0
+  changed_when: true

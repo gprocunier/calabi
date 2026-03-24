@@ -1,0 +1,5 @@
+# Managed by Ansible from cloudformation/virt-01-volume-inventory.yml
+# Match whole-disk EBS NVMe devices and create stable /dev/ebs/* symlinks.
+{% for volume in (lab_active_guest_volumes | default(guest_volumes)) %}
+ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", KERNEL=="nvme*n1", ENV{ID_MODEL}=="Amazon Elastic Block Store", ENV{ID_SERIAL_SHORT}=="{{ volume.volume_id | replace('-', '') }}", SYMLINK+="ebs/{{ volume.name }}"
+{% endfor %}

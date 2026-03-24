@@ -1,0 +1,427 @@
+---
+- name: Derive post-install Web Terminal context
+  ansible.builtin.set_fact:
+    openshift_post_install_web_terminal_oc_local_path: >-
+      {{ lab_execution_tools_root }}/{{
+      mirror_registry_ocp_release }}/bin/oc
+    openshift_post_install_web_terminal_kubeconfig_local_path: >-
+      {{ lab_execution_ocp_generated_root }}/auth/kubeconfig
+    openshift_post_install_web_terminal_remote_dir: >-
+      /var/tmp/openshift-post-install-web-terminal
+    openshift_post_install_web_terminal_remote_oc_path: >-
+      /var/tmp/openshift-post-install-web-terminal/oc
+    openshift_post_install_web_terminal_remote_kubeconfig_path: >-
+      /var/tmp/openshift-post-install-web-terminal/kubeconfig
+    openshift_post_install_web_terminal_remote_subscription_path: >-
+      /var/tmp/openshift-post-install-web-terminal/subscription.yaml
+    openshift_post_install_web_terminal_remote_tooling_imagestream_path: >-
+      /var/tmp/openshift-post-install-web-terminal/tooling-imagestream.yaml
+    openshift_post_install_web_terminal_remote_tooling_buildconfig_path: >-
+      /var/tmp/openshift-post-install-web-terminal/tooling-buildconfig.yaml
+    openshift_post_install_web_terminal_remote_tooling_template_path: >-
+      /var/tmp/openshift-post-install-web-terminal/tooling-devworkspacetemplate.yaml
+    openshift_post_install_web_terminal_custom_tooling_pullspec: >-
+      mirror-registry.workshop.lan:8443/{{
+      openshift_post_install_web_terminal_tooling_mirror_repo }}:{{
+      openshift_post_install_web_terminal_tooling_tag }}
+    openshift_post_install_web_terminal_local_tmp_dir: >-
+      /tmp/openshift-post-install-web-terminal
+    openshift_post_install_web_terminal_local_containerfile_path: >-
+      /tmp/openshift-post-install-web-terminal/Containerfile
+    openshift_post_install_web_terminal_local_pull_secret_path: >-
+      /tmp/openshift-post-install-web-terminal/pull-secret.json
+
+- name: Assert local oc binary exists for Web Terminal orchestration
+  ansible.builtin.stat:
+    path: "{{ openshift_post_install_web_terminal_oc_local_path }}"
+  delegate_to: localhost
+  become: false
+  register: openshift_post_install_web_terminal_oc_local_stat
+
+- name: Assert generated kubeconfig exists for Web Terminal orchestration
+  ansible.builtin.stat:
+    path: "{{ openshift_post_install_web_terminal_kubeconfig_local_path }}"
+  delegate_to: localhost
+  become: false
+  register: openshift_post_install_web_terminal_kubeconfig_local_stat
+
+- name: Assert controller pull-secret exists for mirror-registry tooling build
+  ansible.builtin.stat:
+    path: "{{ mirror_registry_content.auth.control_node_pull_secret_file }}"
+  delegate_to: localhost
+  become: false
+  register: openshift_post_install_web_terminal_pull_secret_local_stat
+  when:
+    - openshift_post_install_web_terminal_customize_tooling | bool
+    - openshift_post_install_web_terminal_tooling_build_strategy == 'mirror_registry'
+
+- name: Fail when required local Web Terminal artifacts are missing
+  ansible.builtin.assert:
+    that:
+      - openshift_post_install_web_terminal_oc_local_stat.stat.exists
+      - openshift_post_install_web_terminal_kubeconfig_local_stat.stat.exists
+      - >-
+        (
+          not openshift_post_install_web_terminal_customize_tooling | bool
+        ) or (
+          openshift_post_install_web_terminal_tooling_build_strategy != 'mirror_registry'
+        ) or (
+          openshift_post_install_web_terminal_pull_secret_local_stat.stat.exists
+        )
+    fail_msg: >-
+      Web Terminal orchestration requires a generated oc binary and kubeconfig,
+      and for mirror-registry tooling builds, a controller pull-secret file.
+
+- name: Create remote Web Terminal workspace
+  ansible.builtin.file:
+    path: "{{ openshift_post_install_web_terminal_remote_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Copy pinned oc binary to hypervisor for Web Terminal orchestration
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_web_terminal_oc_local_path }}"
+    dest: "{{ openshift_post_install_web_terminal_remote_oc_path }}"
+    mode: "0755"
+
+- name: Copy generated kubeconfig to hypervisor for Web Terminal orchestration
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_web_terminal_kubeconfig_local_path }}"
+    dest: "{{ openshift_post_install_web_terminal_remote_kubeconfig_path }}"
+    mode: "0600"
+
+- name: Render Web Terminal operator subscription manifest
+  ansible.builtin.template:
+    src: subscription.yaml.j2
+    dest: "{{ openshift_post_install_web_terminal_remote_subscription_path }}"
+    mode: "0644"
+
+- name: Render Web Terminal tooling ImageStream manifest
+  ansible.builtin.template:
+    src: tooling-imagestream.yaml.j2
+    dest: >-
+      {{ openshift_post_install_web_terminal_remote_tooling_imagestream_path }}
+    mode: "0644"
+  when:
+    - openshift_post_install_web_terminal_customize_tooling | bool
+    - openshift_post_install_web_terminal_tooling_build_strategy == 'internal_registry'
+
+- name: Render Web Terminal tooling BuildConfig manifest
+  ansible.builtin.template:
+    src: tooling-buildconfig.yaml.j2
+    dest: >-
+      {{ openshift_post_install_web_terminal_remote_tooling_buildconfig_path }}
+    mode: "0644"
+  when:
+    - openshift_post_install_web_terminal_customize_tooling | bool
+    - openshift_post_install_web_terminal_tooling_build_strategy == 'internal_registry'
+
+- name: Render Web Terminal tooling DevWorkspaceTemplate manifest
+  ansible.builtin.template:
+    src: tooling-devworkspacetemplate.yaml.j2
+    dest: >-
+      {{ openshift_post_install_web_terminal_remote_tooling_template_path }}
+    mode: "0644"
+  when: openshift_post_install_web_terminal_customize_tooling | bool
+
+- name: Apply Web Terminal operator subscription
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_web_terminal_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_web_terminal_remote_subscription_path }}"
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_web_terminal_remote_kubeconfig_path }}
+  changed_when: true
+
+- name: Wait for Web Terminal operator CSV to be selected
+  ansible.builtin.shell: |
+    set -o pipefail
+    oc_bin="{{ openshift_post_install_web_terminal_remote_oc_path }}"
+    "${oc_bin}" get subscription \
+      "{{ openshift_post_install_web_terminal_subscription_name }}" \
+      -n "{{ openshift_post_install_web_terminal_namespace }}" \
+      -o jsonpath='{.status.currentCSV}' | tr -d '\n'
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_web_terminal_remote_kubeconfig_path }}
+  register: openshift_post_install_web_terminal_current_csv
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_web_terminal_current_csv.stdout | length > 0
+
+- name: Wait for Web Terminal operator CSV phase Succeeded
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_web_terminal_remote_oc_path }}"
+      - get
+      - csv
+      - "{{ openshift_post_install_web_terminal_current_csv.stdout }}"
+      - -n
+      - "{{ openshift_post_install_web_terminal_namespace }}"
+      - -o
+      - jsonpath={.status.phase}
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_web_terminal_remote_kubeconfig_path }}
+  register: openshift_post_install_web_terminal_csv_phase
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_web_terminal_csv_phase.stdout == 'Succeeded'
+
+- name: Wait for Web Terminal pods to become Ready
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_web_terminal_remote_oc_path }}" get pods \
+      -n "{{ openshift_post_install_web_terminal_namespace }}" \
+      -l 'operators.coreos.com/web-terminal.openshift-operators=' \
+      -o json \
+    | jq -r '
+        [
+          .items[]
+          | select(
+              (
+                .status.containerStatuses // []
+                | map(select(.ready == true))
+                | length
+              ) !=
+              (
+                .spec.containers // []
+                | length
+              )
+            )
+        ] | length
+      '
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_web_terminal_remote_kubeconfig_path }}
+  register: openshift_post_install_web_terminal_not_ready_count
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_web_terminal_not_ready_count.stdout == '0'
+
+- name: Apply Web Terminal tooling ImageStream
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_web_terminal_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ tooling_manifest_path }}"
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_web_terminal_remote_kubeconfig_path }}
+  changed_when: true
+  vars:
+    tooling_manifest_path: >-
+      {{ openshift_post_install_web_terminal_remote_tooling_imagestream_path }}
+  when:
+    - openshift_post_install_web_terminal_customize_tooling | bool
+    - openshift_post_install_web_terminal_tooling_build_strategy == 'internal_registry'
+
+- name: Apply Web Terminal tooling BuildConfig
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_web_terminal_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ tooling_manifest_path }}"
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_web_terminal_remote_kubeconfig_path }}
+  changed_when: true
+  vars:
+    tooling_manifest_path: >-
+      {{ openshift_post_install_web_terminal_remote_tooling_buildconfig_path }}
+  when:
+    - openshift_post_install_web_terminal_customize_tooling | bool
+    - openshift_post_install_web_terminal_tooling_build_strategy == 'internal_registry'
+
+- name: Delete existing Web Terminal tooling build when present
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_web_terminal_remote_oc_path }}"
+      - delete
+      - build
+      - "{{ openshift_post_install_web_terminal_tooling_imagestream_name }}-1"
+      - -n
+      - "{{ openshift_post_install_web_terminal_namespace }}"
+      - --ignore-not-found=true
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_web_terminal_remote_kubeconfig_path }}
+  changed_when: true
+  when: openshift_post_install_web_terminal_customize_tooling | bool and
+    openshift_post_install_web_terminal_tooling_build_strategy == 'internal_registry'
+
+- name: Start Web Terminal tooling build
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_web_terminal_remote_oc_path }}"
+      - start-build
+      - "{{ openshift_post_install_web_terminal_tooling_imagestream_name }}"
+      - -n
+      - "{{ openshift_post_install_web_terminal_namespace }}"
+      - --wait=true
+      - --follow=true
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_web_terminal_remote_kubeconfig_path }}
+  register: openshift_post_install_web_terminal_build_output
+  changed_when: true
+  when: openshift_post_install_web_terminal_customize_tooling | bool and
+    openshift_post_install_web_terminal_tooling_build_strategy == 'internal_registry'
+
+- name: Wait for Web Terminal custom tooling image to exist
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_web_terminal_remote_oc_path }}"
+      - get
+      - istag
+      - >-
+        {{ openshift_post_install_web_terminal_tooling_imagestream_name }}:{{
+        openshift_post_install_web_terminal_tooling_tag }}
+      - -n
+      - "{{ openshift_post_install_web_terminal_namespace }}"
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_web_terminal_remote_kubeconfig_path }}
+  changed_when: false
+  register: openshift_post_install_web_terminal_istag_result
+  retries: 12
+  delay: 10
+  until: openshift_post_install_web_terminal_istag_result.rc == 0
+  when: openshift_post_install_web_terminal_customize_tooling | bool and
+    openshift_post_install_web_terminal_tooling_build_strategy == 'internal_registry'
+
+- name: Ensure local temporary directory exists for Web Terminal tooling build
+  ansible.builtin.file:
+    path: "{{ openshift_post_install_web_terminal_local_tmp_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+  when: openshift_post_install_web_terminal_customize_tooling | bool and
+    openshift_post_install_web_terminal_tooling_build_strategy == 'mirror_registry'
+
+- name: Render local Containerfile for Web Terminal tooling build
+  ansible.builtin.template:
+    src: tooling-containerfile.j2
+    dest: "{{ openshift_post_install_web_terminal_local_containerfile_path }}"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  when: openshift_post_install_web_terminal_customize_tooling | bool and
+    openshift_post_install_web_terminal_tooling_build_strategy == 'mirror_registry'
+
+- name: Copy controller pull-secret into local tooling workspace
+  ansible.builtin.copy:
+    src: "{{ mirror_registry_content.auth.control_node_pull_secret_file }}"
+    dest: "{{ openshift_post_install_web_terminal_local_pull_secret_path }}"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  when: openshift_post_install_web_terminal_customize_tooling | bool and
+    openshift_post_install_web_terminal_tooling_build_strategy == 'mirror_registry'
+
+- name: Build and push custom Web Terminal tooling image on mirror-registry
+  ansible.builtin.shell: |
+    set -o pipefail
+    ssh_common=(
+      -i {{ lab_execution_ssh_private_key_file }}
+      -o IdentitiesOnly=yes
+      -o StrictHostKeyChecking=no
+      -o UserKnownHostsFile=/dev/null
+    )
+    scp "${ssh_common[@]}" "{{ openshift_post_install_web_terminal_local_containerfile_path }}" \
+      cloud-user@{{ mirror_registry_vm.network.ipv4_address }}:/tmp/web-terminal-tooling.Containerfile
+    scp "${ssh_common[@]}" "{{ openshift_post_install_web_terminal_local_pull_secret_path }}" \
+      cloud-user@{{ mirror_registry_vm.network.ipv4_address }}:/tmp/web-terminal-pull-secret.json
+    ssh "${ssh_common[@]}" cloud-user@{{ mirror_registry_vm.network.ipv4_address }} '
+      sudo podman login \
+        --username "{{ mirror_registry_service.init_user }}" \
+        --password "{{ mirror_registry_service.init_password }}" \
+        mirror-registry.workshop.lan:8443 &&
+      sudo mkdir -p /var/tmp/web-terminal-tooling &&
+      sudo cp /tmp/web-terminal-tooling.Containerfile \
+        /var/tmp/web-terminal-tooling/Containerfile &&
+      sudo cp /tmp/web-terminal-pull-secret.json \
+        /var/tmp/web-terminal-tooling/pull-secret.json &&
+      sudo podman build \
+        --authfile /var/tmp/web-terminal-tooling/pull-secret.json \
+        -t {{ openshift_post_install_web_terminal_custom_tooling_pullspec }} \
+        /var/tmp/web-terminal-tooling &&
+      sudo podman push \
+        {{ openshift_post_install_web_terminal_custom_tooling_pullspec }}
+    '
+  args:
+    executable: /bin/bash
+  delegate_to: localhost
+  become: false
+  changed_when: true
+  when: openshift_post_install_web_terminal_customize_tooling | bool and
+    openshift_post_install_web_terminal_tooling_build_strategy == 'mirror_registry'
+
+- name: Merge mirror-registry auth into cluster pull-secret
+  ansible.builtin.shell: |
+    set -o pipefail
+    current_json="$(mktemp)"
+    merged_json="$(mktemp)"
+    "{{ openshift_post_install_web_terminal_remote_oc_path }}" get secret pull-secret \
+      -n openshift-config -o jsonpath='{.data.\.dockerconfigjson}' \
+    | base64 -d > "${current_json}"
+    auth_b64="$(printf '%s' '{{ mirror_registry_service.init_user }}:{{ mirror_registry_service.init_password }}' | base64 -w0)"
+    jq --arg auth "${auth_b64}" '
+      .auths["mirror-registry.workshop.lan:8443"] = {
+        "auth": $auth
+      }
+    ' "${current_json}" > "${merged_json}"
+    "{{ openshift_post_install_web_terminal_remote_oc_path }}" set data secret/pull-secret \
+      -n openshift-config --from-file=.dockerconfigjson="${merged_json}"
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_web_terminal_remote_kubeconfig_path }}
+  changed_when: true
+  when: openshift_post_install_web_terminal_customize_tooling | bool and
+    openshift_post_install_web_terminal_tooling_build_strategy == 'mirror_registry'
+
+- name: Apply custom Web Terminal tooling template
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_web_terminal_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_web_terminal_remote_tooling_template_path }}"
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_web_terminal_remote_kubeconfig_path }}
+  changed_when: true
+  when: openshift_post_install_web_terminal_customize_tooling | bool
+
+- name: Delete existing Web Terminal workspaces so new sessions use the new image
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_web_terminal_remote_oc_path }}"
+      - delete
+      - devworkspace
+      - --all
+      - -n
+      - openshift-terminal
+      - --ignore-not-found=true
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_web_terminal_remote_kubeconfig_path }}
+  changed_when: true
+  when:
+    - openshift_post_install_web_terminal_customize_tooling | bool
+    - openshift_post_install_web_terminal_recreate_existing_workspaces | bool

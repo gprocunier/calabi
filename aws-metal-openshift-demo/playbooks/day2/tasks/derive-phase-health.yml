@@ -1,0 +1,510 @@
+---
+- name: Derive post-install phase health probe context
+  ansible.builtin.set_fact:
+    openshift_post_install_probe_oc_path: >-
+      {{ lab_execution_tools_root }}/{{ mirror_registry_ocp_release }}/bin/oc
+    openshift_post_install_probe_kubeconfig_path: >-
+      {{ lab_execution_ocp_generated_root }}/auth/kubeconfig
+    openshift_post_install_probe_idm_ca_path: >-
+      {{ lab_execution_ocp_generated_root }}/idm-ca.crt
+    openshift_post_install_probe_console_host: >-
+      console-openshift-console.apps.{{ openshift_install_cluster.name }}.{{ openshift_install_cluster.base_domain }}
+    openshift_post_install_probe_api_url: >-
+      https://api.{{ openshift_install_cluster.name }}.{{ openshift_install_cluster.base_domain }}:6443
+    openshift_post_install_probe_infra_nodes: >-
+      {{
+        openshift_install_cluster.nodes
+        | selectattr('role', 'equalto', 'infra')
+        | map(attribute='name')
+        | list
+      }}
+    openshift_post_install_probe_ldap_test_user: >-
+      {{
+        idm_server.identity_users
+        | selectattr('groups', 'contains', 'openshift-admin')
+        | map(attribute='name')
+        | first
+        | default('')
+      }}
+    openshift_post_install_probe_nmstate_vm_data_vlan_items: >-
+      {{
+        lab_switch_ports
+        | dict2items
+        | selectattr('value.vlan_id', 'in', [300, 301, 302])
+        | list
+      }}
+    openshift_post_install_probe_nmstate_namespace: >-
+      {{ openshift_post_install_nmstate_namespace | default('openshift-nmstate') }}
+    openshift_post_install_probe_nmstate_subscription_name: >-
+      {{ openshift_post_install_nmstate_subscription_name | default('kubernetes-nmstate-operator') }}
+    openshift_post_install_probe_nmstate_instance_name: >-
+      {{ openshift_post_install_nmstate_instance_name | default('nmstate') }}
+    openshift_post_install_probe_odf_storage_cluster_name: >-
+      {{ openshift_post_install_odf_storage_cluster_name | default('ocs-storagecluster') }}
+    openshift_post_install_probe_odf_storage_cluster_namespace: >-
+      {{ openshift_post_install_odf_storage_cluster_namespace | default('openshift-storage') }}
+    openshift_post_install_probe_odf_required_storage_classes: >-
+      {{ openshift_post_install_odf_required_storage_classes | default(['ocs-storagecluster-ceph-rbd']) }}
+    openshift_post_install_probe_odf_force_osd_device_reset: >-
+      {{ openshift_post_install_odf_force_osd_device_reset | default(false) }}
+    openshift_post_install_probe_odf_force_destructive_recovery: >-
+      {{
+        (openshift_post_install_force_odf_rebuild | default(false))
+        or (openshift_post_install_odf_force_osd_device_reset | default(false))
+      }}
+    openshift_post_install_probe_virtualization_namespace: >-
+      {{ openshift_post_install_virtualization_namespace | default('openshift-cnv') }}
+    openshift_post_install_probe_virtualization_hco_name: >-
+      {{ openshift_post_install_virtualization_hco_name | default('kubevirt-hyperconverged') }}
+    openshift_post_install_probe_pipelines_operator_namespace: >-
+      {{ openshift_post_install_pipelines_operator_namespace | default('openshift-operators') }}
+    openshift_post_install_probe_pipelines_subscription_name: >-
+      {{ openshift_post_install_pipelines_subscription_name | default('openshift-pipelines-operator-rh') }}
+    openshift_post_install_probe_web_terminal_namespace: >-
+      {{ openshift_post_install_web_terminal_namespace | default('openshift-operators') }}
+    openshift_post_install_probe_web_terminal_subscription_name: >-
+      {{ openshift_post_install_web_terminal_subscription_name | default('web-terminal') }}
+    openshift_post_install_probe_web_terminal_customize_tooling: >-
+      {{ openshift_post_install_web_terminal_customize_tooling | default(true) }}
+    openshift_post_install_probe_netobserv_loki_namespace: >-
+      {{ openshift_post_install_netobserv_loki_namespace | default('netobserv') }}
+    openshift_post_install_probe_netobserv_loki_operator_namespace: >-
+      {{ openshift_post_install_netobserv_loki_operator_namespace | default('openshift-operators-redhat') }}
+    openshift_post_install_probe_netobserv_operator_namespace: >-
+      {{ openshift_post_install_netobserv_operator_namespace | default('openshift-netobserv-operator') }}
+    openshift_post_install_probe_netobserv_loki_subscription_name: >-
+      {{ openshift_post_install_netobserv_loki_subscription_name | default('loki-operator') }}
+    openshift_post_install_probe_netobserv_subscription_name: >-
+      {{ openshift_post_install_netobserv_subscription_name | default('netobserv-operator') }}
+    openshift_post_install_probe_netobserv_loki_stack_name: >-
+      {{ openshift_post_install_netobserv_loki_stack_name | default('netobserv-loki') }}
+    openshift_post_install_probe_netobserv_flowcollector_name: >-
+      {{ openshift_post_install_netobserv_flowcollector_name | default('cluster') }}
+    openshift_post_install_probe_netobserv_flowcollector_namespace: >-
+      {{ openshift_post_install_netobserv_flowcollector_namespace | default('netobserv') }}
+
+- name: Derive expected NMState NNCP names for reuse detection
+  ansible.builtin.set_fact:
+    openshift_post_install_probe_expected_nncp_names: >-
+      {{
+        (
+          [(openshift_post_install_nmstate_migration_nncp_name | default('kubevirt-live-migration-vlan'))]
+          if (openshift_post_install_nmstate_configure_migration_vlan | default(true)) | bool
+          else []
+        )
+        +
+        (
+          openshift_post_install_probe_nmstate_vm_data_vlan_items
+          | map(attribute='value.vlan_id')
+          | map('regex_replace', '^(.*)$', 'vm-data-vlan-\\1')
+          | list
+          if (openshift_post_install_nmstate_configure_vm_data_vlans | default(true)) | bool
+          else []
+        )
+      }}
+
+- name: Assert phase health probe inputs exist
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  delegate_to: localhost
+  become: false
+  loop:
+    - "{{ openshift_post_install_probe_oc_path }}"
+    - "{{ openshift_post_install_probe_kubeconfig_path }}"
+  register: openshift_post_install_probe_local_inputs
+
+- name: Fail when phase health probe inputs are missing
+  ansible.builtin.assert:
+    that:
+      - openshift_post_install_probe_local_inputs.results | map(attribute='stat.exists') | min
+    fail_msg: >-
+      Day-2 health probes require the generated oc binary and kubeconfig on the
+      controller before reuse/force decisions can be made.
+
+- name: Probe disconnected OperatorHub health
+  ansible.builtin.shell: |
+    set -euo pipefail
+    oc="{{ openshift_post_install_probe_oc_path }}"
+    disable_all="$("${oc}" get operatorhub cluster -o jsonpath='{.spec.disableAllDefaultSources}' 2>/dev/null || true)"
+    catalog_state="$("${oc}" get catalogsource cs-redhat-operator-index-v4-20 -n openshift-marketplace -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null || true)"
+    if [[ "${disable_all}" == "true" && "${catalog_state}" == "READY" ]]; then
+      echo true
+    else
+      echo false
+    fi
+  args:
+    executable: /bin/bash
+  delegate_to: localhost
+  become: false
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_probe_kubeconfig_path }}"
+  register: openshift_post_install_probe_disconnected_operatorhub
+  changed_when: false
+
+- name: Probe infra conversion health
+  ansible.builtin.shell: |
+    set -euo pipefail
+    oc="{{ openshift_post_install_probe_oc_path }}"
+    infra_ok=true
+    for node in {{ openshift_post_install_probe_infra_nodes | map('quote') | join(' ') }}; do
+      if ! "${oc}" get node "${node}" --show-labels 2>/dev/null | grep -q 'node-role.kubernetes.io/infra='; then
+        infra_ok=false
+      fi
+    done
+    ingress_yaml="$("${oc}" get ingresscontroller default -n openshift-ingress-operator -o yaml 2>/dev/null || true)"
+    registry_yaml="$("${oc}" get configs.imageregistry/cluster -o yaml 2>/dev/null || true)"
+    monitoring_yaml="$("${oc}" get configmap cluster-monitoring-config -n openshift-monitoring -o yaml 2>/dev/null || true)"
+    if ${infra_ok} \
+      && grep -q 'node-role.kubernetes.io/infra' <<<"${ingress_yaml}" \
+      && grep -q 'node-role.kubernetes.io/infra' <<<"${registry_yaml}" \
+      && grep -q 'node-role.kubernetes.io/infra' <<<"${monitoring_yaml}"; then
+      echo true
+    else
+      echo false
+    fi
+  args:
+    executable: /bin/bash
+  delegate_to: localhost
+  become: false
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_probe_kubeconfig_path }}"
+  register: openshift_post_install_probe_infra
+  changed_when: false
+
+- name: Probe IdM ingress certificate health
+  ansible.builtin.shell: |
+    set -euo pipefail
+    oc="{{ openshift_post_install_probe_oc_path }}"
+    ca="{{ openshift_post_install_probe_idm_ca_path }}"
+    expected_secret="{{ openshift_idm_certs.ingress.secret_name }}"
+    current_secret="$("${oc}" get ingresscontroller default -n openshift-ingress-operator -o jsonpath='{.spec.defaultCertificate.name}' 2>/dev/null || true)"
+    route_host="$("${oc}" get route console -n openshift-console -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+    if [[ -z "${route_host}" || "${current_secret}" != "${expected_secret}" || ! -r "${ca}" ]]; then
+      echo false
+      exit 0
+    fi
+    if echo | openssl s_client -CAfile "${ca}" -connect "${route_host}:443" -servername "${route_host}" 2>&1 | grep -q 'Verify return code: 0'; then
+      echo true
+    else
+      echo false
+    fi
+  args:
+    executable: /bin/bash
+  delegate_to: localhost
+  become: false
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_probe_kubeconfig_path }}"
+  register: openshift_post_install_probe_idm_certs
+  changed_when: false
+
+- name: Probe LDAP auth health
+  ansible.builtin.shell: |
+    set -euo pipefail
+    trap 'rm -f "${test_kubeconfig:-}"' EXIT
+    oc="{{ openshift_post_install_probe_oc_path }}"
+    api_url="{{ openshift_post_install_probe_api_url }}"
+    test_user="{{ openshift_post_install_probe_ldap_test_user }}"
+    idps="$("${oc}" get oauth cluster -o jsonpath='{.spec.identityProviders[*].name}' 2>/dev/null || true)"
+    auth_health="$("${oc}" get clusteroperator authentication -o jsonpath='{.status.conditions[?(@.type=="Available")].status},{.status.conditions[?(@.type=="Progressing")].status},{.status.conditions[?(@.type=="Degraded")].status}' 2>/dev/null || true)"
+    oauth_host="$("${oc}" get route oauth-openshift -n openshift-authentication -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+    if [[ -z "${test_user}" || "${auth_health}" != "True,False,False" ]]; then
+      echo false
+      exit 0
+    fi
+    for group in {{ openshift_ldap_auth.group_sync.whitelist_groups | map('quote') | join(' ') }}; do
+      "${oc}" get group "${group}" >/dev/null 2>&1 || { echo false; exit 0; }
+    done
+    [[ " ${idps} " == *" {{ openshift_ldap_auth.identity_provider_name }} "* ]] || { echo false; exit 0; }
+    curl -skf "https://${oauth_host}/healthz" >/dev/null 2>&1 || { echo false; exit 0; }
+    test_kubeconfig="$(mktemp)"
+    "${oc}" login "${api_url}" --username="${test_user}" --password={{ lab_default_password | quote }} --insecure-skip-tls-verify --kubeconfig="${test_kubeconfig}" >/dev/null 2>&1 || { echo false; exit 0; }
+    if [[ "$("${oc}" whoami --kubeconfig="${test_kubeconfig}" 2>/dev/null || true)" == "${test_user}" ]]; then
+      echo true
+    else
+      echo false
+    fi
+  args:
+    executable: /bin/bash
+  delegate_to: localhost
+  become: false
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_probe_kubeconfig_path }}"
+  register: openshift_post_install_probe_ldap_auth
+  changed_when: false
+  no_log: true
+
+- name: Probe NMState health
+  ansible.builtin.shell: |
+    set -euo pipefail
+    oc="{{ openshift_post_install_probe_oc_path }}"
+    csv_name="$("${oc}" get subscription "{{ openshift_post_install_probe_nmstate_subscription_name }}" -n "{{ openshift_post_install_probe_nmstate_namespace }}" -o jsonpath='{.status.currentCSV}' 2>/dev/null || true)"
+    csv_phase=""
+    if [[ -n "${csv_name}" ]]; then
+      csv_phase="$("${oc}" get csv "${csv_name}" -n "{{ openshift_post_install_probe_nmstate_namespace }}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+    fi
+    "${oc}" get nmstate "{{ openshift_post_install_probe_nmstate_instance_name }}" -n "{{ openshift_post_install_probe_nmstate_namespace }}" >/dev/null 2>&1 || { echo false; exit 0; }
+    for nncp in {{ openshift_post_install_probe_expected_nncp_names | map('quote') | join(' ') }}; do
+      status="$("${oc}" get nncp "${nncp}" -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' 2>/dev/null || true)"
+      [[ "${status}" == "True" ]] || { echo false; exit 0; }
+    done
+    if [[ "${csv_phase}" == "Succeeded" ]]; then
+      echo true
+    else
+      echo false
+    fi
+  args:
+    executable: /bin/bash
+  delegate_to: localhost
+  become: false
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_probe_kubeconfig_path }}"
+  register: openshift_post_install_probe_nmstate
+  changed_when: false
+
+- name: Probe ODF health
+  ansible.builtin.shell: |
+    set -euo pipefail
+    oc="{{ openshift_post_install_probe_oc_path }}"
+    available="$("${oc}" get storagecluster "{{ openshift_post_install_probe_odf_storage_cluster_name }}" -n "{{ openshift_post_install_probe_odf_storage_cluster_namespace }}" -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' 2>/dev/null || true)"
+    degraded="$("${oc}" get storagecluster "{{ openshift_post_install_probe_odf_storage_cluster_name }}" -n "{{ openshift_post_install_probe_odf_storage_cluster_namespace }}" -o jsonpath='{.status.conditions[?(@.type=="Degraded")].status}' 2>/dev/null || true)"
+    deleting="$("${oc}" get storagecluster "{{ openshift_post_install_probe_odf_storage_cluster_name }}" -n "{{ openshift_post_install_probe_odf_storage_cluster_namespace }}" -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null || true)"
+    ceph_phase="$("${oc}" get cephcluster "{{ openshift_post_install_probe_odf_storage_cluster_name }}-cephcluster" -n "{{ openshift_post_install_probe_odf_storage_cluster_namespace }}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+    for sc in {{ openshift_post_install_probe_odf_required_storage_classes | map('quote') | join(' ') }}; do
+      "${oc}" get storageclass "${sc}" >/dev/null 2>&1 || { echo false; exit 0; }
+    done
+    if [[ "${available}" == "True" && "${degraded}" != "True" && -z "${deleting}" && "${ceph_phase}" == "Ready" ]]; then
+      echo true
+    else
+      echo false
+    fi
+  args:
+    executable: /bin/bash
+  delegate_to: localhost
+  become: false
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_probe_kubeconfig_path }}"
+  register: openshift_post_install_probe_odf
+  changed_when: false
+
+- name: Probe OpenShift Virtualization health
+  ansible.builtin.shell: |
+    set -euo pipefail
+    oc="{{ openshift_post_install_probe_oc_path }}"
+    hco_available="$("${oc}" get hyperconverged "{{ openshift_post_install_probe_virtualization_hco_name }}" -n "{{ openshift_post_install_probe_virtualization_namespace }}" -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' 2>/dev/null || true)"
+    kubevirt_name="$("${oc}" get kubevirt -n "{{ openshift_post_install_probe_virtualization_namespace }}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+    kubevirt_available=""
+    if [[ -n "${kubevirt_name}" ]]; then
+      kubevirt_available="$("${oc}" get kubevirt "${kubevirt_name}" -n "{{ openshift_post_install_probe_virtualization_namespace }}" -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' 2>/dev/null || true)"
+    fi
+    virt_handler_ready="$("${oc}" get daemonset virt-handler -n "{{ openshift_post_install_probe_virtualization_namespace }}" -o jsonpath='{.status.numberReady}' 2>/dev/null || true)"
+    if [[ "${hco_available}" == "True" && "${kubevirt_available}" == "True" && "${virt_handler_ready}" =~ ^[1-9][0-9]*$ ]]; then
+      echo true
+    else
+      echo false
+    fi
+  args:
+    executable: /bin/bash
+  delegate_to: localhost
+  become: false
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_probe_kubeconfig_path }}"
+  register: openshift_post_install_probe_virtualization
+  changed_when: false
+
+- name: Probe OpenShift Pipelines health
+  ansible.builtin.shell: |
+    set -euo pipefail
+    oc="{{ openshift_post_install_probe_oc_path }}"
+    csv_name="$("${oc}" get subscription "{{ openshift_post_install_probe_pipelines_subscription_name }}" -n "{{ openshift_post_install_probe_pipelines_operator_namespace }}" -o jsonpath='{.status.currentCSV}' 2>/dev/null || true)"
+    csv_phase=""
+    if [[ -n "${csv_name}" ]]; then
+      csv_phase="$("${oc}" get csv "${csv_name}" -n "{{ openshift_post_install_probe_pipelines_operator_namespace }}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+    fi
+    pipeline_ready="$("${oc}" get tektonpipeline pipeline -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
+    config_ready="$("${oc}" get tektonconfig config -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
+    if [[ "${csv_phase}" == "Succeeded" && "${pipeline_ready}" == "True" && "${config_ready}" == "True" ]]; then
+      echo true
+    else
+      echo false
+    fi
+  args:
+    executable: /bin/bash
+  delegate_to: localhost
+  become: false
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_probe_kubeconfig_path }}"
+  register: openshift_post_install_probe_pipelines
+  changed_when: false
+
+- name: Probe Web Terminal health
+  ansible.builtin.shell: |
+    set -euo pipefail
+    oc="{{ openshift_post_install_probe_oc_path }}"
+    csv_name="$("${oc}" get subscription "{{ openshift_post_install_probe_web_terminal_subscription_name }}" -n "{{ openshift_post_install_probe_web_terminal_namespace }}" -o jsonpath='{.status.currentCSV}' 2>/dev/null || true)"
+    csv_phase=""
+    if [[ -n "${csv_name}" ]]; then
+      csv_phase="$("${oc}" get csv "${csv_name}" -n "{{ openshift_post_install_probe_web_terminal_namespace }}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+    fi
+    not_ready="$("${oc}" get pods -n "{{ openshift_post_install_probe_web_terminal_namespace }}" -l operators.coreos.com/web-terminal.{{ openshift_post_install_probe_web_terminal_namespace }}= -o jsonpath='{range .items[*]}{range .status.containerStatuses[*]}{.ready}{" "}{end}{end}' 2>/dev/null | tr ' ' '\n' | grep -c '^false$' || true)"
+    if [[ {{ openshift_post_install_probe_web_terminal_customize_tooling | ternary('true', 'false') }} == true ]]; then
+      "${oc}" get devworkspacetemplate web-terminal-tooling -n "{{ openshift_post_install_probe_web_terminal_namespace }}" >/dev/null 2>&1 || { echo false; exit 0; }
+    fi
+    if [[ "${csv_phase}" == "Succeeded" && "${not_ready}" == "0" ]]; then
+      echo true
+    else
+      echo false
+    fi
+  args:
+    executable: /bin/bash
+  delegate_to: localhost
+  become: false
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_probe_kubeconfig_path }}"
+  register: openshift_post_install_probe_web_terminal
+  changed_when: false
+
+- name: Probe AAP health
+  ansible.builtin.shell: |
+    set -euo pipefail
+    oc="{{ openshift_post_install_probe_oc_path }}"
+    csv_name="$("${oc}" get subscription "{{ openshift_aap.subscription_name }}" -n "{{ openshift_aap.namespace }}" -o jsonpath='{.status.currentCSV}' 2>/dev/null || true)"
+    csv_phase=""
+    if [[ -n "${csv_name}" ]]; then
+      csv_phase="$("${oc}" get csv "${csv_name}" -n "{{ openshift_aap.namespace }}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+    fi
+    "${oc}" get ansibleautomationplatform "{{ openshift_aap.instance_name }}" -n "{{ openshift_aap.namespace }}" >/dev/null 2>&1 || { echo false; exit 0; }
+    "${oc}" get automationcontroller "{{ openshift_aap.controller.name }}" -n "{{ openshift_aap.namespace }}" >/dev/null 2>&1 || { echo false; exit 0; }
+    curl -skf "https://{{ openshift_aap.route_host }}/api/gateway/v1/ui_auth/" >/dev/null 2>&1 || { echo false; exit 0; }
+    auth_json="$(mktemp)"
+    trap 'rm -f "${auth_json}"' EXIT
+    curl -sk -u "{{ openshift_aap.admin_username }}:{{ openshift_aap.admin_password }}" "https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticators/" -o "${auth_json}" >/dev/null 2>&1 || { echo false; exit 0; }
+    auth_present="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); name=sys.argv[2]; print("true" if any(item.get("name")==name for item in data.get("results", [])) else "false")' "${auth_json}" {{ openshift_aap.ldap.authenticator_name | quote }})"
+    if [[ "${csv_phase}" == "Succeeded" && "${auth_present}" == "true" ]]; then
+      echo true
+    else
+      echo false
+    fi
+  args:
+    executable: /bin/bash
+  delegate_to: localhost
+  become: false
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_probe_kubeconfig_path }}"
+  register: openshift_post_install_probe_aap
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Normalize AAP health probe result
+  ansible.builtin.set_fact:
+    openshift_post_install_probe_aap_stdout: >-
+      {{
+        'true'
+        if openshift_post_install_probe_aap.rc == 0
+        and (openshift_post_install_probe_aap.stdout_lines | last | default('false')) == 'true'
+        else 'false'
+      }}
+
+- name: Probe Network Observability health
+  ansible.builtin.shell: |
+    set -euo pipefail
+    oc="{{ openshift_post_install_probe_oc_path }}"
+    loki_csv="$("${oc}" get subscription "{{ openshift_post_install_probe_netobserv_loki_subscription_name }}" -n "{{ openshift_post_install_probe_netobserv_loki_operator_namespace }}" -o jsonpath='{.status.currentCSV}' 2>/dev/null || true)"
+    loki_phase=""
+    if [[ -n "${loki_csv}" ]]; then
+      loki_phase="$("${oc}" get csv "${loki_csv}" -n "{{ openshift_post_install_probe_netobserv_loki_operator_namespace }}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+    fi
+    netobserv_csv="$("${oc}" get subscription "{{ openshift_post_install_probe_netobserv_subscription_name }}" -n "{{ openshift_post_install_probe_netobserv_operator_namespace }}" -o jsonpath='{.status.currentCSV}' 2>/dev/null || true)"
+    netobserv_phase=""
+    if [[ -n "${netobserv_csv}" ]]; then
+      netobserv_phase="$("${oc}" get csv "${netobserv_csv}" -n "{{ openshift_post_install_probe_netobserv_operator_namespace }}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+    fi
+    lokistack_ready="$("${oc}" get lokistack "{{ openshift_post_install_probe_netobserv_loki_stack_name }}" -n "{{ openshift_post_install_probe_netobserv_loki_namespace }}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
+    flow_ready="$("${oc}" get flowcollector "{{ openshift_post_install_probe_netobserv_flowcollector_name }}" -n "{{ openshift_post_install_probe_netobserv_flowcollector_namespace }}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
+    if [[ "${loki_phase}" == "Succeeded" && "${netobserv_phase}" == "Succeeded" && "${lokistack_ready}" == "True" && "${flow_ready}" == "True" ]]; then
+      echo true
+    else
+      echo false
+    fi
+  args:
+    executable: /bin/bash
+  delegate_to: localhost
+  become: false
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_probe_kubeconfig_path }}"
+  register: openshift_post_install_probe_netobserv
+  changed_when: false
+
+- name: Publish phase reuse decisions
+  ansible.builtin.set_fact:
+    openshift_post_install_disconnected_operatorhub_healthy: "{{ openshift_post_install_probe_disconnected_operatorhub.stdout == 'true' }}"
+    openshift_post_install_infra_conversion_healthy: "{{ openshift_post_install_probe_infra.stdout == 'true' }}"
+    openshift_post_install_idm_ingress_certs_healthy: "{{ openshift_post_install_probe_idm_certs.stdout == 'true' }}"
+    openshift_post_install_ldap_auth_healthy: "{{ openshift_post_install_probe_ldap_auth.stdout == 'true' }}"
+    openshift_post_install_nmstate_healthy: "{{ openshift_post_install_probe_nmstate.stdout == 'true' }}"
+    openshift_post_install_odf_healthy: "{{ openshift_post_install_probe_odf.stdout == 'true' }}"
+    openshift_post_install_virtualization_healthy: "{{ openshift_post_install_probe_virtualization.stdout == 'true' }}"
+    openshift_post_install_pipelines_healthy: "{{ openshift_post_install_probe_pipelines.stdout == 'true' }}"
+    openshift_post_install_web_terminal_healthy: "{{ openshift_post_install_probe_web_terminal.stdout == 'true' }}"
+    openshift_post_install_aap_healthy: "{{ openshift_post_install_probe_aap_stdout == 'true' }}"
+    openshift_post_install_netobserv_healthy: "{{ openshift_post_install_probe_netobserv.stdout == 'true' }}"
+
+- name: Fail closed when ODF exists but is not healthy and no force flag was set
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_probe_oc_path }}"
+      - get
+      - storagecluster
+      - "{{ openshift_post_install_probe_odf_storage_cluster_name }}"
+      - -n
+      - "{{ openshift_post_install_probe_odf_storage_cluster_namespace }}"
+      - -o
+      - name
+  delegate_to: localhost
+  become: false
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_probe_kubeconfig_path }}"
+  register: openshift_post_install_probe_odf_exists
+  changed_when: false
+  failed_when: >-
+    openshift_post_install_probe_odf_exists.rc == 0
+    and not openshift_post_install_odf_healthy
+    and not openshift_post_install_force_odf_rebuild | bool
+    and not openshift_post_install_probe_odf_force_destructive_recovery | bool
+
+- name: Publish day-2 phase gating summary
+  ansible.builtin.debug:
+    msg:
+      disconnected_operatorhub:
+        healthy: "{{ openshift_post_install_disconnected_operatorhub_healthy }}"
+        forced: "{{ openshift_post_install_force_disconnected_operatorhub }}"
+      infra_conversion:
+        healthy: "{{ openshift_post_install_infra_conversion_healthy }}"
+        forced: "{{ openshift_post_install_force_infra_conversion }}"
+      idm_ingress_certs:
+        healthy: "{{ openshift_post_install_idm_ingress_certs_healthy }}"
+        forced: "{{ openshift_post_install_force_idm_ingress_certs }}"
+      ldap_auth:
+        healthy: "{{ openshift_post_install_ldap_auth_healthy }}"
+        forced: "{{ openshift_post_install_force_ldap_auth }}"
+      nmstate:
+        healthy: "{{ openshift_post_install_nmstate_healthy }}"
+        forced: "{{ openshift_post_install_force_nmstate }}"
+      odf:
+        healthy: "{{ openshift_post_install_odf_healthy }}"
+        forced: "{{ openshift_post_install_force_odf_rebuild }}"
+      virtualization:
+        healthy: "{{ openshift_post_install_virtualization_healthy }}"
+        forced: "{{ openshift_post_install_force_virtualization }}"
+      pipelines:
+        healthy: "{{ openshift_post_install_pipelines_healthy }}"
+        forced: "{{ openshift_post_install_force_pipelines }}"
+      web_terminal:
+        healthy: "{{ openshift_post_install_web_terminal_healthy }}"
+        forced: "{{ openshift_post_install_force_web_terminal }}"
+      aap:
+        healthy: "{{ openshift_post_install_aap_healthy }}"
+        forced: "{{ openshift_post_install_force_aap }}"
+      netobserv:
+        healthy: "{{ openshift_post_install_netobserv_healthy }}"
+        forced: "{{ openshift_post_install_force_netobserv }}"

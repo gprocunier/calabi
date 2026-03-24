@@ -1,0 +1,177 @@
+---
+aws_region: us-east-2
+availability_zone: us-east-2a
+
+virt_host:
+  name: virt-01
+  domain: workshop.lan
+  instance_id: i-057e8952a49111fde
+  root_volume:
+    volume_id: vol-0ed88ef232cc39f9e
+    device_name: /dev/sda1
+    size_gib: 100
+    volume_type: gp3
+    iops: 3000
+    throughput_mbps: 125
+
+guest_volumes:
+  - name: idm-01
+    purpose: support_vm_root
+    volume_id: vol-08d2ae1a613ce847c
+    aws_device_name: /dev/sdh
+    guest_symlink: /dev/ebs/idm-01
+    size_gib: 120
+    volume_type: gp3
+    iops: 3000
+    throughput_mbps: 125
+
+  - name: bastion-01
+    purpose: support_vm_root
+    volume_id: vol-09b8fb1f8479d9ecc
+    aws_device_name: /dev/sdi
+    guest_symlink: /dev/ebs/bastion-01
+    size_gib: 120
+    volume_type: gp3
+    iops: 3000
+    throughput_mbps: 125
+
+  - name: mirror-registry
+    purpose: support_vm_root
+    volume_id: vol-01e40da3e2cb7e838
+    aws_device_name: /dev/sdk
+    guest_symlink: /dev/ebs/mirror-registry
+    size_gib: 400
+    volume_type: gp3
+    iops: 3000
+    throughput_mbps: 125
+
+  - name: ocp-master-01
+    purpose: openshift_control_plane_root
+    volume_id: vol-03cccee694c0b2498
+    aws_device_name: /dev/sdb
+    guest_symlink: /dev/ebs/ocp-master-01
+    size_gib: 250
+    volume_type: gp3
+    iops: 6000
+    throughput_mbps: 250
+
+  - name: ocp-master-02
+    purpose: openshift_control_plane_root
+    volume_id: vol-047080cec8f2e6a87
+    aws_device_name: /dev/sdc
+    guest_symlink: /dev/ebs/ocp-master-02
+    size_gib: 250
+    volume_type: gp3
+    iops: 6000
+    throughput_mbps: 250
+
+  - name: ocp-master-03
+    purpose: openshift_control_plane_root
+    volume_id: vol-00d21f94bfafc117b
+    aws_device_name: /dev/sdd
+    guest_symlink: /dev/ebs/ocp-master-03
+    size_gib: 250
+    volume_type: gp3
+    iops: 6000
+    throughput_mbps: 250
+
+  - name: ocp-worker-01
+    purpose: openshift_worker_root
+    volume_id: vol-0760823b01fd216a0
+    aws_device_name: /dev/sde
+    guest_symlink: /dev/ebs/ocp-worker-01
+    size_gib: 250
+    volume_type: gp3
+    iops: 3000
+    throughput_mbps: 125
+
+  - name: ocp-worker-02
+    purpose: openshift_worker_root
+    volume_id: vol-0f8dd145272829c46
+    aws_device_name: /dev/sdg
+    guest_symlink: /dev/ebs/ocp-worker-02
+    size_gib: 250
+    volume_type: gp3
+    iops: 3000
+    throughput_mbps: 125
+
+  - name: ocp-worker-03
+    purpose: openshift_worker_root
+    volume_id: vol-0d423df8b4bc0f458
+    aws_device_name: /dev/sdf
+    guest_symlink: /dev/ebs/ocp-worker-03
+    size_gib: 250
+    volume_type: gp3
+    iops: 3000
+    throughput_mbps: 125
+
+  - name: ocp-infra-01
+    purpose: openshift_infra_root
+    volume_id: vol-00490bd17c07fadbb
+    aws_device_name: /dev/sdl
+    guest_symlink: /dev/ebs/ocp-infra-01
+    size_gib: 250
+    volume_type: gp3
+    iops: 3000
+    throughput_mbps: 125
+
+  - name: ocp-infra-02
+    purpose: openshift_infra_root
+    volume_id: vol-0c02355c661815325
+    aws_device_name: /dev/sdm
+    guest_symlink: /dev/ebs/ocp-infra-02
+    size_gib: 250
+    volume_type: gp3
+    iops: 3000
+    throughput_mbps: 125
+
+  - name: ocp-infra-03
+    purpose: openshift_infra_root
+    volume_id: vol-03eae0a52ae4e9119
+    aws_device_name: /dev/sdn
+    guest_symlink: /dev/ebs/ocp-infra-03
+    size_gib: 250
+    volume_type: gp3
+    iops: 3000
+    throughput_mbps: 125
+
+  - name: ocp-infra-01-data
+    purpose: openshift_infra_odf_data
+    volume_id: vol-09b4374ef90aa0f08
+    aws_device_name: /dev/sdo
+    guest_symlink: /dev/ebs/ocp-infra-01-data
+    size_gib: 1000
+    volume_type: gp3
+    iops: 3000
+    throughput_mbps: 125
+
+  - name: ocp-infra-02-data
+    purpose: openshift_infra_odf_data
+    volume_id: vol-0f4cb3ea36b732af0
+    aws_device_name: /dev/sdp
+    guest_symlink: /dev/ebs/ocp-infra-02-data
+    size_gib: 1000
+    volume_type: gp3
+    iops: 3000
+    throughput_mbps: 125
+
+  - name: ocp-infra-03-data
+    purpose: openshift_infra_odf_data
+    volume_id: vol-09af920b8a25d631b
+    aws_device_name: /dev/sdq
+    guest_symlink: /dev/ebs/ocp-infra-03-data
+    size_gib: 1000
+    volume_type: gp3
+    iops: 3000
+    throughput_mbps: 125
+
+excluded_guest_volumes:
+  - name: haproxy-01
+    reason: defined in udev mapping but not used by the current lab design
+    volume_id: vol-086eaa71cccd25f30
+    aws_device_name: /dev/sdj
+    guest_symlink: /dev/ebs/haproxy-01
+    size_gib: 120
+    volume_type: gp3
+    iops: 3000
+    throughput_mbps: 125

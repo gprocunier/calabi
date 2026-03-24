@@ -1,0 +1,11 @@
+---
+- name: Verify OpenShift cluster domains and agent ISO attachment
+  hosts: aws_metal
+  become: true
+  gather_facts: true
+  vars_files:
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/guests/openshift_cluster_vm.yml
+
+  roles:
+    - role: openshift_cluster_verify

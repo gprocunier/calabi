@@ -1,0 +1,35 @@
+#cloud-config
+fqdn: {{ idm_role_vm_fqdn }}
+preserve_hostname: false
+users:
+  - default
+  - name: {{ idm_vm.access.admin_user }}
+    groups: [wheel]
+    shell: /bin/bash
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    lock_passwd: {{ idm_vm.access.lock_password | to_json }}
+{% if idm_vm.access.ssh_authorized_keys | length > 0 %}
+    ssh_authorized_keys:
+{% for ssh_key in idm_vm.access.ssh_authorized_keys %}
+      - {{ ssh_key }}
+{% endfor %}
+{% endif %}
+{% if idm_vm.access.admin_password | length > 0 %}
+    passwd: {{ idm_vm.access.admin_password | password_hash('sha512') }}
+{% endif %}
+
+ssh_pwauth: {{ idm_vm.access.ssh_password_auth | to_json }}
+{% if idm_vm.subscription.enabled %}
+
+rh_subscription:
+{% if idm_vm.subscription.activation_key | length > 0 and idm_vm.subscription.organization_id | length > 0 %}
+  activation-key: "{{ idm_vm.subscription.activation_key }}"
+  org: "{{ idm_vm.subscription.organization_id }}"
+{% else %}
+  username: "{{ idm_vm.subscription.username }}"
+  password: "{{ idm_vm.subscription.password }}"
+{% endif %}
+{% if idm_vm.subscription.server_hostname | length > 0 %}
+  server-hostname: "{{ idm_vm.subscription.server_hostname }}"
+{% endif %}
+{% endif %}

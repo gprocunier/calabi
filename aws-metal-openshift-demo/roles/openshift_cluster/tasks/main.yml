@@ -1,0 +1,508 @@
+---
+- name: Derive OpenShift cluster naming facts
+  ansible.builtin.set_fact:
+    openshift_cluster_effective_domain: >-
+      {{
+        openshift_install_cluster.full_domain
+        | default(openshift_cluster_vm_defaults.domain)
+      }}
+    openshift_cluster_effective_nodes: "{{ openshift_cluster_nodes }}"
+
+- name: Reset effective node list before attachment-plan merge
+  ansible.builtin.set_fact:
+    openshift_cluster_effective_nodes: []
+  when: openshift_cluster_node_attachment_plan is defined
+
+- name: Merge generated agent media attachment plan into effective node data
+  ansible.builtin.set_fact:
+    openshift_cluster_effective_nodes: >-
+      {{
+        openshift_cluster_effective_nodes
+        + [
+          item | combine(
+            openshift_cluster_node_attachment_plan[item.name] | default({}),
+            recursive=True
+          )
+        ]
+      }}
+  loop: "{{ openshift_cluster_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: openshift_cluster_node_attachment_plan is defined
+
+- name: Validate OpenShift cluster orchestration data
+  ansible.builtin.assert:
+    that:
+      - openshift_install_cluster.name | default('') | length > 0
+      - openshift_cluster_effective_domain | length > 0
+      - openshift_cluster_effective_nodes | length > 0
+      - openshift_cluster_dependencies.idm.name | length > 0
+      - openshift_cluster_dependencies.idm.ipv4_address | length > 0
+      - openshift_cluster_dependencies.mirror_registry.name | length > 0
+      - openshift_cluster_dependencies.mirror_registry.ipv4_address | length > 0
+    fail_msg: >-
+      vars/guests/openshift_cluster_vm.yml is missing required OpenShift cluster
+      node or dependency data.
+
+- name: Install packages needed for the OpenShift VM build workflow
+  ansible.builtin.package:
+    name:
+      - qemu-kvm
+      - virt-install
+    state: present
+
+- name: Validate the OpenShift node definitions
+  ansible.builtin.assert:
+    that:
+      - item.name | length > 0
+      - item.role in ['control-plane', 'infra', 'worker']
+      - item.domain | default(openshift_cluster_effective_domain) | length > 0
+      - item.osinfo | default(openshift_cluster_vm_defaults.osinfo) | length > 0
+      - item.mac_address | length > 0
+      - (item.resources.vcpus | int) > 0
+      - (item.resources.memory_mb | int) > 0
+      - item.disks.root.path | length > 0
+      - >-
+        item.network.libvirt_network
+        | default(openshift_cluster_vm_defaults.network.libvirt_network)
+        | length > 0
+      - >-
+        item.network.libvirt_portgroup
+        | default(openshift_cluster_vm_defaults.network.libvirt_portgroup)
+        | length > 0
+    fail_msg: >-
+      OpenShift node {{ item.name | default('unnamed') }} is missing required
+      identity, resource, disk, or libvirt network settings.
+  loop: "{{ openshift_cluster_effective_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Check whether the OpenShift node root block devices are present
+  ansible.builtin.stat:
+    path: "{{ item.disks.root.path }}"
+  loop: "{{ openshift_cluster_effective_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: openshift_cluster_root_disk_stats
+
+- name: Fail when an OpenShift node root block device is missing
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+    fail_msg: >-
+      OpenShift node root block device for {{
+      item.item.name }} was not found at {{
+      item.item.disks.root.path }}.
+  loop: "{{ openshift_cluster_root_disk_stats.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Check whether the OpenShift node additional block devices are present
+  ansible.builtin.stat:
+    path: "{{ item.1.path }}"
+  loop: >-
+    {{
+      openshift_cluster_effective_nodes
+      | subelements('disks.additional', skip_missing=True)
+    }}
+  loop_control:
+    label: "{{ item.0.name }}:{{ item.1.name | default(item.1.path) }}"
+  register: openshift_cluster_additional_disk_stats
+
+- name: Fail when an OpenShift node additional block device is missing
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+    fail_msg: >-
+      Additional block device {{ item.item.1.path }} for {{
+      item.item.0.name }} was not found.
+  loop: "{{ openshift_cluster_additional_disk_stats.results | default([]) }}"
+  loop_control:
+    label: >-
+      {{ item.item.0.name }}:{{
+      item.item.1.name | default(item.item.1.path) }}
+
+- name: Check whether requested agent boot media paths exist
+  ansible.builtin.stat:
+    path: >-
+      {{
+        item.access.agent_boot_media_path
+        | default(openshift_cluster_vm_defaults.access.agent_boot_media_path)
+      }}
+  loop: "{{ openshift_cluster_effective_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: >-
+    (
+      item.access.attach_agent_boot_media
+      | default(openshift_cluster_vm_defaults.access.attach_agent_boot_media)
+      | bool
+    )
+  register: openshift_cluster_boot_media_stats
+
+- name: Fail when requested agent boot media is missing
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+    fail_msg: >-
+      Agent boot media for {{ item.item.name }} was requested at {{
+      item.item.access.agent_boot_media_path
+      | default(openshift_cluster_vm_defaults.access.agent_boot_media_path) }}
+      but does not exist on the hypervisor.
+  loop: "{{ openshift_cluster_boot_media_stats.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - not (item.skipped | default(false))
+    - item.stat is defined
+
+- name: Check whether the OpenShift node libvirt domains already exist
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - dominfo
+      - >-
+        {{ item.name }}.{{
+        item.domain | default(openshift_cluster_effective_domain) }}
+  loop: "{{ openshift_cluster_effective_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: openshift_cluster_domain_info
+  changed_when: false
+  failed_when: false
+
+- name: Inspect the OpenShift node root block device partition tables
+  ansible.builtin.command:
+    argv:
+      - lsblk
+      - -nro
+      - PTTYPE
+      - "{{ item.disks.root.path }}"
+  loop: "{{ openshift_cluster_effective_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: openshift_cluster_root_disk_pttype
+  changed_when: false
+  failed_when: false
+
+- name: Stop the existing OpenShift node VMs before recreation
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - destroy
+      - >-
+        {{ item.item.name }}.{{
+        item.item.domain | default(openshift_cluster_effective_domain) }}
+  loop: "{{ openshift_cluster_domain_info.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - item.rc == 0
+    - >-
+      openshift_cluster_recreate_existing_domains | bool or
+      (
+        item.item.provisioning.recreate_domain
+        | default(openshift_cluster_vm_defaults.provisioning.recreate_domain)
+        | bool
+      ) or (
+        item.item.provisioning.reinitialize_root_disk
+        | default(openshift_cluster_vm_defaults.provisioning.reinitialize_root_disk)
+        | bool
+      )
+  changed_when: true
+  failed_when: false
+
+- name: Attach or update agent boot media on existing OpenShift domains
+  ansible.builtin.shell: |
+    set -euo pipefail
+    domain="{{ item.item.name }}.{{ item.item.domain | default(openshift_cluster_effective_domain) }}"
+    media_path="{{
+      item.item.access.agent_boot_media_path
+      | default(openshift_cluster_vm_defaults.access.agent_boot_media_path)
+    }}"
+    targets="$(virsh domblklist "$domain" --details | awk -v media="$media_path" '$2 == "cdrom" && $4 == media {print $3}')"
+    if [ -z "$targets" ]; then
+      exit 0
+    fi
+    for target in $targets; do
+      virsh detach-disk "$domain" "$target" --config
+    done
+  args:
+    executable: /bin/bash
+  loop: "{{ openshift_cluster_domain_info.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - item.rc == 0
+    - not (
+        openshift_cluster_recreate_existing_domains | bool or
+        (
+          item.item.provisioning.recreate_domain
+          | default(openshift_cluster_vm_defaults.provisioning.recreate_domain)
+          | bool
+        ) or (
+          item.item.provisioning.reinitialize_root_disk
+          | default(openshift_cluster_vm_defaults.provisioning.reinitialize_root_disk)
+          | bool
+        )
+      )
+    - >-
+      item.item.access.attach_agent_boot_media
+      | default(openshift_cluster_vm_defaults.access.attach_agent_boot_media)
+      | bool
+  changed_when: true
+
+- name: Attach or update agent boot media on existing OpenShift domains
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - attach-disk
+      - >-
+        {{ item.item.name }}.{{
+        item.item.domain | default(openshift_cluster_effective_domain) }}
+      - >-
+        {{
+          item.item.access.agent_boot_media_path
+          | default(openshift_cluster_vm_defaults.access.agent_boot_media_path)
+        }}
+      - >-
+        {{
+          item.item.access.agent_boot_media_target_dev
+          | default(openshift_cluster_vm_defaults.access.agent_boot_media_target_dev)
+        }}
+      - --type
+      - cdrom
+      - --mode
+      - readonly
+      - --targetbus
+      - scsi
+      - --config
+  loop: "{{ openshift_cluster_domain_info.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - item.rc == 0
+    - not (
+        openshift_cluster_recreate_existing_domains | bool or
+        (
+          item.item.provisioning.recreate_domain
+          | default(openshift_cluster_vm_defaults.provisioning.recreate_domain)
+          | bool
+        ) or (
+          item.item.provisioning.reinitialize_root_disk
+          | default(openshift_cluster_vm_defaults.provisioning.reinitialize_root_disk)
+          | bool
+        )
+      )
+    - >-
+      item.item.access.attach_agent_boot_media
+      | default(openshift_cluster_vm_defaults.access.attach_agent_boot_media)
+      | bool
+  changed_when: true
+  failed_when: false
+
+- name: Set CD-ROM first boot order on existing OpenShift domains
+  ansible.builtin.command:
+    argv:
+      - virt-xml
+      - >-
+        {{ item.item.name }}.{{
+        item.item.domain | default(openshift_cluster_effective_domain) }}
+      - --edit
+      - --boot
+      - cdrom,hd
+  loop: "{{ openshift_cluster_domain_info.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - item.rc == 0
+    - not (
+        openshift_cluster_recreate_existing_domains | bool or
+        (
+          item.item.provisioning.recreate_domain
+          | default(openshift_cluster_vm_defaults.provisioning.recreate_domain)
+          | bool
+        ) or (
+          item.item.provisioning.reinitialize_root_disk
+          | default(openshift_cluster_vm_defaults.provisioning.reinitialize_root_disk)
+          | bool
+        )
+      )
+    - >-
+      item.item.access.attach_agent_boot_media
+      | default(openshift_cluster_vm_defaults.access.attach_agent_boot_media)
+      | bool
+  changed_when: true
+
+- name: Restart existing OpenShift domains so persistent boot media changes take effect
+  ansible.builtin.shell: |
+    set -euo pipefail
+    domain="{{ item.item.name }}.{{ item.item.domain | default(openshift_cluster_effective_domain) }}"
+    virsh destroy "$domain" >/dev/null 2>&1 || true
+    virsh start "$domain"
+  args:
+    executable: /bin/bash
+  loop: "{{ openshift_cluster_domain_info.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - openshift_cluster_restart_existing_domains_for_boot_media | bool
+    - item.rc == 0
+    - not (
+        openshift_cluster_recreate_existing_domains | bool or
+        (
+          item.item.provisioning.recreate_domain
+          | default(openshift_cluster_vm_defaults.provisioning.recreate_domain)
+          | bool
+        ) or (
+          item.item.provisioning.reinitialize_root_disk
+          | default(openshift_cluster_vm_defaults.provisioning.reinitialize_root_disk)
+          | bool
+        )
+      )
+    - >-
+      item.item.access.attach_agent_boot_media
+      | default(openshift_cluster_vm_defaults.access.attach_agent_boot_media)
+      | bool
+  changed_when: true
+
+- name: Undefine the existing OpenShift node VMs before recreation
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - undefine
+      - >-
+        {{ item.item.name }}.{{
+        item.item.domain | default(openshift_cluster_effective_domain) }}
+      - --nvram
+  loop: "{{ openshift_cluster_domain_info.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - item.rc == 0
+    - >-
+      openshift_cluster_recreate_existing_domains | bool or
+      (
+        item.item.provisioning.recreate_domain
+        | default(openshift_cluster_vm_defaults.provisioning.recreate_domain)
+        | bool
+      ) or (
+        item.item.provisioning.reinitialize_root_disk
+        | default(openshift_cluster_vm_defaults.provisioning.reinitialize_root_disk)
+        | bool
+      )
+  changed_when: true
+  failed_when: false
+
+- name: Reinitialize the OpenShift node root disks for a fresh install
+  ansible.builtin.shell: |
+    set -euo pipefail
+    disk="{{ item.disks.root.path }}"
+    wipefs -a -f "$disk" || true
+    blkdiscard -f "$disk" || true
+    blockdev --rereadpt "$disk" || true
+  args:
+    executable: /bin/bash
+  loop: "{{ openshift_cluster_effective_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: >-
+    (
+      item.provisioning.reinitialize_root_disk
+      | default(openshift_cluster_vm_defaults.provisioning.reinitialize_root_disk)
+      | bool
+    ) or (
+      (
+        openshift_cluster_root_disk_pttype.results
+        | selectattr('item.name', 'equalto', item.name)
+        | map(attribute='stdout')
+        | first
+        | default('')
+        | trim
+      ) | length == 0
+    )
+  changed_when: true
+
+- name: Reinitialize the OpenShift node additional block devices for a fresh install
+  ansible.builtin.shell: |
+    set -euo pipefail
+    disk="{{ item.1.path }}"
+    wipefs -a -f "$disk" || true
+    blkdiscard -f "$disk" || true
+    blockdev --rereadpt "$disk" || true
+  args:
+    executable: /bin/bash
+  loop: >-
+    {{
+      openshift_cluster_effective_nodes
+      | subelements('disks.additional', skip_missing=True)
+    }}
+  loop_control:
+    label: "{{ item.0.name }}:{{ item.1.name | default(item.1.path) }}"
+  when: >-
+    item.0.provisioning.wipe_additional_disks
+    | default(openshift_cluster_vm_defaults.provisioning.wipe_additional_disks)
+    | bool
+  changed_when: true
+
+- name: Install the OpenShift node VMs when absent or recreation was requested
+  ansible.builtin.command:
+    cmd: "{{ lookup('template', 'virt-install-command.j2') | trim }}"
+  vars:
+    openshift_cluster_node: "{{ item }}"
+  loop: "{{ openshift_cluster_effective_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: >-
+    (
+      openshift_cluster_domain_info.results
+      | selectattr('item.name', 'equalto', item.name)
+      | map(attribute='rc')
+      | first
+    ) != 0 or
+    openshift_cluster_recreate_existing_domains | bool or
+    (
+      item.provisioning.recreate_domain
+      | default(openshift_cluster_vm_defaults.provisioning.recreate_domain)
+      | bool
+    ) or (
+      item.provisioning.reinitialize_root_disk
+      | default(openshift_cluster_vm_defaults.provisioning.reinitialize_root_disk)
+      | bool
+    )
+  changed_when: true
+
+- name: Set CD-ROM first boot order on newly created OpenShift domains
+  ansible.builtin.command:
+    argv:
+      - virt-xml
+      - >-
+        {{ item.name }}.{{
+        item.domain | default(openshift_cluster_effective_domain) }}
+      - --edit
+      - --boot
+      - cdrom,hd
+  loop: "{{ openshift_cluster_effective_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: >-
+    (
+      openshift_cluster_domain_info.results
+      | selectattr('item.name', 'equalto', item.name)
+      | map(attribute='rc')
+      | first
+    ) != 0 or
+    openshift_cluster_recreate_existing_domains | bool or
+    (
+      item.provisioning.recreate_domain
+      | default(openshift_cluster_vm_defaults.provisioning.recreate_domain)
+      | bool
+    ) or (
+      item.provisioning.reinitialize_root_disk
+      | default(openshift_cluster_vm_defaults.provisioning.reinitialize_root_disk)
+      | bool
+    )
+  changed_when: >-
+    item.access.attach_agent_boot_media
+    | default(openshift_cluster_vm_defaults.access.attach_agent_boot_media)
+    | bool

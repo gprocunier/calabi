@@ -1,0 +1,55 @@
+---
+openshift_install_artifacts:
+  output_dir: "{{ lab_execution_ocp_generated_root }}"
+  reset_render_dir: true
+  pull_secret_file: "{{ lab_execution_pull_secret_file }}"
+  ssh_public_key_file: "{{ lab_execution_ssh_public_key_file }}"
+  idm_ca:
+    fetch_via_hypervisor: true
+    output_file: "{{ lab_execution_ocp_generated_root }}/idm-ca.crt"
+    guest_user: cloud-user
+  install_config:
+    metadata_name: "{{ openshift_install_cluster.name }}"
+    capabilities:
+      baseline_capability_set: None
+      additional_enabled_capabilities:
+        - Build
+        - CSISnapshot
+        - CloudControllerManager
+        - CloudCredential
+        - Console
+        - DeploymentConfig
+        - ImageRegistry
+        - Ingress
+        - MachineAPI
+        - NodeTuning
+        - OperatorLifecycleManager
+        - OperatorLifecycleManagerV1
+        - Storage
+        - baremetal
+        - marketplace
+    compute_replicas: >-
+      {{
+        openshift_install_cluster.nodes
+        | rejectattr('role', 'equalto', 'control-plane')
+        | list
+        | length
+      }}
+    control_plane_replicas: >-
+      {{
+        openshift_install_cluster.nodes
+        | selectattr('role', 'equalto', 'control-plane')
+        | list
+        | length
+      }}
+    network_type: OVNKubernetes
+    cluster_network:
+      - cidr: 10.128.0.0/14
+        host_prefix: 23
+    service_network:
+      - 172.30.0.0/16
+  agent_config:
+    rendezvous_ip: >-
+      {{ openshift_install_cluster.nodes[0].machine_network.ipv4_address }}
+    primary_interface_name: nic0
+    root_device_hints: {}

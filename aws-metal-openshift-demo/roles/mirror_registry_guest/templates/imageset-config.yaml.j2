@@ -1,0 +1,65 @@
+apiVersion: mirror.openshift.io/v2alpha1
+kind: ImageSetConfiguration
+mirror:
+  platform:
+    graph: {{ mirror_registry_content.platform.graph | bool | lower }}
+    architectures:
+{% for architecture in mirror_registry_content.platform.architectures %}
+      - {{ architecture }}
+{% endfor %}
+    channels:
+      - name: {{ mirror_registry_content.platform.channel }}
+{% if mirror_registry_content.platform.min_version | length > 0 %}
+        minVersion: {{ mirror_registry_content.platform.min_version }}
+{% endif %}
+{% if mirror_registry_content.platform.max_version | length > 0 %}
+        maxVersion: {{ mirror_registry_content.platform.max_version }}
+{% endif %}
+  operators:
+{% for catalog in mirror_registry_content.operators.catalogs %}
+    - catalog: {{ catalog.catalog }}
+      packages:
+{% for package in catalog.packages %}
+{% if package.name == 'odf-operator' %}
+        # These provide OpenShift Data Foundation and its storage dependencies.
+{% elif package.name == 'ansible-automation-platform-operator' %}
+        # These provide AAP and the platform services it depends on.
+{% elif package.name == 'cluster-logging' %}
+        # These provide logging, Loki, and cluster observability.
+{% elif package.name == 'kubernetes-nmstate-operator' %}
+        # These provide node/network management and virtualization networking.
+{% elif package.name == 'kubevirt-hyperconverged' %}
+        # These provide OpenShift Virtualization.
+{% elif package.name == 'devworkspace-operator' %}
+        # These provide console shell and workspace support.
+{% elif package.name == 'openshift-pipelines-operator-rh' %}
+        # These provide Tekton and the Windows image build lane.
+{% elif package.name == 'netobserv-operator' %}
+        # These provide network observability.
+{% elif package.name == 'node-healthcheck-operator' %}
+        # These provide OpenShift Virtualization node health and fencing support.
+{% endif %}
+        - name: {{ package.name }}
+{% if package.default_channel is defined and package.default_channel | length > 0 %}
+          defaultChannel: {{ package.default_channel }}
+{% endif %}
+{% if package.channels is defined and package.channels | length > 0 %}
+          channels:
+{% for channel in package.channels %}
+            - name: {{ channel.name }}
+{% if channel.min_version is defined and channel.min_version | length > 0 %}
+              minVersion: {{ channel.min_version }}
+{% endif %}
+{% if channel.max_version is defined and channel.max_version | length > 0 %}
+              maxVersion: {{ channel.max_version }}
+{% endif %}
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% endfor %}
+{% if mirror_registry_content.additional_images | length > 0 %}
+  additionalImages:
+{% for image in mirror_registry_content.additional_images %}
+    - name: {{ image.name }}
+{% endfor %}
+{% endif %}

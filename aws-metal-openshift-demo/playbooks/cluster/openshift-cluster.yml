@@ -1,0 +1,53 @@
+---
+- name: Provision the OpenShift cluster virtual machines for the demo
+  hosts: aws_metal
+  become: true
+  gather_facts: true
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/host_resource_management.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/guests/openshift_cluster_vm.yml
+    - ../../vars/cluster/openshift_install_artifacts.yml
+
+  pre_tasks:
+    - name: Read generated agent media attachment plan from the control node
+      ansible.builtin.set_fact:
+        openshift_cluster_generated_attachment_plan_content: >-
+          {{
+            lookup(
+              'ansible.builtin.file',
+              lab_execution_ocp_generated_root
+              ~ '/openshift_cluster_attachment_plan.yml',
+              errors='ignore'
+            )
+          }}
+
+    - name: Publish generated agent media attachment plan to the metal host run
+      ansible.builtin.set_fact:
+        openshift_cluster_node_attachment_plan: >-
+          {{
+            (
+              openshift_cluster_generated_attachment_plan_content | from_yaml
+            ).openshift_cluster_node_attachment_plan
+          }}
+      when:
+        - openshift_cluster_generated_attachment_plan_content | length > 0
+
+    - name: Wait for the IDM server guest to accept SSH connections
+      ansible.builtin.wait_for:
+        host: "{{ openshift_cluster_dependencies.idm.ipv4_address }}"
+        port: 22
+        timeout: 900
+        sleep: 10
+
+    - name: Wait for the mirror registry guest to accept SSH connections
+      ansible.builtin.wait_for:
+        host: >-
+          {{ openshift_cluster_dependencies.mirror_registry.ipv4_address }}
+        port: 22
+        timeout: 900
+        sleep: 10
+
+  roles:
+    - role: openshift_cluster

@@ -1,0 +1,562 @@
+---
+- name: Derive post-install IdM ingress certificate paths
+  ansible.builtin.set_fact:
+    openshift_post_install_idm_certs_oc_local_path: >-
+      {{ lab_execution_tools_root }}/{{
+      mirror_registry_ocp_release }}/bin/oc
+    openshift_post_install_idm_certs_kubeconfig_local_path: >-
+      {{ lab_execution_ocp_generated_root }}/auth/kubeconfig
+    openshift_post_install_idm_certs_idm_ca_local_path: >-
+      {{ lab_execution_ocp_generated_root }}/idm-ca.crt
+    openshift_post_install_idm_certs_ssh_key_local_path: >-
+      {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+    openshift_post_install_idm_certs_local_dir: >-
+      /tmp/openshift-post-install-idm-certs
+    openshift_post_install_idm_certs_proxy_command: >-
+      ssh -i {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      -W %h:%p {{ ansible_user }}@{{ ansible_host }}
+    openshift_post_install_idm_certs_remote_dir: >-
+      /var/tmp/openshift-post-install-idm-certs
+    openshift_post_install_idm_certs_remote_oc_path: >-
+      /var/tmp/openshift-post-install-idm-certs/oc
+    openshift_post_install_idm_certs_remote_kubeconfig_path: >-
+      /var/tmp/openshift-post-install-idm-certs/kubeconfig
+    openshift_post_install_idm_certs_remote_idm_ca_path: >-
+      /var/tmp/openshift-post-install-idm-certs/idm-ca.crt
+    openshift_post_install_idm_certs_console_route_host_cmd:
+      - /var/tmp/openshift-post-install-idm-certs/oc
+      - --insecure-skip-tls-verify=true
+      - get
+      - route
+      - console
+      - -n
+      - openshift-console
+      - -o
+      - jsonpath={.spec.host}
+
+- name: Assert local post-install IdM ingress certificate inputs exist
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  delegate_to: localhost
+  become: false
+  loop:
+    - "{{ openshift_post_install_idm_certs_oc_local_path }}"
+    - "{{ openshift_post_install_idm_certs_kubeconfig_local_path }}"
+    - "{{ openshift_post_install_idm_certs_idm_ca_local_path }}"
+    - "{{ openshift_post_install_idm_certs_ssh_key_local_path }}"
+  register: openshift_post_install_idm_certs_local_stats
+
+- name: Fail when required local post-install IdM ingress certificate inputs are
+    missing
+  ansible.builtin.assert:
+    that:
+      - >-
+        openshift_post_install_idm_certs_local_stats.results
+        | map(attribute='stat.exists')
+        | min
+    fail_msg: >-
+      Expected local post-install IdM certificate inputs were not found.
+      Ensure pinned oc, generated kubeconfig, generated idm-ca.crt, and the
+      SSH private key exist first.
+
+- name: Remove any stale remote post-install IdM ingress certificate workspace
+  ansible.builtin.file:
+    path: "{{ openshift_post_install_idm_certs_remote_dir }}"
+    state: absent
+  become: true
+
+- name: Create remote post-install IdM ingress certificate workspace
+  ansible.builtin.file:
+    path: "{{ openshift_post_install_idm_certs_remote_dir }}"
+    state: directory
+    mode: "0700"
+  become: true
+
+- name: Create local post-install IdM ingress certificate workspace
+  ansible.builtin.file:
+    path: "{{ openshift_post_install_idm_certs_local_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+
+- name: Copy pinned oc binary to the hypervisor
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_idm_certs_oc_local_path }}"
+    dest: "{{ openshift_post_install_idm_certs_remote_oc_path }}"
+    mode: "0755"
+  become: true
+
+- name: Copy generated kubeconfig to the hypervisor
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_idm_certs_kubeconfig_local_path }}"
+    dest: "{{ openshift_post_install_idm_certs_remote_kubeconfig_path }}"
+    mode: "0600"
+  become: true
+
+- name: Copy generated IdM CA to the hypervisor
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_idm_certs_idm_ca_local_path }}"
+    dest: "{{ openshift_post_install_idm_certs_remote_idm_ca_path }}"
+    mode: "0644"
+  become: true
+
+- name: Detect current ingress default certificate secret name
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_idm_certs_remote_oc_path }}"
+      - --insecure-skip-tls-verify=true
+      - get
+      - ingresscontroller
+      - default
+      - -n
+      - openshift-ingress-operator
+      - -o
+      - jsonpath={.spec.defaultCertificate.name}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_idm_certs_remote_kubeconfig_path }}"
+  register: openshift_post_install_idm_certs_current_secret_name
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Capture current console route hostname for ingress TLS reuse check
+  ansible.builtin.command:
+    argv: "{{ openshift_post_install_idm_certs_console_route_host_cmd }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_idm_certs_remote_kubeconfig_path }}"
+  register: openshift_post_install_idm_certs_existing_console_route_host
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Detect whether ingress already serves a certificate trusted by the IdM CA
+  ansible.builtin.shell: |
+    set -euo pipefail
+    VERIFY=$(echo | openssl s_client \
+      -CAfile {{ openshift_post_install_idm_certs_remote_idm_ca_path }} \
+      -connect {{ openshift_post_install_idm_certs_existing_console_route_host.stdout }}:443 \
+      -servername {{ openshift_post_install_idm_certs_existing_console_route_host.stdout }} 2>&1)
+    echo "${VERIFY}" | grep -q "Verify return code: 0"
+  args:
+    executable: /bin/bash
+  register: openshift_post_install_idm_certs_existing_tls_verify
+  changed_when: false
+  failed_when: false
+  when: openshift_post_install_idm_certs_existing_console_route_host.stdout | length > 0
+  become: true
+
+- name: Derive whether existing ingress certificates can be reused as-is
+  ansible.builtin.set_fact:
+    openshift_post_install_idm_certs_reuse_existing: >-
+      {{
+        openshift_post_install_idm_certs_current_secret_name.stdout
+        == openshift_idm_certs.ingress.secret_name
+        and
+        (openshift_post_install_idm_certs_existing_tls_verify.rc | default(1)) == 0
+      }}
+
+- name: Configure IdM ingress certificates when reuse is not possible
+  when: not openshift_post_install_idm_certs_reuse_existing
+  block:
+    - name: Render ingress certificate request OpenSSL config locally
+      ansible.builtin.template:
+        src: openssl-request.cnf.j2
+        dest: "{{ openshift_post_install_idm_certs_local_dir }}/apps.cnf"
+        mode: "0644"
+      delegate_to: localhost
+      become: false
+      vars:
+        request:
+          common_name: "{{ openshift_idm_certs.ingress.common_name }}"
+          dns_names:
+            - "{{ openshift_idm_certs.ingress.common_name }}"
+            - "{{ openshift_idm_certs.ingress.wildcard_name }}"
+
+    - name: Generate fresh ingress key and CSR locally
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - req
+          - -new
+          - -newkey
+          - rsa:2048
+          - -nodes
+          - -keyout
+          - "{{ openshift_post_install_idm_certs_local_dir }}/apps.key"
+          - -out
+          - "{{ openshift_post_install_idm_certs_local_dir }}/apps.csr"
+          - -config
+          - "{{ openshift_post_install_idm_certs_local_dir }}/apps.cnf"
+      register: openshift_post_install_idm_certs_apps_req
+      changed_when: true
+      delegate_to: localhost
+      become: false
+
+    - name: Render IdM ingress certificate request script locally
+      ansible.builtin.template:
+        src: request-idm-certs.sh.j2
+        dest: >-
+          {{ openshift_post_install_idm_certs_local_dir }}/request-idm-certs.sh
+        mode: "0700"
+      delegate_to: localhost
+      become: false
+
+    - name: Render custom IdM wildcard ingress certificate profile locally
+      ansible.builtin.template:
+        src: ocp-wildcard-ingress-profile.cfg.j2
+        dest: >-
+          {{ openshift_post_install_idm_certs_local_dir }}/ocp-wildcard-ingress-profile.cfg
+        mode: "0644"
+      delegate_to: localhost
+      become: false
+
+    - name: Stage IdM ingress certificate request script onto IdM from the control node
+      ansible.builtin.command:
+        argv:
+          - scp
+          - -o
+          - IdentitiesOnly=yes
+          - -o
+          - StrictHostKeyChecking=no
+          - -o
+          - UserKnownHostsFile=/dev/null
+          - -o
+          - "ProxyCommand={{ openshift_post_install_idm_certs_proxy_command }}"
+          - -i
+          - "{{ openshift_post_install_idm_certs_ssh_key_local_path }}"
+          - "{{ openshift_post_install_idm_certs_local_dir }}/request-idm-certs.sh"
+          - "{{ idm_vm.access.admin_user }}@{{ idm_vm.network.ipv4_address }}:/tmp/request-idm-certs.sh"
+      delegate_to: localhost
+      become: false
+      changed_when: true
+
+    - name: Stage custom IdM wildcard ingress certificate profile onto IdM from the control node
+      ansible.builtin.command:
+        argv:
+          - scp
+          - -o
+          - IdentitiesOnly=yes
+          - -o
+          - StrictHostKeyChecking=no
+          - -o
+          - UserKnownHostsFile=/dev/null
+          - -o
+          - "ProxyCommand={{ openshift_post_install_idm_certs_proxy_command }}"
+          - -i
+          - "{{ openshift_post_install_idm_certs_ssh_key_local_path }}"
+          - "{{ openshift_post_install_idm_certs_local_dir }}/ocp-wildcard-ingress-profile.cfg"
+          - "{{ idm_vm.access.admin_user }}@{{ idm_vm.network.ipv4_address }}:/tmp/"
+      delegate_to: localhost
+      become: false
+      changed_when: true
+
+    - name: Stage ingress CSR onto IdM from the control node
+      ansible.builtin.command:
+        argv:
+          - scp
+          - -o
+          - IdentitiesOnly=yes
+          - -o
+          - StrictHostKeyChecking=no
+          - -o
+          - UserKnownHostsFile=/dev/null
+          - -o
+          - "ProxyCommand={{ openshift_post_install_idm_certs_proxy_command }}"
+          - -i
+          - "{{ openshift_post_install_idm_certs_ssh_key_local_path }}"
+          - "{{ openshift_post_install_idm_certs_local_dir }}/apps.csr"
+          - "{{ idm_vm.access.admin_user }}@{{ idm_vm.network.ipv4_address }}:/tmp/"
+      delegate_to: localhost
+      become: false
+      changed_when: true
+
+    - name: Request fresh ingress certificate on IdM from the control node
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ssh \
+          -o IdentitiesOnly=yes \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o "ProxyCommand={{ openshift_post_install_idm_certs_proxy_command }}" \
+          -i {{ openshift_post_install_idm_certs_ssh_key_local_path }} \
+          {{ idm_vm.access.admin_user }}@{{ idm_vm.network.ipv4_address }} \
+          'sudo bash /tmp/request-idm-certs.sh'
+      args:
+        executable: /bin/bash
+      delegate_to: localhost
+      become: false
+      register: openshift_post_install_idm_certs_request_result
+      changed_when: true
+
+    - name: Assert ingress certificate request script exited cleanly
+      ansible.builtin.assert:
+        that:
+          - openshift_post_install_idm_certs_request_result.rc == 0
+        fail_msg: >-
+          {{
+            (openshift_post_install_idm_certs_request_result.stdout | default(''))
+            ~
+            (openshift_post_install_idm_certs_request_result.stderr | default(''))
+          }}
+      delegate_to: localhost
+      become: false
+
+    - name: Fetch issued ingress certificate from IdM to the local workspace
+      ansible.builtin.command:
+        argv:
+          - scp
+          - -o
+          - IdentitiesOnly=yes
+          - -o
+          - StrictHostKeyChecking=no
+          - -o
+          - UserKnownHostsFile=/dev/null
+          - -o
+          - "ProxyCommand={{ openshift_post_install_idm_certs_proxy_command }}"
+          - -i
+          - "{{ openshift_post_install_idm_certs_ssh_key_local_path }}"
+          - "{{ idm_vm.access.admin_user }}@{{ idm_vm.network.ipv4_address }}:/tmp/apps.crt"
+          - "{{ openshift_post_install_idm_certs_local_dir }}/apps.crt"
+      delegate_to: localhost
+      become: false
+      changed_when: true
+
+    - name: Copy issued ingress certificate to the hypervisor
+      ansible.builtin.copy:
+        src: "{{ openshift_post_install_idm_certs_local_dir }}/apps.crt"
+        dest: "{{ openshift_post_install_idm_certs_remote_dir }}/apps.crt"
+        mode: "0644"
+      become: true
+
+    - name: Copy ingress private key to the hypervisor
+      ansible.builtin.copy:
+        src: "{{ openshift_post_install_idm_certs_local_dir }}/apps.key"
+        dest: "{{ openshift_post_install_idm_certs_remote_dir }}/apps.key"
+        mode: "0600"
+      become: true
+
+    - name: Build ingress fullchain PEM for OpenShift secret
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cat \
+          {{ openshift_post_install_idm_certs_remote_dir }}/apps.crt \
+          {{ openshift_post_install_idm_certs_remote_idm_ca_path }} \
+          > {{ openshift_post_install_idm_certs_remote_dir }}/apps-fullchain.crt
+      args:
+        executable: /bin/bash
+      changed_when: true
+      become: true
+
+    - name: Create or update cluster trusted CA config map for the IdM CA
+      ansible.builtin.shell: |
+        set -euo pipefail
+        {{ openshift_post_install_idm_certs_remote_oc_path }} \
+          --insecure-skip-tls-verify=true \
+          -n openshift-config \
+          create configmap idm-ca-trust \
+          --from-file=ca-bundle.crt={{ openshift_post_install_idm_certs_remote_idm_ca_path }} \
+          --dry-run=client -o yaml \
+          | {{ openshift_post_install_idm_certs_remote_oc_path }} \
+            --insecure-skip-tls-verify=true apply -f -
+      args:
+        executable: /bin/bash
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_idm_certs_remote_kubeconfig_path }}"
+      register: openshift_post_install_idm_certs_trusted_ca_configmap
+      changed_when: >-
+        'created' in openshift_post_install_idm_certs_trusted_ca_configmap.stdout
+        or 'configured' in openshift_post_install_idm_certs_trusted_ca_configmap.stdout
+      become: true
+
+    - name: Apply the IdM CA as the cluster trusted CA bundle
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_idm_certs_remote_oc_path }}"
+          - --insecure-skip-tls-verify=true
+          - patch
+          - proxy
+          - cluster
+          - --type=merge
+          - -p
+          - '{"spec":{"trustedCA":{"name":"idm-ca-trust"}}}'
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_idm_certs_remote_kubeconfig_path }}"
+      register: openshift_post_install_idm_certs_proxy_trust_patch
+      changed_when: true
+      become: true
+
+    - name: Create or update ingress default certificate secret
+      ansible.builtin.shell: |
+        set -euo pipefail
+        {{ openshift_post_install_idm_certs_remote_oc_path }} \
+          --insecure-skip-tls-verify=true \
+          -n openshift-ingress \
+          create secret tls {{ openshift_idm_certs.ingress.secret_name }} \
+          --cert={{ openshift_post_install_idm_certs_remote_dir }}/apps-fullchain.crt \
+          --key={{ openshift_post_install_idm_certs_remote_dir }}/apps.key \
+          --dry-run=client -o yaml \
+          | {{ openshift_post_install_idm_certs_remote_oc_path }} \
+            --insecure-skip-tls-verify=true apply -f -
+      args:
+        executable: /bin/bash
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_idm_certs_remote_kubeconfig_path }}"
+      register: openshift_post_install_idm_certs_ingress_secret
+      changed_when: >-
+        'created' in openshift_post_install_idm_certs_ingress_secret.stdout
+        or 'configured' in openshift_post_install_idm_certs_ingress_secret.stdout
+      become: true
+
+    - name: Render ingress default certificate manifest on the hypervisor
+      ansible.builtin.template:
+        src: ingresscontroller-default-cert.yaml.j2
+        dest: "{{ openshift_post_install_idm_certs_remote_dir }}/ingresscontroller-default-cert.yaml"
+        mode: "0644"
+      become: true
+
+    - name: Apply ingress default certificate configuration
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_idm_certs_remote_oc_path }}"
+          - --insecure-skip-tls-verify=true
+          - apply
+          - -f
+          - "{{ openshift_post_install_idm_certs_remote_dir }}/ingresscontroller-default-cert.yaml"
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_idm_certs_remote_kubeconfig_path }}"
+      register: openshift_post_install_idm_certs_ingress_apply
+      changed_when: >-
+        'configured' in openshift_post_install_idm_certs_ingress_apply.stdout
+        or 'created' in openshift_post_install_idm_certs_ingress_apply.stdout
+      become: true
+
+- name: Publish IdM ingress certificate reuse decision
+  ansible.builtin.debug:
+    msg: >-
+      Reusing existing ingress certificate configuration:
+      {{ openshift_post_install_idm_certs_reuse_existing }}
+
+# ---------- convergence gate: wait for the cert rollout to fully stabilise ----------
+# The router deployment rolls when the IngressController defaultCertificate changes.
+# All downstream COs (ingress, authentication, console) must reach a fully healthy
+# state before we declare the cert pivot complete.  Subsequent phases depend on a
+# stable, trusted ingress.
+
+- name: Wait for router deployment rollout to complete
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_idm_certs_remote_oc_path }}"
+      - --insecure-skip-tls-verify=true
+      - rollout
+      - status
+      - deployment/router-default
+      - -n
+      - openshift-ingress
+      - --timeout=600s
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_idm_certs_remote_kubeconfig_path }}"
+  changed_when: false
+  become: true
+
+- name: Wait for ingress cluster operator to fully converge (Available, not Degraded, not Progressing)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    {{ openshift_post_install_idm_certs_remote_oc_path }} \
+      --insecure-skip-tls-verify=true get co ingress \
+      -o 'jsonpath={.status.conditions[?(@.type=="Available")].status},{.status.conditions[?(@.type=="Degraded")].status},{.status.conditions[?(@.type=="Progressing")].status}'
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_idm_certs_remote_kubeconfig_path }}"
+  register: openshift_post_install_idm_certs_ingress_converged
+  changed_when: false
+  retries: 60
+  delay: 10
+  until: openshift_post_install_idm_certs_ingress_converged.stdout == 'True,False,False'
+  become: true
+
+- name: Wait for authentication cluster operator to fully converge (Available, not Degraded)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    {{ openshift_post_install_idm_certs_remote_oc_path }} \
+      --insecure-skip-tls-verify=true get co authentication \
+      -o 'jsonpath={.status.conditions[?(@.type=="Available")].status},{.status.conditions[?(@.type=="Degraded")].status}'
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_idm_certs_remote_kubeconfig_path }}"
+  register: openshift_post_install_idm_certs_auth_converged
+  changed_when: false
+  retries: 60
+  delay: 10
+  until: openshift_post_install_idm_certs_auth_converged.stdout == 'True,False'
+  become: true
+
+- name: Wait for console cluster operator to fully converge (Available, not Degraded)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    {{ openshift_post_install_idm_certs_remote_oc_path }} \
+      --insecure-skip-tls-verify=true get co console \
+      -o 'jsonpath={.status.conditions[?(@.type=="Available")].status},{.status.conditions[?(@.type=="Degraded")].status}'
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_idm_certs_remote_kubeconfig_path }}"
+  register: openshift_post_install_idm_certs_console_converged
+  changed_when: false
+  retries: 60
+  delay: 10
+  until: openshift_post_install_idm_certs_console_converged.stdout == 'True,False'
+  become: true
+
+- name: Capture console route hostname for ingress TLS verification
+  ansible.builtin.command:
+    argv: "{{ openshift_post_install_idm_certs_console_route_host_cmd }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_idm_certs_remote_kubeconfig_path }}"
+  register: openshift_post_install_idm_certs_console_route_host
+  changed_when: false
+  become: true
+
+- name: Assert ingress serves a certificate trusted by the IdM CA
+  ansible.builtin.shell: |
+    set -euo pipefail
+    VERIFY=$(echo | openssl s_client \
+      -CAfile {{ openshift_post_install_idm_certs_remote_idm_ca_path }} \
+      -connect {{ openshift_post_install_idm_certs_console_route_host.stdout }}:443 \
+      -servername {{ openshift_post_install_idm_certs_console_route_host.stdout }} 2>&1)
+    echo "${VERIFY}" | grep -q "Verify return code: 0"
+  args:
+    executable: /bin/bash
+  register: openshift_post_install_idm_certs_tls_verify
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_idm_certs_tls_verify.rc == 0
+  become: true
+
+- name: Capture ingress TLS certificate details for summary
+  ansible.builtin.shell: |
+    set -euo pipefail
+    openssl s_client \
+      -CAfile {{ openshift_post_install_idm_certs_remote_idm_ca_path }} \
+      -connect {{ openshift_post_install_idm_certs_console_route_host.stdout }}:443 \
+      -servername {{ openshift_post_install_idm_certs_console_route_host.stdout }} \
+      </dev/null 2>/dev/null \
+      | openssl x509 -noout -issuer -subject -ext subjectAltName
+  args:
+    executable: /bin/bash
+  register: openshift_post_install_idm_certs_ingress_verify
+  changed_when: false
+  become: true
+
+- name: Publish OpenShift IdM ingress certificate summary
+  ansible.builtin.debug:
+    msg:
+      - >-
+        Ingress wildcard *.apps.{{ openshift_install_cluster.full_domain }}
+        now uses the IdM-issued certificate secret
+        {{ openshift_idm_certs.ingress.secret_name }}.
+      - "{{ openshift_post_install_idm_certs_ingress_verify.stdout }}"

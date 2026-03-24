@@ -1,0 +1,25 @@
+kind: LDAPSyncConfig
+apiVersion: v1
+url: "ldaps://{{ idm_vm.name }}.{{ idm_vm.domain }}"
+bindDN: "{{ openshift_post_install_ldap_auth_bind_dn }}"
+bindPassword:
+  file: "{{ openshift_post_install_ldap_auth_remote_bind_password_path }}"
+ca: "{{ openshift_post_install_ldap_auth_remote_idm_ca_path }}"
+rfc2307:
+  groupsQuery:
+    baseDN: "{{ openshift_post_install_ldap_auth_group_search_base_dn }}"
+    scope: sub
+    derefAliases: never
+    filter: "{{ openshift_ldap_auth.group_sync.rfc2307.groups_filter }}"
+  groupUIDAttribute: dn
+  groupNameAttributes:
+    - cn
+  groupMembershipAttributes:
+    - member
+  usersQuery:
+    baseDN: "{{ openshift_post_install_ldap_auth_user_search_base_dn }}"
+    scope: sub
+    derefAliases: never
+  userUIDAttribute: dn
+  userNameAttributes:
+    - uid

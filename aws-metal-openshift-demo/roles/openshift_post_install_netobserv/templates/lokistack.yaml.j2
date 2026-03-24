@@ -1,0 +1,69 @@
+---
+apiVersion: loki.grafana.com/v1
+kind: LokiStack
+metadata:
+  name: {{ openshift_post_install_netobserv_loki_stack_name }}
+  namespace: {{ openshift_post_install_netobserv_loki_namespace }}
+spec:
+  size: {{ openshift_post_install_netobserv_loki_stack_size }}
+  managementState: Managed
+  storageClassName: {{ openshift_post_install_netobserv_loki_storage_class_name }}
+  template:
+    compactor:
+      nodeSelector:
+{% for key, value in openshift_post_install_netobserv_loki_node_selector.items() %}
+        {{ key }}: {{ value | to_json }}
+{% endfor %}
+      tolerations:
+{{ openshift_post_install_netobserv_loki_tolerations | to_nice_yaml(indent=8) | indent(6, true) }}
+    distributor:
+      nodeSelector:
+{% for key, value in openshift_post_install_netobserv_loki_node_selector.items() %}
+        {{ key }}: {{ value | to_json }}
+{% endfor %}
+      tolerations:
+{{ openshift_post_install_netobserv_loki_tolerations | to_nice_yaml(indent=8) | indent(6, true) }}
+    gateway:
+      nodeSelector:
+{% for key, value in openshift_post_install_netobserv_loki_node_selector.items() %}
+        {{ key }}: {{ value | to_json }}
+{% endfor %}
+      tolerations:
+{{ openshift_post_install_netobserv_loki_tolerations | to_nice_yaml(indent=8) | indent(6, true) }}
+    indexGateway:
+      nodeSelector:
+{% for key, value in openshift_post_install_netobserv_loki_node_selector.items() %}
+        {{ key }}: {{ value | to_json }}
+{% endfor %}
+      tolerations:
+{{ openshift_post_install_netobserv_loki_tolerations | to_nice_yaml(indent=8) | indent(6, true) }}
+    ingester:
+      nodeSelector:
+{% for key, value in openshift_post_install_netobserv_loki_node_selector.items() %}
+        {{ key }}: {{ value | to_json }}
+{% endfor %}
+      tolerations:
+{{ openshift_post_install_netobserv_loki_tolerations | to_nice_yaml(indent=8) | indent(6, true) }}
+    querier:
+      nodeSelector:
+{% for key, value in openshift_post_install_netobserv_loki_node_selector.items() %}
+        {{ key }}: {{ value | to_json }}
+{% endfor %}
+      tolerations:
+{{ openshift_post_install_netobserv_loki_tolerations | to_nice_yaml(indent=8) | indent(6, true) }}
+    queryFrontend:
+      nodeSelector:
+{% for key, value in openshift_post_install_netobserv_loki_node_selector.items() %}
+        {{ key }}: {{ value | to_json }}
+{% endfor %}
+      tolerations:
+{{ openshift_post_install_netobserv_loki_tolerations | to_nice_yaml(indent=8) | indent(6, true) }}
+  storage:
+    schemas:
+      - effectiveDate: "2020-10-11"
+        version: v13
+    secret:
+      name: {{ openshift_post_install_netobserv_loki_storage_secret_name }}
+      type: s3
+  tenants:
+    mode: openshift-network

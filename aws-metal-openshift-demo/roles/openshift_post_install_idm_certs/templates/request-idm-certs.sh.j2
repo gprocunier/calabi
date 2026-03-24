@@ -1,0 +1,71 @@
+#!/bin/bash
+# Sign the OpenShift wildcard ingress CSR with the IdM CA.
+#
+# ipa cert-request cannot issue wildcard certificates because FreeIPA validates
+# every CSR subject CN and DNS SAN against Kerberos principals, and wildcards
+# (*.apps.ocp.workshop.lan) can never be valid Kerberos principals.
+#
+# Instead we do IdM housekeeping via the IPA CLI (DNS record, host object,
+# service object, cert profile) and then sign the CSR directly with the IdM CA
+# key using OpenSSL.  The resulting certificate is still signed by the IdM CA
+# and will be trusted by any client that has imported idm-ca.crt.
+set -euo pipefail
+
+printf "%s\n" {{ idm_server.admin_password | quote }} | kinit admin
+
+rm -f /tmp/apps.crt /tmp/idm-signing-ca.key.pem /tmp/idm-signing-ca.p12
+
+# Ensure the DNS A record for the ingress VIP exists.
+ipa dnsrecord-add {{ openshift_install_cluster.full_domain }} apps \
+  --a-rec {{ openshift_install_cluster.network.ingress_vip }} >/dev/null 2>&1 || true
+
+# Ensure the host and service principal objects exist (required for ipa tracking
+# and for the cert to appear in the IdM service inventory).
+ipa host-add --force {{ openshift_idm_certs.ingress.common_name }} >/dev/null 2>&1 || true
+ipa service-add {{ openshift_idm_certs.ingress.service_principal }} >/dev/null 2>&1 || true
+
+# Import the cert profile (idempotent; used for documentation / future reference).
+if ! ipa certprofile-show {{ openshift_idm_certs.ingress_profile.id }} >/dev/null 2>&1; then
+  ipa certprofile-import {{ openshift_idm_certs.ingress_profile.id }} \
+    --file /tmp/ocp-wildcard-ingress-profile.cfg \
+    --desc "{{ openshift_idm_certs.ingress_profile.description }}" \
+    --store=true >/dev/null
+fi
+
+# Locate the NSS database password used by the Dogtag CA instance.
+NSS_PWDFILE=/etc/pki/pki-tomcat/alias/pwdfile.txt
+if [ ! -f "${NSS_PWDFILE}" ]; then
+  echo "ERROR: NSS password file not found at ${NSS_PWDFILE}" >&2
+  exit 1
+fi
+
+# Export the IPA CA signing certificate and key from the NSS database.
+pk12util \
+  -o /tmp/idm-signing-ca.p12 \
+  -n "caSigningCert cert-pki-ca" \
+  -d /etc/pki/pki-tomcat/alias/ \
+  -k "${NSS_PWDFILE}" \
+  -W "" >/dev/null 2>&1
+
+openssl pkcs12 \
+  -in /tmp/idm-signing-ca.p12 \
+  -out /tmp/idm-signing-ca.key.pem \
+  -nocerts -nodes \
+  -passin pass: 2>/dev/null
+
+# Sign the CSR with OpenSSL, copying all extensions (SANs) from the request.
+# -copy_extensions copyall preserves the subjectAltName from the CSR including
+# the wildcard *.apps.ocp.workshop.lan which ipa cert-request would reject.
+openssl x509 -req \
+  -in /tmp/apps.csr \
+  -CA /etc/ipa/ca.crt \
+  -CAkey /tmp/idm-signing-ca.key.pem \
+  -CAcreateserial \
+  -out /tmp/apps.crt \
+  -days 731 \
+  -copy_extensions copyall 2>/dev/null
+
+# Clean up the extracted private key immediately.
+rm -f /tmp/idm-signing-ca.key.pem /tmp/idm-signing-ca.p12
+
+kdestroy

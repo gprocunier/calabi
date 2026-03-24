@@ -1,0 +1,119 @@
+---
+openshift_install_cluster:
+  name: ocp
+  base_domain: workshop.lan
+  full_domain: ocp.workshop.lan
+  network:
+    machine_vlan_id: 200
+    machine_cidr: 172.16.10.0/24
+    machine_gateway: 172.16.10.1
+    machine_dns_servers:
+      - 172.16.0.10
+    storage_vlan_id: 201
+    storage_cidr: 172.16.11.0/24
+    storage_gateway: ""
+    migration_vlan_id: 202
+    migration_cidr: 172.16.12.0/24
+    migration_gateway: 172.16.12.1
+    api_vip: 172.16.10.5
+    ingress_vip: 172.16.10.7
+  dns:
+    api_fqdn: api.ocp.workshop.lan
+    api_int_fqdn: api-int.ocp.workshop.lan
+    wildcard_apps_fqdn: "*.apps.ocp.workshop.lan"
+  services:
+    idm_dns_ntp_server: idm-01.workshop.lan
+    idm_dns_ntp_ipv4: 172.16.0.10
+    mirror_registry_fqdn: mirror-registry.workshop.lan
+    mirror_registry_ipv4: 172.16.0.20
+  nodes:
+    - name: ocp-master-01
+      role: control-plane
+      fqdn: ocp-master-01.ocp.workshop.lan
+      mac_address: "52:54:00:20:00:10"
+      machine_network:
+        ipv4_address: 172.16.10.11
+        prefix_length: 24
+      storage_network:
+        ipv4_address: 172.16.11.11
+        prefix_length: 24
+    - name: ocp-master-02
+      role: control-plane
+      fqdn: ocp-master-02.ocp.workshop.lan
+      mac_address: "52:54:00:20:00:11"
+      machine_network:
+        ipv4_address: 172.16.10.12
+        prefix_length: 24
+      storage_network:
+        ipv4_address: 172.16.11.12
+        prefix_length: 24
+    - name: ocp-master-03
+      role: control-plane
+      fqdn: ocp-master-03.ocp.workshop.lan
+      mac_address: "52:54:00:20:00:12"
+      machine_network:
+        ipv4_address: 172.16.10.13
+        prefix_length: 24
+      storage_network:
+        ipv4_address: 172.16.11.13
+        prefix_length: 24
+    - name: ocp-infra-01
+      role: infra
+      fqdn: ocp-infra-01.ocp.workshop.lan
+      mac_address: "52:54:00:20:00:21"
+      machine_network:
+        ipv4_address: 172.16.10.21
+        prefix_length: 24
+      storage_network:
+        ipv4_address: 172.16.11.21
+        prefix_length: 24
+    - name: ocp-infra-02
+      role: infra
+      fqdn: ocp-infra-02.ocp.workshop.lan
+      mac_address: "52:54:00:20:00:22"
+      machine_network:
+        ipv4_address: 172.16.10.22
+        prefix_length: 24
+      storage_network:
+        ipv4_address: 172.16.11.22
+        prefix_length: 24
+    - name: ocp-infra-03
+      role: infra
+      fqdn: ocp-infra-03.ocp.workshop.lan
+      mac_address: "52:54:00:20:00:23"
+      machine_network:
+        ipv4_address: 172.16.10.23
+        prefix_length: 24
+      storage_network:
+        ipv4_address: 172.16.11.23
+        prefix_length: 24
+    - name: ocp-worker-01
+      role: worker
+      fqdn: ocp-worker-01.ocp.workshop.lan
+      mac_address: "52:54:00:20:00:31"
+      machine_network:
+        ipv4_address: 172.16.10.31
+        prefix_length: 24
+      storage_network:
+        ipv4_address: 172.16.11.31
+        prefix_length: 24
+    - name: ocp-worker-02
+      role: worker
+      fqdn: ocp-worker-02.ocp.workshop.lan
+      mac_address: "52:54:00:20:00:32"
+      machine_network:
+        ipv4_address: 172.16.10.32
+        prefix_length: 24
+      storage_network:
+        ipv4_address: 172.16.11.32
+        prefix_length: 24
+    - name: ocp-worker-03
+      role: worker
+      fqdn: ocp-worker-03.ocp.workshop.lan
+      mac_address: "52:54:00:20:00:33"
+      machine_network:
+        ipv4_address: 172.16.10.33
+        prefix_length: 24
+      storage_network:
+        ipv4_address: 172.16.11.33
+        prefix_length: 24

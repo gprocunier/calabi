@@ -1,0 +1,83 @@
+---
+- name: Build the bastion virtual machine for the OpenShift demo
+  hosts: aws_metal
+  become: true
+  gather_facts: true
+  vars_files:
+    - ../../vars/global/host_resource_management.yml
+    - ../../vars/global/rhsm.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/bastion_vm.yml
+
+  pre_tasks:
+    - name: Wait for the IDM server guest to accept SSH connections
+      ansible.builtin.wait_for:
+        host: "{{ idm_vm.network.ipv4_address }}"
+        port: 22
+        timeout: 900
+        sleep: 10
+
+  roles:
+    - role: bastion
+
+  tasks:
+    - name: Register the bastion guest as a temporary Ansible host
+      ansible.builtin.add_host:
+        name: "{{ bastion_role_vm_fqdn }}"
+        groups:
+          - openshift_bastion
+        ansible_host: "{{ bastion_vm.network.ipv4_address }}"
+        ansible_user: "{{ bastion_vm.access.admin_user }}"
+        ansible_ssh_private_key_file: >-
+          {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+        ansible_become: true
+        ansible_ssh_common_args: >-
+          -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null
+          -o ProxyCommand="ssh
+          -i {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+          -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null
+          {{ hostvars[inventory_hostname].ansible_user }}@{{
+          hostvars[inventory_hostname].ansible_host }}
+          -W %h:%p"
+
+- name: Configure the bastion guest
+  hosts: openshift_bastion
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/rhsm.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/bastion_vm.yml
+
+  pre_tasks:
+    - name: Wait for the bastion guest to accept SSH connections
+      ansible.builtin.wait_for_connection:
+        timeout: 900
+        sleep: 10
+
+    - name: Gather facts from the bastion guest
+      ansible.builtin.setup:
+
+  roles:
+    - role: bastion_guest
+
+- name: Detach bastion cloud-init media after guest configuration
+  hosts: aws_metal
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/guests/bastion_vm.yml
+  roles:
+    - role: libvirt_cdrom_cleanup
+      vars:
+        libvirt_cdrom_cleanup_domain: >-
+          {{ bastion_vm.name }}.{{ bastion_vm.domain }}
+        libvirt_cdrom_cleanup_media_path: >-
+          /var/lib/aws-metal-openshift-demo/{{ bastion_vm.name }}/{{
+          bastion_vm.name }}-cidata.iso
+        libvirt_cdrom_cleanup_remove_media_file: true
+        libvirt_cdrom_cleanup_reset_boot_to_hd_only: true

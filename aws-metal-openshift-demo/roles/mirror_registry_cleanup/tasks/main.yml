@@ -1,0 +1,56 @@
+---
+- name: Derive mirror registry cleanup facts
+  ansible.builtin.set_fact:
+    mirror_registry_cleanup_vm_fqdn: >-
+      {{ mirror_registry_vm.name }}.{{ mirror_registry_vm.domain }}
+    mirror_registry_cleanup_runtime_dir: >-
+      {{ mirror_registry_cleanup_runtime_root }}/{{ mirror_registry_vm.name }}
+
+- name: Check whether the mirror registry libvirt domain exists
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - dominfo
+      - "{{ mirror_registry_cleanup_vm_fqdn }}"
+  register: mirror_registry_cleanup_domain_info
+  changed_when: false
+  failed_when: false
+
+- name: Stop the mirror registry VM when it exists
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - destroy
+      - "{{ mirror_registry_cleanup_vm_fqdn }}"
+  when: mirror_registry_cleanup_domain_info.rc == 0
+  changed_when: true
+  failed_when: false
+
+- name: Undefine the mirror registry VM when it exists
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - undefine
+      - "{{ mirror_registry_cleanup_vm_fqdn }}"
+      - --nvram
+  when: mirror_registry_cleanup_domain_info.rc == 0
+  changed_when: true
+  failed_when: false
+
+- name: Remove the mirror registry runtime directory
+  ansible.builtin.file:
+    path: "{{ mirror_registry_cleanup_runtime_dir }}"
+    state: absent
+  when: mirror_registry_cleanup_remove_runtime_dir | bool
+
+- name: Clear the beginning of the mirror registry block device when requested
+  ansible.builtin.command:
+    argv:
+      - dd
+      - if=/dev/zero
+      - of={{ mirror_registry_vm.disk_path }}
+      - bs=1M
+      - count=16
+      - conv=fsync
+  when: mirror_registry_cleanup_wipe_block_device | bool
+  changed_when: true

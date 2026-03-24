@@ -1,0 +1,540 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Host-only AWS IaaS stack for the OpenShift nested-virtualization lab. Reuses an
+  existing VPC and subnet, creates the virt-01 security group and
+  instance, and attaches the guest EBS volumes required by the lab.
+
+Parameters:
+  LabPrefix:
+    Type: String
+    Default: workshop
+    AllowedPattern: '^[a-zA-Z0-9-]+$'
+    Description: Prefix used for AWS resource names and tags.
+
+  AvailabilityZone:
+    Type: AWS::EC2::AvailabilityZone::Name
+    Default: us-east-2a
+    Description: Availability Zone used for the instance and EBS volumes.
+
+  ExistingVpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: Existing VPC used by virt-01.
+
+  ExistingSubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Existing subnet used by virt-01.
+
+  PersistentPublicIpAllocationId:
+    Type: String
+    Default: ""
+    Description: >-
+      Optional existing Elastic IP allocation ID to associate with
+      virt-01. Leave empty to use an ephemeral public IP.
+
+  VirtHostPrivateIp:
+    Type: String
+    Default: 10.0.8.207
+    Description: Static private IP for virt-01.
+
+  AdminIngressCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: Source CIDR allowed to access SSH and ICMP on virt-01.
+    AllowedPattern: '^([0-9]{1,3}\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])$'
+
+  VirtHostInstanceType:
+    Type: String
+    Default: m5.metal
+    Description: EC2 instance type for virt-01.
+
+  RedHatRhelPrivateAmiId:
+    Type: AWS::EC2::Image::Id
+    Description: Private or shared Red Hat RHEL AMI ID used for virt-01.
+
+  ImportedKeyPairName:
+    Type: String
+    AllowedPattern: '^[a-zA-Z0-9._@-]+$'
+    Description: AWS EC2 key pair name to create and associate with virt-01.
+
+  ImportedPublicKeyMaterial:
+    Type: String
+    NoEcho: true
+    Description: OpenSSH-formatted public key material added to ec2-user by cloud-init.
+
+  Ec2UserPasswordHash:
+    Type: String
+    NoEcho: true
+    Description: SHA-512 password hash assigned to ec2-user for Cockpit login.
+
+  RootVolumeSizeGiB:
+    Type: Number
+    Default: 100
+    Description: Root volume size for virt-01.
+
+  RootVolumeIops:
+    Type: Number
+    Default: 3000
+    Description: Root gp3 IOPS for virt-01.
+
+  RootVolumeThroughput:
+    Type: Number
+    Default: 125
+    Description: Root gp3 throughput (MiB/s) for virt-01.
+
+Conditions:
+  UsePersistentElasticIp: !Not [!Equals [!Ref PersistentPublicIpAllocationId, ""]]
+
+Resources:
+  VirtHostSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for virt-01
+      GroupName: virt-01
+      VpcId: !Ref ExistingVpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AdminIngressCidr
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: !Ref AdminIngressCidr
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: virt-01
+
+  VirtHostKeyPair:
+    Type: AWS::EC2::KeyPair
+    Properties:
+      KeyName: !Ref ImportedKeyPairName
+      PublicKeyMaterial: !Ref ImportedPublicKeyMaterial
+      Tags:
+        - Key: Name
+          Value: !Ref ImportedKeyPairName
+
+  VirtHostInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref RedHatRhelPrivateAmiId
+      InstanceType: !Ref VirtHostInstanceType
+      AvailabilityZone: !Ref AvailabilityZone
+      KeyName: !Ref VirtHostKeyPair
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: !If [UsePersistentElasticIp, false, true]
+          DeviceIndex: 0
+          DeleteOnTermination: true
+          GroupSet:
+            - !Ref VirtHostSecurityGroup
+          PrivateIpAddress: !Ref VirtHostPrivateIp
+          SubnetId: !Ref ExistingSubnetId
+      SourceDestCheck: true
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: !Ref RootVolumeSizeGiB
+            Iops: !Ref RootVolumeIops
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub |
+          #cloud-config
+          hostname: virt-01
+          fqdn: virt-01.workshop.lan
+          prefer_fqdn_over_hostname: true
+          manage_etc_hosts: true
+          package_update: true
+          package_upgrade: false
+          packages:
+            - cockpit
+          ssh_pwauth: false
+          users:
+            - default
+            - name: ec2-user
+              lock_passwd: false
+              passwd: ${Ec2UserPasswordHash}
+              ssh_authorized_keys:
+                - ${ImportedPublicKeyMaterial}
+          runcmd:
+            - [systemctl, enable, --now, cockpit.socket]
+      Tags:
+        - Key: Name
+          Value: virt-01
+        - Key: Role
+          Value: virt-host
+
+  VirtHostElasticIpAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Condition: UsePersistentElasticIp
+    Properties:
+      AllocationId: !Ref PersistentPublicIpAllocationId
+      InstanceId: !Ref VirtHostInstance
+
+  VolumeIdm01:
+    Type: AWS::EC2::Volume
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone
+      VolumeType: gp3
+      Size: 120
+      Iops: 3000
+      Throughput: 125
+      Tags:
+        - Key: Name
+          Value: idm-01
+        - Key: GuestDisk
+          Value: idm-01
+        - Key: Purpose
+          Value: support_vm_root
+
+  AttachVolumeIdm01:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/sdh
+      InstanceId: !Ref VirtHostInstance
+      VolumeId: !Ref VolumeIdm01
+
+  VolumeBastion01:
+    Type: AWS::EC2::Volume
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone
+      VolumeType: gp3
+      Size: 120
+      Iops: 3000
+      Throughput: 125
+      Tags:
+        - Key: Name
+          Value: bastion-01
+        - Key: GuestDisk
+          Value: bastion-01
+        - Key: Purpose
+          Value: support_vm_root
+
+  AttachVolumeBastion01:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/sdi
+      InstanceId: !Ref VirtHostInstance
+      VolumeId: !Ref VolumeBastion01
+
+  VolumeMirrorRegistry:
+    Type: AWS::EC2::Volume
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone
+      VolumeType: gp3
+      Size: 200
+      Iops: 3000
+      Throughput: 125
+      Tags:
+        - Key: Name
+          Value: mirror-registry
+        - Key: GuestDisk
+          Value: mirror-registry
+        - Key: Purpose
+          Value: support_vm_root
+
+  AttachVolumeMirrorRegistry:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/sdk
+      InstanceId: !Ref VirtHostInstance
+      VolumeId: !Ref VolumeMirrorRegistry
+
+  VolumeOcpMaster01:
+    Type: AWS::EC2::Volume
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone
+      VolumeType: gp3
+      Size: 250
+      Iops: 6000
+      Throughput: 250
+      Tags:
+        - Key: Name
+          Value: ocp-master-01
+        - Key: GuestDisk
+          Value: ocp-master-01
+        - Key: Purpose
+          Value: openshift_control_plane_root
+
+  AttachVolumeOcpMaster01:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/sdb
+      InstanceId: !Ref VirtHostInstance
+      VolumeId: !Ref VolumeOcpMaster01
+
+  VolumeOcpMaster02:
+    Type: AWS::EC2::Volume
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone
+      VolumeType: gp3
+      Size: 250
+      Iops: 6000
+      Throughput: 250
+      Tags:
+        - Key: Name
+          Value: ocp-master-02
+        - Key: GuestDisk
+          Value: ocp-master-02
+        - Key: Purpose
+          Value: openshift_control_plane_root
+
+  AttachVolumeOcpMaster02:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/sdc
+      InstanceId: !Ref VirtHostInstance
+      VolumeId: !Ref VolumeOcpMaster02
+
+  VolumeOcpMaster03:
+    Type: AWS::EC2::Volume
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone
+      VolumeType: gp3
+      Size: 250
+      Iops: 6000
+      Throughput: 250
+      Tags:
+        - Key: Name
+          Value: ocp-master-03
+        - Key: GuestDisk
+          Value: ocp-master-03
+        - Key: Purpose
+          Value: openshift_control_plane_root
+
+  AttachVolumeOcpMaster03:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/sdd
+      InstanceId: !Ref VirtHostInstance
+      VolumeId: !Ref VolumeOcpMaster03
+
+  VolumeOcpWorker01:
+    Type: AWS::EC2::Volume
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone
+      VolumeType: gp3
+      Size: 250
+      Iops: 3000
+      Throughput: 125
+      Tags:
+        - Key: Name
+          Value: ocp-worker-01
+        - Key: GuestDisk
+          Value: ocp-worker-01
+        - Key: Purpose
+          Value: openshift_worker_root
+
+  AttachVolumeOcpWorker01:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/sde
+      InstanceId: !Ref VirtHostInstance
+      VolumeId: !Ref VolumeOcpWorker01
+
+  VolumeOcpWorker02:
+    Type: AWS::EC2::Volume
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone
+      VolumeType: gp3
+      Size: 250
+      Iops: 3000
+      Throughput: 125
+      Tags:
+        - Key: Name
+          Value: ocp-worker-02
+        - Key: GuestDisk
+          Value: ocp-worker-02
+        - Key: Purpose
+          Value: openshift_worker_root
+
+  AttachVolumeOcpWorker02:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/sdg
+      InstanceId: !Ref VirtHostInstance
+      VolumeId: !Ref VolumeOcpWorker02
+
+  VolumeOcpWorker03:
+    Type: AWS::EC2::Volume
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone
+      VolumeType: gp3
+      Size: 250
+      Iops: 3000
+      Throughput: 125
+      Tags:
+        - Key: Name
+          Value: ocp-worker-03
+        - Key: GuestDisk
+          Value: ocp-worker-03
+        - Key: Purpose
+          Value: openshift_worker_root
+
+  AttachVolumeOcpWorker03:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/sdf
+      InstanceId: !Ref VirtHostInstance
+      VolumeId: !Ref VolumeOcpWorker03
+
+  VolumeOcpInfra01:
+    Type: AWS::EC2::Volume
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone
+      VolumeType: gp3
+      Size: 250
+      Iops: 3000
+      Throughput: 125
+      Tags:
+        - Key: Name
+          Value: ocp-infra-01
+        - Key: GuestDisk
+          Value: ocp-infra-01
+        - Key: Purpose
+          Value: openshift_infra_root
+
+  AttachVolumeOcpInfra01:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/sdl
+      InstanceId: !Ref VirtHostInstance
+      VolumeId: !Ref VolumeOcpInfra01
+
+  VolumeOcpInfra02:
+    Type: AWS::EC2::Volume
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone
+      VolumeType: gp3
+      Size: 250
+      Iops: 3000
+      Throughput: 125
+      Tags:
+        - Key: Name
+          Value: ocp-infra-02
+        - Key: GuestDisk
+          Value: ocp-infra-02
+        - Key: Purpose
+          Value: openshift_infra_root
+
+  AttachVolumeOcpInfra02:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/sdm
+      InstanceId: !Ref VirtHostInstance
+      VolumeId: !Ref VolumeOcpInfra02
+
+  VolumeOcpInfra03:
+    Type: AWS::EC2::Volume
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone
+      VolumeType: gp3
+      Size: 250
+      Iops: 3000
+      Throughput: 125
+      Tags:
+        - Key: Name
+          Value: ocp-infra-03
+        - Key: GuestDisk
+          Value: ocp-infra-03
+        - Key: Purpose
+          Value: openshift_infra_root
+
+  AttachVolumeOcpInfra03:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/sdn
+      InstanceId: !Ref VirtHostInstance
+      VolumeId: !Ref VolumeOcpInfra03
+
+  VolumeOcpInfra01Data:
+    Type: AWS::EC2::Volume
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone
+      VolumeType: gp3
+      Size: 1000
+      Iops: 3000
+      Throughput: 125
+      Tags:
+        - Key: Name
+          Value: ocp-infra-01-data
+        - Key: GuestDisk
+          Value: ocp-infra-01-data
+        - Key: Purpose
+          Value: openshift_infra_odf_data
+
+  AttachVolumeOcpInfra01Data:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/sdo
+      InstanceId: !Ref VirtHostInstance
+      VolumeId: !Ref VolumeOcpInfra01Data
+
+  VolumeOcpInfra02Data:
+    Type: AWS::EC2::Volume
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone
+      VolumeType: gp3
+      Size: 1000
+      Iops: 3000
+      Throughput: 125
+      Tags:
+        - Key: Name
+          Value: ocp-infra-02-data
+        - Key: GuestDisk
+          Value: ocp-infra-02-data
+        - Key: Purpose
+          Value: openshift_infra_odf_data
+
+  AttachVolumeOcpInfra02Data:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/sdp
+      InstanceId: !Ref VirtHostInstance
+      VolumeId: !Ref VolumeOcpInfra02Data
+
+  VolumeOcpInfra03Data:
+    Type: AWS::EC2::Volume
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone
+      VolumeType: gp3
+      Size: 1000
+      Iops: 3000
+      Throughput: 125
+      Tags:
+        - Key: Name
+          Value: ocp-infra-03-data
+        - Key: GuestDisk
+          Value: ocp-infra-03-data
+        - Key: Purpose
+          Value: openshift_infra_odf_data
+
+  AttachVolumeOcpInfra03Data:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/sdq
+      InstanceId: !Ref VirtHostInstance
+      VolumeId: !Ref VolumeOcpInfra03Data
+
+Outputs:
+  SecurityGroupId:
+    Description: Security group attached to virt-01.
+    Value: !Ref VirtHostSecurityGroup
+
+  ImportedKeyPairName:
+    Description: EC2 key pair created for virt-01.
+    Value: !Ref VirtHostKeyPair
+
+  VirtHostInstanceId:
+    Description: EC2 instance ID for virt-01.
+    Value: !Ref VirtHostInstance
+
+  VirtHostPrivateIp:
+    Description: Private IP address assigned to virt-01.
+    Value: !Ref VirtHostPrivateIp
+
+  VirtHostPublicIpMode:
+    Description: Whether the stack is using an Elastic IP or an ephemeral public IP.
+    Value: !If [UsePersistentElasticIp, elastic-ip, ephemeral-public-ip]

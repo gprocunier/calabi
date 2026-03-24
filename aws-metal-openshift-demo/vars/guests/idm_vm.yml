@@ -1,0 +1,182 @@
+---
+# Paths in this file are evaluated on the managed hypervisor host.
+idm_vm:
+  name: idm-01
+  domain: workshop.lan
+  source_image: /root/images/rhel-10.1-x86_64-kvm.qcow2
+  disk_path: /dev/ebs/idm-01
+  osinfo: rhel10.1
+  provisioning:
+    rebuild_disk_from_image: false
+    recreate_domain: false
+  boot:
+    firmware: uefi
+    machine: q35
+    cpu_model: host-passthrough
+    tpm_enabled: false
+  resources:
+    memory_mb: 8192
+    vcpus: 2
+  performance_domain:
+    tier: silver
+    iothreads: 0
+  network:
+    libvirt_network: lab-switch
+    libvirt_portgroup: mgmt-access
+    interface_name: eth0
+    mac_address: "52:54:00:50:01:02"
+    ipv4_address: 172.16.0.10
+    prefix_length: 24
+    gateway: 172.16.0.1
+    dns_servers:
+      - 1.1.1.1
+      - 8.8.8.8
+  access:
+    admin_user: cloud-user
+    admin_password: "{{ lab_default_password }}"
+    ssh_private_key_file: >-
+      {{ lab_execution_ssh_private_key_file |
+      default(lookup('env', 'HOME') + '/.ssh/id_ed25519') }}
+    lock_password: false
+    ssh_password_auth: true
+    ssh_authorized_keys: >-
+      {{
+        [lab_operator_ssh_public_key | default('')]
+        | reject('equalto', '')
+        | list
+      }}
+  subscription:
+    enabled: true
+    activation_key: "{{ lab_rhsm.activation_key | default('') }}"
+    organization_id: "{{ lab_rhsm.organization_id | default('') }}"
+    username: "{{ lab_rhsm.username | default('') }}"
+    password: "{{ lab_rhsm.password | default('') }}"
+    server_hostname: "{{ lab_rhsm.server_hostname | default('') }}"
+
+idm_server:
+  realm: WORKSHOP.LAN
+  ds_password: "{{ lab_default_password }}"
+  admin_password: "{{ lab_default_password }}"
+  setup_dns: true
+  dns_forwarders:
+    - 8.8.8.8
+    - 1.1.1.1
+  static_dns_records:
+    - zone_name: "{{ idm_vm.domain }}"
+      name: virt-01
+      record_type: A
+      record_value: >-
+        {{ lab_switch_ports.vlan100.gateway_cidr | regex_replace('/.*$', '') }}
+      label: "virt-01.{{ idm_vm.domain }}"
+    - zone_name: >-
+        {{
+          (
+            lab_switch_ports.vlan100.cidr
+            | regex_replace('/.*$', '')
+          ).split('.')[2]
+        }}.{{
+          (
+            lab_switch_ports.vlan100.cidr
+            | regex_replace('/.*$', '')
+          ).split('.')[1]
+        }}.{{
+          (
+            lab_switch_ports.vlan100.cidr
+            | regex_replace('/.*$', '')
+          ).split('.')[0]
+        }}.in-addr.arpa
+      name: >-
+        {{
+          (
+            lab_switch_ports.vlan100.gateway_cidr
+            | regex_replace('/.*$', '')
+          ).split('.')[-1]
+        }}
+      record_type: PTR
+      record_value: "virt-01.{{ idm_vm.domain }}."
+      label: >-
+        {{
+          lab_switch_ports.vlan100.gateway_cidr
+          | regex_replace('/.*$', '')
+        }}
+  trusted_networks: >-
+    {{
+      lab_switch_ports
+      | dict2items
+      | map(attribute='value.cidr')
+      | reject('equalto', '')
+      | list
+    }}
+  ipa_packages:
+    - ipa-server
+    - ipa-server-dns
+    - ipa-server-trust-ad
+    - idm-pki-kra
+  cockpit:
+    packages:
+      - cockpit
+      - cockpit-files
+      - cockpit-ostree
+      - cockpit-packagekit
+      - cockpit-podman
+      - cockpit-session-recording
+      - cockpit-storaged
+      - cockpit-system
+      - cockpit-ws-selinux
+  session_recording:
+    packages:
+      - tlog
+    scope: all
+    users: []
+    groups: []
+    exclude_users: []
+    exclude_groups: []
+  firewall_services:
+    - cockpit
+    - dns
+    - freeipa-4
+    - freeipa-trust
+  identity_groups:
+    - admins
+    - openshift-admin
+    - virt-admin
+    - developer
+  password_policy:
+    enabled: true
+    maxlife_days: 3650
+    minlife_hours: 0
+    history_length: 0
+    minclasses: 0
+    minlength: 8
+    priority_start: 40
+    priority_step: 10
+  identity_users:
+    - name: sysop
+      first_name: Sysop
+      last_name: User
+      shell: /bin/bash
+      password: "{{ lab_default_password }}"
+      groups:
+        - admins
+        - openshift-admin
+    - name: virtadm
+      first_name: Virt
+      last_name: Admin
+      shell: /bin/bash
+      password: "{{ lab_default_password }}"
+      groups:
+        - virt-admin
+    - name: dev
+      first_name: Dev
+      last_name: User
+      shell: /bin/bash
+      password: "{{ lab_default_password }}"
+      groups:
+        - developer
+  sudo_policy:
+    enabled: true
+    rule_name: admins-nopasswd-all
+    description: >-
+      Permit admins group members to run any command on any host without
+      authentication
+    group: admins

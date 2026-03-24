@@ -1,0 +1,62 @@
+[
+  {
+    "ParameterKey": "LabPrefix",
+    "ParameterValue": "workshop"
+  },
+  {
+    "ParameterKey": "AvailabilityZone",
+    "ParameterValue": "us-east-2a"
+  },
+  {
+    "ParameterKey": "ExistingVpcId",
+    "ParameterValue": "vpc-REPLACE_WITH_EXISTING_VPC_ID"
+  },
+  {
+    "ParameterKey": "ExistingSubnetId",
+    "ParameterValue": "subnet-REPLACE_WITH_EXISTING_SUBNET_ID"
+  },
+  {
+    "ParameterKey": "PersistentPublicIpAllocationId",
+    "ParameterValue": "eipalloc-REPLACE_WITH_EXISTING_EIP_OR_LEAVE_EMPTY"
+  },
+  {
+    "ParameterKey": "VirtHostPrivateIp",
+    "ParameterValue": "10.0.8.207"
+  },
+  {
+    "ParameterKey": "AdminIngressCidr",
+    "ParameterValue": "0.0.0.0/0"
+  },
+  {
+    "ParameterKey": "VirtHostInstanceType",
+    "ParameterValue": "m5.metal"
+  },
+  {
+    "ParameterKey": "RedHatRhelPrivateAmiId",
+    "ParameterValue": "ami-REPLACE_WITH_RHEL_10_1_AMI"
+  },
+  {
+    "ParameterKey": "ImportedKeyPairName",
+    "ParameterValue": "virt-lab-operator-ed25519"
+  },
+  {
+    "ParameterKey": "ImportedPublicKeyMaterial",
+    "ParameterValue": "ssh-ed25519 AAAA_REPLACE_WITH_REAL_PUBLIC_KEY"
+  },
+  {
+    "ParameterKey": "Ec2UserPasswordHash",
+    "ParameterValue": "$6$REPLACE_WITH_SHA512_PASSWORD_HASH"
+  },
+  {
+    "ParameterKey": "RootVolumeSizeGiB",
+    "ParameterValue": "100"
+  },
+  {
+    "ParameterKey": "RootVolumeIops",
+    "ParameterValue": "3000"
+  },
+  {
+    "ParameterKey": "RootVolumeThroughput",
+    "ParameterValue": "125"
+  }
+]

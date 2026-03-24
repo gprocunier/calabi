@@ -1,0 +1,15 @@
+---
+- import_playbook: bootstrap/site.yml
+  tags:
+    - bootstrap-host
+- import_playbook: bootstrap/idm.yml
+  tags:
+    - idm
+    - support-vms
+- import_playbook: bootstrap/bastion.yml
+  tags:
+    - bastion
+    - support-vms
+- import_playbook: bootstrap/bastion-stage.yml
+  tags:
+    - bastion-stage

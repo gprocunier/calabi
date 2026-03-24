@@ -1,0 +1,14 @@
+[session_recording]
+scope = {{ idm_server.session_recording.scope }}
+{% if idm_server.session_recording.users | length > 0 %}
+users = {{ idm_server.session_recording.users | join(', ') }}
+{% endif %}
+{% if idm_server.session_recording.groups | length > 0 %}
+groups = {{ idm_server.session_recording.groups | join(', ') }}
+{% endif %}
+{% if idm_server.session_recording.exclude_users | length > 0 %}
+exclude_users = {{ idm_server.session_recording.exclude_users | join(', ') }}
+{% endif %}
+{% if idm_server.session_recording.exclude_groups | length > 0 %}
+exclude_groups = {{ idm_server.session_recording.exclude_groups | join(', ') }}
+{% endif %}

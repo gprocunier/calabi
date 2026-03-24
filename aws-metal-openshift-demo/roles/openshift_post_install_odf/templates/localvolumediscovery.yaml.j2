@@ -1,0 +1,16 @@
+apiVersion: local.storage.openshift.io/v1alpha1
+kind: LocalVolumeDiscovery
+metadata:
+  name: {{ openshift_post_install_odf_local_volume_discovery_name }}
+  namespace: {{ openshift_post_install_odf_local_storage_namespace }}
+spec:
+  nodeSelector:
+    nodeSelectorTerms:
+      - matchExpressions:
+          - key: node-role.kubernetes.io/infra
+            operator: Exists
+  tolerations:
+    - key: {{ openshift_post_install_odf_storage_taint_key }}
+      operator: Equal
+      value: "{{ openshift_post_install_odf_storage_taint_value }}"
+      effect: {{ openshift_post_install_odf_storage_taint_effect }}

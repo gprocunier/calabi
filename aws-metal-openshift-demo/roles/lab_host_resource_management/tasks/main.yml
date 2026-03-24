@@ -1,0 +1,126 @@
+---
+- name: Validate host resource management variables
+  ansible.builtin.assert:
+    that:
+      - lab_host_resource_management.enabled | bool
+      - lab_host_resource_management.host_policy.manage_systemd_cpu_affinity is boolean
+      - lab_host_resource_management.host_policy.manage_irqbalance_guest_ban is boolean
+      - lab_host_resource_management.cpu_pools.host_reserved | length > 0
+      - lab_host_resource_management.cpu_pools.host_emulator | length > 0
+      - lab_host_resource_management.cpu_pools.guest_domain | length > 0
+      - lab_host_resource_management.performance_domains.gold.partition | length > 0
+      - lab_host_resource_management.performance_domains.silver.partition | length > 0
+      - lab_host_resource_management.performance_domains.bronze.partition | length > 0
+
+- name: Ensure host resource management directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /etc/systemd/system.conf.d
+
+- name: Install the systemd manager CPU affinity policy
+  ansible.builtin.template:
+    src: systemd-manager-host-resource-management.conf.j2
+    dest: /etc/systemd/system.conf.d/90-aws-metal-openshift-demo-host-resource-management.conf
+    owner: root
+    group: root
+    mode: "0644"
+  register: lab_host_resource_management_manager_conf
+
+- name: Install the Gold performance-domain slice
+  ansible.builtin.template:
+    src: machine-tier.slice.j2
+    dest: /etc/systemd/system/machine-gold.slice
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    lab_host_resource_management_tier_name: gold
+    lab_host_resource_management_tier: >-
+      {{ lab_host_resource_management.performance_domains.gold }}
+  register: lab_host_resource_management_gold_slice
+
+- name: Install the Silver performance-domain slice
+  ansible.builtin.template:
+    src: machine-tier.slice.j2
+    dest: /etc/systemd/system/machine-silver.slice
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    lab_host_resource_management_tier_name: silver
+    lab_host_resource_management_tier: >-
+      {{ lab_host_resource_management.performance_domains.silver }}
+  register: lab_host_resource_management_silver_slice
+
+- name: Install the Bronze performance-domain slice
+  ansible.builtin.template:
+    src: machine-tier.slice.j2
+    dest: /etc/systemd/system/machine-bronze.slice
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    lab_host_resource_management_tier_name: bronze
+    lab_host_resource_management_tier: >-
+      {{ lab_host_resource_management.performance_domains.bronze }}
+  register: lab_host_resource_management_bronze_slice
+
+- name: Configure irqbalance to avoid the guest-domain CPUs
+  ansible.builtin.lineinfile:
+    path: /etc/sysconfig/irqbalance
+    regexp: '^IRQBALANCE_BANNED_CPULIST='
+    line: >-
+      IRQBALANCE_BANNED_CPULIST={{ lab_host_resource_management.cpu_pools.guest_domain }}
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  register: lab_host_resource_management_irqbalance
+  when: lab_host_resource_management.host_policy.manage_irqbalance_guest_ban | bool
+
+- name: Remove the irqbalance guest-domain exclusion policy
+  ansible.builtin.lineinfile:
+    path: /etc/sysconfig/irqbalance
+    regexp: '^IRQBALANCE_BANNED_CPULIST='
+    state: absent
+    create: false
+  register: lab_host_resource_management_irqbalance
+  when: not (lab_host_resource_management.host_policy.manage_irqbalance_guest_ban | bool)
+
+- name: Reload systemd after host resource management changes
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - daemon-reload
+  when:
+    - not ansible_check_mode
+    - >-
+      lab_host_resource_management_gold_slice.changed or
+      lab_host_resource_management_silver_slice.changed or
+      lab_host_resource_management_bronze_slice.changed
+  changed_when: true
+
+- name: Reexecute systemd to apply manager CPU affinity changes
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - daemon-reexec
+  when:
+    - not ansible_check_mode
+    - lab_host_resource_management_manager_conf.changed
+  changed_when: true
+
+- name: Restart irqbalance when the CPU exclusion policy changed
+  ansible.builtin.systemd:
+    name: irqbalance.service
+    state: restarted
+    enabled: true
+  when:
+    - not ansible_check_mode
+    - lab_host_resource_management_irqbalance.changed
+  failed_when: false

@@ -1,0 +1,400 @@
+---
+- name: Derive post-install NetObserv context
+  ansible.builtin.set_fact:
+    openshift_post_install_netobserv_oc_local_path: >-
+      {{ lab_execution_tools_root }}/{{
+      mirror_registry_ocp_release }}/bin/oc
+    openshift_post_install_netobserv_kubeconfig_local_path: >-
+      {{ lab_execution_ocp_generated_root }}/auth/kubeconfig
+    openshift_post_install_netobserv_remote_dir: >-
+      /var/tmp/openshift-post-install-netobserv
+    openshift_post_install_netobserv_remote_oc_path: >-
+      /var/tmp/openshift-post-install-netobserv/oc
+    openshift_post_install_netobserv_remote_kubeconfig_path: >-
+      /var/tmp/openshift-post-install-netobserv/kubeconfig
+    openshift_post_install_netobserv_remote_loki_subscription_path: >-
+      /var/tmp/openshift-post-install-netobserv/loki-subscription.yaml
+    openshift_post_install_netobserv_remote_netobserv_subscription_path: >-
+      /var/tmp/openshift-post-install-netobserv/netobserv-subscription.yaml
+    openshift_post_install_netobserv_remote_obc_path: >-
+      /var/tmp/openshift-post-install-netobserv/objectbucketclaim.yaml
+    openshift_post_install_netobserv_remote_lokistack_path: >-
+      /var/tmp/openshift-post-install-netobserv/lokistack.yaml
+    openshift_post_install_netobserv_remote_flowcollector_path: >-
+      /var/tmp/openshift-post-install-netobserv/flowcollector.yaml
+
+- name: Assert local oc binary exists for NetObserv orchestration
+  ansible.builtin.stat:
+    path: "{{ openshift_post_install_netobserv_oc_local_path }}"
+  delegate_to: localhost
+  become: false
+  register: openshift_post_install_netobserv_oc_local_stat
+
+- name: Assert generated kubeconfig exists for NetObserv orchestration
+  ansible.builtin.stat:
+    path: "{{ openshift_post_install_netobserv_kubeconfig_local_path }}"
+  delegate_to: localhost
+  become: false
+  register: openshift_post_install_netobserv_kubeconfig_local_stat
+
+- name: Fail when required local NetObserv artifacts are missing
+  ansible.builtin.assert:
+    that:
+      - openshift_post_install_netobserv_oc_local_stat.stat.exists
+      - openshift_post_install_netobserv_kubeconfig_local_stat.stat.exists
+    fail_msg: >-
+      NetObserv orchestration requires a generated oc binary and kubeconfig.
+
+- name: Create remote NetObserv workspace
+  ansible.builtin.file:
+    path: "{{ openshift_post_install_netobserv_remote_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Copy pinned oc binary to hypervisor for NetObserv orchestration
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_netobserv_oc_local_path }}"
+    dest: "{{ openshift_post_install_netobserv_remote_oc_path }}"
+    mode: "0755"
+
+- name: Copy generated kubeconfig to hypervisor for NetObserv orchestration
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_netobserv_kubeconfig_local_path }}"
+    dest: "{{ openshift_post_install_netobserv_remote_kubeconfig_path }}"
+    mode: "0600"
+
+- name: Render Loki operator subscription manifest
+  ansible.builtin.template:
+    src: loki-subscription.yaml.j2
+    dest: "{{ openshift_post_install_netobserv_remote_loki_subscription_path }}"
+    mode: "0644"
+
+- name: Render NetObserv operator subscription manifest
+  ansible.builtin.template:
+    src: netobserv-subscription.yaml.j2
+    dest: >-
+      {{
+      openshift_post_install_netobserv_remote_netobserv_subscription_path
+      }}
+    mode: "0644"
+
+- name: Render ODF object bucket claim manifest
+  ansible.builtin.template:
+    src: objectbucketclaim.yaml.j2
+    dest: "{{ openshift_post_install_netobserv_remote_obc_path }}"
+    mode: "0644"
+
+- name: Render LokiStack manifest
+  ansible.builtin.template:
+    src: lokistack.yaml.j2
+    dest: "{{ openshift_post_install_netobserv_remote_lokistack_path }}"
+    mode: "0644"
+
+- name: Render FlowCollector manifest
+  ansible.builtin.template:
+    src: flowcollector.yaml.j2
+    dest: "{{ openshift_post_install_netobserv_remote_flowcollector_path }}"
+    mode: "0644"
+
+- name: Ensure NetObserv namespaces exist
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_netobserv_remote_oc_path }}" create namespace \
+      "{{ item }}" --dry-run=client -o yaml \
+    | "{{ openshift_post_install_netobserv_remote_oc_path }}" apply -f -
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_netobserv_remote_kubeconfig_path }}"
+  loop:
+    - "{{ openshift_post_install_netobserv_loki_operator_namespace }}"
+    - "{{ openshift_post_install_netobserv_loki_namespace }}"
+    - "{{ openshift_post_install_netobserv_operator_namespace }}"
+  changed_when: true
+
+- name: Label NetObserv namespace for cluster monitoring
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_netobserv_remote_oc_path }}"
+      - label
+      - namespace
+      - "{{ openshift_post_install_netobserv_loki_namespace }}"
+      - openshift.io/cluster-monitoring=true
+      - --overwrite
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_netobserv_remote_kubeconfig_path }}"
+  changed_when: false
+
+- name: Apply Loki operator subscription
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_netobserv_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_netobserv_remote_loki_subscription_path }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_netobserv_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Apply NetObserv operator subscription
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_netobserv_remote_oc_path }}"
+      - apply
+      - -f
+      - >-
+        {{
+        openshift_post_install_netobserv_remote_netobserv_subscription_path
+        }}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_netobserv_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Wait for Loki operator CSV to succeed
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_netobserv_remote_oc_path }}" get subscription \
+      "{{ openshift_post_install_netobserv_loki_subscription_name }}" \
+      -n "{{ openshift_post_install_netobserv_loki_operator_namespace }}" \
+      -o jsonpath='{.status.currentCSV}' \
+    | tr -d '\n'
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_netobserv_remote_kubeconfig_path }}"
+  register: openshift_post_install_netobserv_loki_current_csv
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: >-
+    openshift_post_install_netobserv_loki_current_csv.stdout | length > 0
+
+- name: Wait for Loki operator CSV phase Succeeded
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_netobserv_remote_oc_path }}"
+      - get
+      - csv
+      - "{{ openshift_post_install_netobserv_loki_current_csv.stdout }}"
+      - -n
+      - "{{ openshift_post_install_netobserv_loki_operator_namespace }}"
+      - -o
+      - jsonpath={.status.phase}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_netobserv_remote_kubeconfig_path }}"
+  register: openshift_post_install_netobserv_loki_csv_phase
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_netobserv_loki_csv_phase.stdout == 'Succeeded'
+
+- name: Wait for NetObserv operator CSV to succeed
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_netobserv_remote_oc_path }}" get subscription \
+      "{{ openshift_post_install_netobserv_subscription_name }}" \
+      -n "{{ openshift_post_install_netobserv_operator_namespace }}" \
+      -o jsonpath='{.status.currentCSV}' \
+    | tr -d '\n'
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_netobserv_remote_kubeconfig_path }}"
+  register: openshift_post_install_netobserv_current_csv
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_netobserv_current_csv.stdout | length > 0
+
+- name: Wait for NetObserv operator CSV phase Succeeded
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_netobserv_remote_oc_path }}"
+      - get
+      - csv
+      - "{{ openshift_post_install_netobserv_current_csv.stdout }}"
+      - -n
+      - "{{ openshift_post_install_netobserv_operator_namespace }}"
+      - -o
+      - jsonpath={.status.phase}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_netobserv_remote_kubeconfig_path }}"
+  register: openshift_post_install_netobserv_csv_phase
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_netobserv_csv_phase.stdout == 'Succeeded'
+
+- name: Apply NetObserv ODF object bucket claim
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_netobserv_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_netobserv_remote_obc_path }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_netobserv_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Wait for NetObserv object bucket claim to bind
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_netobserv_remote_oc_path }}"
+      - get
+      - obc
+      - "{{ openshift_post_install_netobserv_obc_name }}"
+      - -n
+      - "{{ openshift_post_install_netobserv_loki_namespace }}"
+      - -o
+      - jsonpath={.status.phase}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_netobserv_remote_kubeconfig_path }}"
+  register: openshift_post_install_netobserv_obc_phase
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_netobserv_obc_phase.stdout == 'Bound'
+
+- name: Create Loki object storage secret from NooBaa object bucket claim
+  ansible.builtin.shell: |
+    set -o pipefail
+    ns="{{ openshift_post_install_netobserv_loki_namespace }}"
+    obc="{{ openshift_post_install_netobserv_obc_name }}"
+    access_key="$(
+      "{{ openshift_post_install_netobserv_remote_oc_path }}" \
+      get secret "${obc}" -n "${ns}" \
+      -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 -d
+    )"
+    secret_key="$(
+      "{{ openshift_post_install_netobserv_remote_oc_path }}" \
+      get secret "${obc}" -n "${ns}" \
+      -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d
+    )"
+    bucket_name="$(
+      "{{ openshift_post_install_netobserv_remote_oc_path }}" \
+      get configmap "${obc}" -n "${ns}" \
+      -o jsonpath='{.data.BUCKET_NAME}'
+    )"
+    bucket_host="$(
+      "{{ openshift_post_install_netobserv_remote_oc_path }}" \
+      get configmap "${obc}" -n "${ns}" \
+      -o jsonpath='{.data.BUCKET_HOST}'
+    )"
+    bucket_port="$(
+      "{{ openshift_post_install_netobserv_remote_oc_path }}" \
+      get configmap "${obc}" -n "${ns}" \
+      -o jsonpath='{.data.BUCKET_PORT}'
+    )"
+    cat <<EOF | "{{ openshift_post_install_netobserv_remote_oc_path }}" \
+      apply -f -
+    apiVersion: v1
+    kind: Secret
+    metadata:
+      name: {{ openshift_post_install_netobserv_loki_storage_secret_name }}
+      namespace: {{ openshift_post_install_netobserv_loki_namespace }}
+    stringData:
+      access_key_id: ${access_key}
+      access_key_secret: ${secret_key}
+      bucketnames: ${bucket_name}
+      endpoint: https://${bucket_host}:${bucket_port}
+      region: us-east-1
+    type: Opaque
+    EOF
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_netobserv_remote_kubeconfig_path }}"
+  register: openshift_post_install_netobserv_loki_secret_apply
+  changed_when: >-
+    'created' in openshift_post_install_netobserv_loki_secret_apply.stdout
+    or
+    'configured' in openshift_post_install_netobserv_loki_secret_apply.stdout
+
+- name: Apply LokiStack
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_netobserv_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_netobserv_remote_lokistack_path }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_netobserv_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Wait for LokiStack pods to become Ready
+  ansible.builtin.shell: |
+    set -o pipefail
+    instance_name="{{ openshift_post_install_netobserv_loki_stack_name }}"
+    selector="app.kubernetes.io/instance=${instance_name}"
+    "{{ openshift_post_install_netobserv_remote_oc_path }}" get pods \
+      -n "{{ openshift_post_install_netobserv_loki_namespace }}" \
+      -l "${selector}" \
+      -o json \
+    | jq -r '
+        [
+          .items[]
+          | select(
+              (
+                .status.containerStatuses // []
+                | map(select(.ready == true))
+                | length
+              ) !=
+              (
+                .spec.containers // []
+                | length
+              )
+            )
+        ] | length
+      '
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_netobserv_remote_kubeconfig_path }}"
+  register: openshift_post_install_netobserv_lokistack_not_ready_count
+  changed_when: false
+  retries: 30
+  delay: 20
+  until: >-
+    openshift_post_install_netobserv_lokistack_not_ready_count.stdout == '0'
+
+- name: Wait for FlowCollector CRD to exist
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_netobserv_remote_oc_path }}"
+      - api-resources
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_netobserv_remote_kubeconfig_path }}"
+  register: openshift_post_install_netobserv_api_resources
+  changed_when: false
+  retries: 12
+  delay: 10
+  until: >-
+    'flowcollectors' in openshift_post_install_netobserv_api_resources.stdout
+
+- name: Apply FlowCollector
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_netobserv_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_netobserv_remote_flowcollector_path }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_netobserv_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Wait for FlowCollector to report Ready
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_netobserv_remote_oc_path }}"
+      - get
+      - flowcollector
+      - "{{ openshift_post_install_netobserv_flowcollector_name }}"
+      - -o
+      - jsonpath={.status.conditions[?(@.type=="Ready")].status}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_netobserv_remote_kubeconfig_path }}"
+  register: openshift_post_install_netobserv_flowcollector_ready
+  changed_when: false
+  retries: 30
+  delay: 20
+  until: openshift_post_install_netobserv_flowcollector_ready.stdout == 'True'

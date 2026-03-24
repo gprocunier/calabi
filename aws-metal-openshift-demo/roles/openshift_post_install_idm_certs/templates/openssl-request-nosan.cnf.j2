@@ -1,0 +1,7 @@
+[req]
+distinguished_name = dn
+prompt = no
+
+[dn]
+CN = {{ request.common_name }}
+O = {{ idm_server.realm }}

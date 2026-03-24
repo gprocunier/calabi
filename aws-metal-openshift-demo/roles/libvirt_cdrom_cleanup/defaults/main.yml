@@ -1,0 +1,6 @@
+---
+libvirt_cdrom_cleanup_domain: ""
+libvirt_cdrom_cleanup_media_path: ""
+libvirt_cdrom_cleanup_remove_media_file: false
+libvirt_cdrom_cleanup_reset_boot_to_hd_only: false
+libvirt_cdrom_cleanup_remove_device: true

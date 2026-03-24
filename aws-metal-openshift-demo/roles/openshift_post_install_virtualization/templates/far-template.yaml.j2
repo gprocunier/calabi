@@ -1,0 +1,42 @@
+apiVersion: fence-agents-remediation.medik8s.io/v1alpha1
+kind: FenceAgentsRemediationTemplate
+metadata:
+  name: {{ openshift_post_install_virtualization_far_template_name }}
+  namespace: {{ openshift_post_install_virtualization_far_template_namespace }}
+spec:
+  template:
+    spec:
+      agent: {{ openshift_post_install_virtualization_far_template_spec.agent }}
+      remediationStrategy: >-
+        {{
+        openshift_post_install_virtualization_far_template_spec.remediationStrategy
+        }}
+      retrycount: >-
+        {{ openshift_post_install_virtualization_far_template_spec.retrycount }}
+      retryinterval: >-
+        "{{ openshift_post_install_virtualization_far_template_spec.retryinterval }}"
+      timeout: >-
+        "{{ openshift_post_install_virtualization_far_template_spec.timeout }}"
+      sharedSecretName: >-
+        {{ openshift_post_install_virtualization_far_template_spec.sharedSecretName }}
+{% if openshift_post_install_virtualization_far_template_spec.sharedparameters | length > 0 %}
+      sharedparameters:
+{% for key, value in openshift_post_install_virtualization_far_template_spec.sharedparameters.items() %}
+        "{{ key }}": "{{ value }}"
+{% endfor %}
+{% endif %}
+{% if openshift_post_install_virtualization_far_template_spec.nodeparameters | length > 0 %}
+      nodeparameters:
+{% for key, value in openshift_post_install_virtualization_far_template_spec.nodeparameters.items() %}
+        "{{ key }}":
+{% for node_name, node_value in value.items() %}
+          "{{ node_name }}": "{{ node_value }}"
+{% endfor %}
+{% endfor %}
+{% endif %}
+{% if openshift_post_install_virtualization_far_template_spec.nodeSecretNames | length > 0 %}
+      nodeSecretNames:
+{% for node_name, secret_name in openshift_post_install_virtualization_far_template_spec.nodeSecretNames.items() %}
+        "{{ node_name }}": "{{ secret_name }}"
+{% endfor %}
+{% endif %}

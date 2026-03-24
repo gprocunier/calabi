@@ -1,0 +1,47 @@
+---
+- name: Install the OVS lab bootstrap script
+  ansible.builtin.template:
+    src: aws-metal-openshift-demo-net.sh.j2
+    dest: /usr/local/sbin/aws-metal-openshift-demo-net.sh
+    owner: root
+    group: root
+    mode: "0755"
+  register: lab_switch_bootstrap_script
+
+- name: Install the systemd unit for lab networking
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/aws-metal-openshift-demo-net.service
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Configure the AWS metal OpenShift demo network
+      Wants=network-online.target openvswitch.service
+      After=network-online.target openvswitch.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/sbin/aws-metal-openshift-demo-net.sh
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+  register: lab_switch_systemd_unit
+  notify: Reload systemd
+
+- name: Enable and run the lab networking service
+  ansible.builtin.systemd:
+    name: aws-metal-openshift-demo-net.service
+    enabled: true
+    state: restarted
+  when:
+    - not ansible_check_mode
+    - lab_switch_bootstrap_script.changed or lab_switch_systemd_unit.changed
+
+- name: Ensure the lab networking service is enabled and started
+  ansible.builtin.systemd:
+    name: aws-metal-openshift-demo-net.service
+    enabled: true
+    state: started
+  when: not ansible_check_mode

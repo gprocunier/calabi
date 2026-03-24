@@ -1,0 +1,16 @@
+version: 2
+ethernets:
+  {{ idm_vm.network.interface_name }}:
+    match:
+      macaddress: "{{ idm_vm.network.mac_address }}"
+    set-name: {{ idm_vm.network.interface_name }}
+    addresses:
+      - {{ idm_role_vm_ip_cidr }}
+    routes:
+      - to: 0.0.0.0/0
+        via: {{ idm_vm.network.gateway }}
+    nameservers:
+      addresses:
+{% for dns_server in idm_vm.network.dns_servers %}
+        - {{ dns_server }}
+{% endfor %}

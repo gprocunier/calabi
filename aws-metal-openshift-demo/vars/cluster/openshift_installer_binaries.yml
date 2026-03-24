@@ -1,0 +1,22 @@
+---
+openshift_installer_binaries:
+  release: "{{ mirror_registry_ocp_release }}"
+  local_packages:
+    - nmstate
+  base_url: >-
+    https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/{{
+    mirror_registry_ocp_release }}
+  download_dir: >-
+    {{ lab_execution_tools_root }}/{{ mirror_registry_ocp_release }}/downloads
+  install_dir: >-
+    {{ lab_execution_tools_root }}/{{ mirror_registry_ocp_release }}/bin
+  binaries:
+    openshift_install:
+      archive: >-
+        openshift-install-linux-{{ mirror_registry_ocp_release }}.tar.gz
+      binary_name: openshift-install
+    openshift_client:
+      archive: "openshift-client-linux-{{ mirror_registry_ocp_release }}.tar.gz"
+      binary_names:
+        - oc
+        - kubectl

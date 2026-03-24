@@ -1,0 +1,876 @@
+---
+- name: Derive post-install ODF context
+  ansible.builtin.set_fact:
+    openshift_post_install_odf_oc_local_path: >-
+      {{ lab_execution_tools_root }}/{{ mirror_registry_ocp_release }}/bin/oc
+    openshift_post_install_odf_kubeconfig_local_path: >-
+      {{ lab_execution_ocp_generated_root }}/auth/kubeconfig
+    openshift_post_install_odf_remote_dir: >-
+      /var/tmp/openshift-post-install-odf
+    openshift_post_install_odf_remote_oc_path: >-
+      /var/tmp/openshift-post-install-odf/oc
+    openshift_post_install_odf_local_kubeconfig_staged_path: >-
+      {{ lab_execution_ocp_generated_root }}/odf-kubeconfig
+    openshift_post_install_odf_remote_kubeconfig_path: >-
+      /var/tmp/openshift-post-install-odf/kubeconfig
+    openshift_post_install_odf_remote_local_storage_subscription_path: >-
+      /var/tmp/openshift-post-install-odf/local-storage-subscription.yaml
+    openshift_post_install_odf_remote_subscription_path: >-
+      /var/tmp/openshift-post-install-odf/odf-subscription.yaml
+    openshift_post_install_odf_remote_public_nad_path: >-
+      /var/tmp/openshift-post-install-odf/odf-public-network-nad.yaml
+    openshift_post_install_odf_remote_lvd_path: >-
+      /var/tmp/openshift-post-install-odf/localvolumediscovery.yaml
+    openshift_post_install_odf_remote_lvs_path: >-
+      /var/tmp/openshift-post-install-odf/localvolumeset.yaml
+    openshift_post_install_odf_remote_sc_path: >-
+      /var/tmp/openshift-post-install-odf/storagecluster.yaml
+    openshift_post_install_odf_infra_nodes: >-
+      {{
+        openshift_install_cluster.nodes
+        | selectattr('role', 'equalto', 'infra')
+        | map(attribute='name')
+        | list
+      }}
+    openshift_post_install_odf_osd_device_paths: >-
+      {{
+        openshift_cluster_nodes
+        | selectattr('role', 'equalto', 'infra')
+        | map(attribute='disks.additional')
+        | flatten
+        | selectattr('name', 'equalto', 'odf-data')
+        | map(attribute='path')
+        | list
+      }}
+
+- name: Assert local oc binary exists for ODF orchestration
+  ansible.builtin.stat:
+    path: "{{ openshift_post_install_odf_oc_local_path }}"
+  delegate_to: localhost
+  become: true
+  register: openshift_post_install_odf_oc_local_stat
+
+- name: Assert generated kubeconfig exists for ODF orchestration
+  ansible.builtin.stat:
+    path: "{{ openshift_post_install_odf_kubeconfig_local_path }}"
+  delegate_to: localhost
+  become: true
+  register: openshift_post_install_odf_kubeconfig_local_stat
+
+- name: Fail when required local ODF artifacts are missing
+  ansible.builtin.assert:
+    that:
+      - openshift_post_install_odf_oc_local_stat.stat.exists
+      - openshift_post_install_odf_kubeconfig_local_stat.stat.exists
+      - openshift_post_install_odf_infra_nodes | length > 0
+    fail_msg: >-
+      ODF orchestration requires a generated oc binary, kubeconfig, and at least
+      one node with role=infra in openshift_install_cluster.yml.
+
+- name: Capture existing ODF StorageCluster health before any destructive reset
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_oc_local_path }}"
+      - get
+      - storagecluster
+      - "{{ openshift_post_install_odf_storage_cluster_name }}"
+      - -n
+      - "{{ openshift_post_install_odf_storage_cluster_namespace }}"
+      - -o
+      - >-
+        jsonpath={.status.conditions[?(@.type=="Available")].status}|{.status.conditions[?(@.type=="Degraded")].status}|{.metadata.deletionTimestamp}
+  delegate_to: localhost
+  become: true
+  register: openshift_post_install_odf_existing_storagecluster_health
+  changed_when: false
+  failed_when: false
+
+- name: Derive whether ODF requires destructive OSD device reset
+  ansible.builtin.set_fact:
+    openshift_post_install_odf_storagecluster_exists: >-
+      {{ openshift_post_install_odf_existing_storagecluster_health.rc == 0 }}
+    openshift_post_install_odf_existing_storagecluster_available: >-
+      {{
+        openshift_post_install_odf_existing_storagecluster_health.stdout.split('|')[0]
+        | default('')
+      }}
+    openshift_post_install_odf_existing_storagecluster_degraded: >-
+      {{
+        openshift_post_install_odf_existing_storagecluster_health.stdout.split('|')[1]
+        | default('')
+      }}
+    openshift_post_install_odf_existing_storagecluster_deleting: >-
+      {{
+        openshift_post_install_odf_existing_storagecluster_health.stdout.split('|')[2]
+        | default('')
+      }}
+    openshift_post_install_odf_force_rebuild_requested: >-
+      {{
+        (openshift_post_install_force_odf_rebuild | default(false)) | bool
+        or (openshift_post_install_odf_force_rebuild | default(false)) | bool
+      }}
+
+- name: Derive whether ODF destructive recovery was explicitly requested
+  ansible.builtin.set_fact:
+    openshift_post_install_odf_force_destructive_recovery: >-
+      {{
+        openshift_post_install_odf_force_osd_device_reset | default(false) | bool
+        or openshift_post_install_odf_force_rebuild_requested | bool
+      }}
+
+- name: Derive whether ODF should reset OSD devices
+  ansible.builtin.set_fact:
+    openshift_post_install_odf_should_reset_osd_devices: >-
+      {{
+        openshift_post_install_odf_force_destructive_recovery | bool
+        or not openshift_post_install_odf_storagecluster_exists | bool
+      }}
+
+- name: Fail closed when ODF exists but is not healthy and destructive recovery was not forced
+  ansible.builtin.assert:
+    that:
+      - >-
+        not openshift_post_install_odf_storagecluster_exists | bool
+        or (
+          openshift_post_install_odf_existing_storagecluster_available == 'True'
+          and openshift_post_install_odf_existing_storagecluster_degraded != 'True'
+          and openshift_post_install_odf_existing_storagecluster_deleting | length == 0
+        )
+        or openshift_post_install_odf_force_destructive_recovery | bool
+    fail_msg: >-
+      Existing ODF StorageCluster '{{ openshift_post_install_odf_storage_cluster_name }}'
+      is present but not healthy. Refusing to destroy or rebuild it on a normal
+      day-2 rerun. Set openshift_post_install_force_odf_rebuild=true (or the
+      legacy openshift_post_install_odf_force_osd_device_reset=true) to allow
+      destructive recovery explicitly.
+
+- name: Reset OSD backing devices before ODF deployment
+  ansible.builtin.shell: |
+    set -euo pipefail
+
+    DEVICE_REAL="$(readlink -f "{{ item }}")"
+    SIZE_MB=$(( $(blockdev --getsize64 "${DEVICE_REAL}") / 1024 / 1024 ))
+    TAIL_WIPE_MB=256
+
+    blkdiscard "${DEVICE_REAL}" || true
+    wipefs --all --force "${DEVICE_REAL}" || true
+
+    # Clear the first 2GiB completely so lingering filesystem or Ceph signatures
+    # cannot survive near the front of the device.
+    dd if=/dev/zero of="${DEVICE_REAL}" bs=4M count=512 oflag=direct conv=fsync,notrunc status=none
+
+    # BlueStore raw labels can survive at fixed offsets deeper in the device.
+    for OFFSET_MB in {{ openshift_post_install_odf_bluestore_wipe_offsets_mb | join(' ') }}; do
+      if (( OFFSET_MB < SIZE_MB )); then
+        dd if=/dev/zero of="${DEVICE_REAL}" bs=1M seek="${OFFSET_MB}" count=64 oflag=direct conv=fsync,notrunc status=none
+      fi
+    done
+
+    if (( SIZE_MB > TAIL_WIPE_MB )); then
+      dd if=/dev/zero of="${DEVICE_REAL}" bs=1M seek=$(( SIZE_MB - TAIL_WIPE_MB )) count="${TAIL_WIPE_MB}" oflag=direct conv=fsync,notrunc status=none
+    fi
+  become: true
+  loop: "{{ openshift_post_install_odf_osd_device_paths }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: true
+  when: openshift_post_install_odf_should_reset_osd_devices | bool
+
+- name: Create remote ODF workspace
+  ansible.builtin.file:
+    path: "{{ openshift_post_install_odf_remote_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Copy pinned oc binary to hypervisor for ODF orchestration
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_odf_oc_local_path }}"
+    dest: "{{ openshift_post_install_odf_remote_oc_path }}"
+    mode: "0755"
+
+- name: Stage generated kubeconfig into a bastion-readable ODF path
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_odf_kubeconfig_local_path }}"
+    dest: "{{ openshift_post_install_odf_local_kubeconfig_staged_path }}"
+    remote_src: true
+    mode: "0644"
+  delegate_to: localhost
+  become: true
+
+- name: Copy generated kubeconfig to hypervisor for ODF orchestration
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_odf_local_kubeconfig_staged_path }}"
+    dest: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+    mode: "0600"
+
+- name: Wait for infra nodes to report Ready before host-side ODF cleanup
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_oc_local_path }}"
+      - get
+      - node
+      - "{{ item }}"
+      - -o
+      - jsonpath={.status.conditions[?(@.type=="Ready")].status}
+  delegate_to: localhost
+  become: true
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_kubeconfig_local_path }}"
+  register: openshift_post_install_odf_infra_ready_check
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_odf_infra_ready_check.stdout == 'True'
+  loop: "{{ openshift_post_install_odf_infra_nodes }}"
+  loop_control:
+    label: "{{ item }}"
+  when: openshift_post_install_odf_should_reset_osd_devices | bool
+
+- name: Clear host-side rook and ceph state on infra nodes before ODF deployment
+  ansible.builtin.shell: |
+    set -euo pipefail
+
+    "{{ openshift_post_install_odf_remote_oc_path }}" debug "node/{{ item }}" -- chroot /host bash -lc '
+      set -euo pipefail
+
+      for PATH_TO_PURGE in {{ openshift_post_install_odf_host_state_paths_to_purge | map("quote") | join(" ") }}; do
+        rm -rf "${PATH_TO_PURGE}"
+      done
+    ' >/dev/null
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_host_cleanup
+  retries: 3
+  delay: 15
+  until: openshift_post_install_odf_host_cleanup.rc == 0
+  loop: "{{ openshift_post_install_odf_infra_nodes }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: true
+  when: openshift_post_install_odf_should_reset_osd_devices | bool
+
+- name: Render Local Storage Operator subscription manifest
+  ansible.builtin.template:
+    src: local-storage-subscription.yaml.j2
+    dest: "{{ openshift_post_install_odf_remote_local_storage_subscription_path }}"
+    mode: "0644"
+
+- name: Render ODF operator subscription manifest
+  ansible.builtin.template:
+    src: odf-subscription.yaml.j2
+    dest: "{{ openshift_post_install_odf_remote_subscription_path }}"
+    mode: "0644"
+
+- name: Render ODF public storage network NAD manifest
+  ansible.builtin.template:
+    src: odf-public-network-nad.yaml.j2
+    dest: "{{ openshift_post_install_odf_remote_public_nad_path }}"
+    mode: "0644"
+  when: openshift_post_install_odf_multus_enabled
+
+- name: Render LocalVolumeDiscovery manifest
+  ansible.builtin.template:
+    src: localvolumediscovery.yaml.j2
+    dest: "{{ openshift_post_install_odf_remote_lvd_path }}"
+    mode: "0644"
+
+- name: Render LocalVolumeSet manifest
+  ansible.builtin.template:
+    src: localvolumeset.yaml.j2
+    dest: "{{ openshift_post_install_odf_remote_lvs_path }}"
+    mode: "0644"
+
+- name: Render StorageCluster manifest
+  ansible.builtin.template:
+    src: storagecluster.yaml.j2
+    dest: "{{ openshift_post_install_odf_remote_sc_path }}"
+    mode: "0644"
+
+- name: Label infra nodes for ODF storage
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - label
+      - node
+      - "{{ item }}"
+      - "{{ openshift_post_install_odf_storage_label }}="
+      - --overwrite
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  loop: "{{ openshift_post_install_odf_infra_nodes }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: false
+
+- name: Taint infra nodes for ODF storage
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - adm
+      - taint
+      - nodes
+      - "{{ item }}"
+      - >-
+        {{ openshift_post_install_odf_storage_taint_key }}={{
+        openshift_post_install_odf_storage_taint_value }}:{{
+        openshift_post_install_odf_storage_taint_effect }}
+      - --overwrite
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  loop: "{{ openshift_post_install_odf_infra_nodes }}"
+  loop_control:
+    label: "{{ item }}"
+  changed_when: false
+
+- name: Ensure Local Storage namespace exists
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - create
+      - namespace
+      - "{{ openshift_post_install_odf_local_storage_namespace }}"
+      - --dry-run=client
+      - -o
+      - yaml
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_local_storage_namespace_manifest
+  changed_when: false
+
+- name: Apply Local Storage namespace
+  ansible.builtin.shell: |
+    set -o pipefail
+    cat <<'EOF' | "{{ openshift_post_install_odf_remote_oc_path }}" apply -f -
+    {{ openshift_post_install_odf_local_storage_namespace_manifest.stdout }}
+    EOF
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Remove auto-generated OperatorGroups from Local Storage namespace
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_odf_remote_oc_path }}" get operatorgroup \
+      -n "{{ openshift_post_install_odf_local_storage_namespace }}" \
+      -o jsonpath='{.items[*].metadata.name}' \
+    | tr ' ' '\n' \
+    | grep -v '^{{ openshift_post_install_odf_local_storage_operatorgroup_name }}$' \
+    | xargs -r -I{} \
+      "{{ openshift_post_install_odf_remote_oc_path }}" delete operatorgroup {} \
+        -n "{{ openshift_post_install_odf_local_storage_namespace }}" \
+    || true
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  changed_when: false
+
+- name: Install Local Storage Operator subscription resources
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_odf_remote_local_storage_subscription_path }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Wait for Local Storage Operator CSV to reach Succeeded
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_odf_remote_oc_path }}" get subscription \
+      "{{ openshift_post_install_odf_local_storage_subscription_name }}" \
+      -n "{{ openshift_post_install_odf_local_storage_namespace }}" \
+      -o jsonpath='{.status.installedCSV}' \
+    | xargs -r -I{} "{{ openshift_post_install_odf_remote_oc_path }}" get csv {} \
+      -n "{{ openshift_post_install_odf_local_storage_namespace }}" \
+      -o jsonpath='{.status.phase}'
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_lso_csv_phase
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_odf_lso_csv_phase.stdout == 'Succeeded'
+
+- name: Ensure ODF storage namespace exists
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - create
+      - namespace
+      - "{{ openshift_post_install_odf_storage_cluster_namespace }}"
+      - --dry-run=client
+      - -o
+      - yaml
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_storage_namespace_manifest
+  changed_when: false
+
+- name: Apply ODF storage namespace
+  ansible.builtin.shell: |
+    set -o pipefail
+    cat <<'EOF' | "{{ openshift_post_install_odf_remote_oc_path }}" apply -f -
+    {{ openshift_post_install_odf_storage_namespace_manifest.stdout }}
+    EOF
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Install ODF operator subscription resources
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_odf_remote_subscription_path }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Apply ODF public storage network NAD
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_odf_remote_public_nad_path }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  changed_when: true
+  when: openshift_post_install_odf_multus_enabled
+
+- name: Wait for ODF operator CSV to reach Succeeded
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_odf_remote_oc_path }}" get subscription \
+      "{{ openshift_post_install_odf_subscription_name }}" \
+      -n "{{ openshift_post_install_odf_storage_cluster_namespace }}" \
+      -o jsonpath='{.status.installedCSV}' \
+    | xargs -r -I{} "{{ openshift_post_install_odf_remote_oc_path }}" get csv {} \
+      -n "{{ openshift_post_install_odf_storage_cluster_namespace }}" \
+      -o jsonpath='{.status.phase}'
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_csv_phase
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_odf_csv_phase.stdout == 'Succeeded'
+
+- name: Wait for ODF console plugin resources to exist
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - get
+      - consoleplugin
+      - "{{ item }}"
+      - -o
+      - name
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_console_plugin_checks
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_odf_console_plugin_checks.rc == 0
+  loop: "{{ openshift_post_install_odf_console_plugins }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Read current Console operator configuration
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - get
+      - consoles.operator.openshift.io
+      - cluster
+      - -o
+      - json
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_console_operator
+  changed_when: false
+
+- name: Derive merged Console plugin list
+  ansible.builtin.set_fact:
+    openshift_post_install_odf_console_plugins_merged: >-
+      {{
+        ((openshift_post_install_odf_console_operator.stdout | from_json).spec.plugins | default([]))
+        | union(openshift_post_install_odf_console_plugins)
+      }}
+
+- name: Enable ODF console plugins in the Console operator
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - patch
+      - consoles.operator.openshift.io
+      - cluster
+      - --type=merge
+      - -p
+      - "{{ {'spec': {'plugins': openshift_post_install_odf_console_plugins_merged}} | to_json }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  changed_when: false
+
+- name: Wait for StorageCluster CRD to be available
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - get
+      - crd
+      - storageclusters.ocs.openshift.io
+      - -o
+      - name
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_storagecluster_crd
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_odf_storagecluster_crd.stdout == 'customresourcedefinition.apiextensions.k8s.io/storageclusters.ocs.openshift.io'
+
+- name: Wait for LocalVolumeSet CRD to be available
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - get
+      - crd
+      - localvolumesets.local.storage.openshift.io
+      - -o
+      - name
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_lvs_crd
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_odf_lvs_crd.stdout == 'customresourcedefinition.apiextensions.k8s.io/localvolumesets.local.storage.openshift.io'
+
+- name: Apply LocalVolumeDiscovery
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_odf_remote_lvd_path }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Wait for LocalVolumeDiscovery to run on all infra nodes
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - get
+      - localvolumediscovery
+      - "{{ openshift_post_install_odf_local_volume_discovery_name }}"
+      - -n
+      - "{{ openshift_post_install_odf_local_storage_namespace }}"
+      - -o
+      - jsonpath={.status.conditions[?(@.type=="Available")].message}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_lvd_status
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: >-
+    ('successfully running' in openshift_post_install_odf_lvd_status.stdout)
+    and (openshift_post_install_odf_infra_nodes | length | string
+         in openshift_post_install_odf_lvd_status.stdout)
+
+- name: Apply LocalVolumeSet
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_odf_remote_lvs_path }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Wait for LocalVolumeSet to provision one disk per infra node
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - get
+      - localvolumeset
+      - "{{ openshift_post_install_odf_local_volume_set_name }}"
+      - -n
+      - "{{ openshift_post_install_odf_local_storage_namespace }}"
+      - -o
+      - jsonpath={.status.totalProvisionedDeviceCount}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_lvs_count
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: >-
+    openshift_post_install_odf_lvs_count.stdout
+    == (openshift_post_install_odf_infra_nodes | length | string)
+
+- name: Apply StorageCluster
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_odf_remote_sc_path }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Check for stale OSD PVC sizing
+  ansible.builtin.shell: |
+    set -o pipefail
+    custom_columns="NAME:.metadata.name,SIZE:.spec.resources.requests.storage"
+    "{{ openshift_post_install_odf_remote_oc_path }}" get pvc \
+      -n "{{ openshift_post_install_odf_storage_cluster_namespace }}" \
+      -l ceph.rook.io/DeviceSet \
+      -o custom-columns="${custom_columns}" \
+      --no-headers
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_osd_pvc_sizes
+  changed_when: false
+
+- name: Remove stale OSD prepare jobs when PVC size does not match desired size
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - delete
+      - job
+      - -n
+      - "{{ openshift_post_install_odf_storage_cluster_namespace }}"
+      - -l
+      - app=rook-ceph-osd-prepare
+      - --ignore-not-found=true
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  when: >-
+    openshift_post_install_odf_osd_pvc_sizes.stdout_lines
+    | select('search', ' ')
+    | reject('search', ' ' ~ openshift_post_install_odf_osd_size ~ '$')
+    | list | length > 0
+  changed_when: true
+
+- name: Remove stale OSD PVCs when PVC size does not match desired ODF size
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_odf_remote_oc_path }}" get pvc \
+      -n "{{ openshift_post_install_odf_storage_cluster_namespace }}" \
+      -l ceph.rook.io/DeviceSet -o name \
+    | xargs -r "{{ openshift_post_install_odf_remote_oc_path }}" delete \
+      -n "{{ openshift_post_install_odf_storage_cluster_namespace }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  when: >-
+    openshift_post_install_odf_osd_pvc_sizes.stdout_lines
+    | select('search', ' ')
+    | reject('search', ' ' ~ openshift_post_install_odf_osd_size ~ '$')
+    | list | length > 0
+  changed_when: true
+
+- name: Capture NooBaa CNPG status
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - get
+      - cluster.postgresql.cnpg.noobaa.io
+      - noobaa-db-pg-cluster
+      - -n
+      - "{{ openshift_post_install_odf_storage_cluster_namespace }}"
+      - -o
+      - jsonpath={.status.phase}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_cnpg_phase
+  failed_when: false
+  changed_when: false
+
+- name: Recreate unrecoverable NooBaa CNPG cluster
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - delete
+      - cluster.postgresql.cnpg.noobaa.io
+      - noobaa-db-pg-cluster
+      - -n
+      - "{{ openshift_post_install_odf_storage_cluster_namespace }}"
+      - --ignore-not-found=true
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  when: >-
+    openshift_post_install_odf_cnpg_phase.stdout
+    == "Cluster is unrecoverable and needs manual intervention"
+  changed_when: true
+
+- name: Wait for ODF StorageCluster to leave error state
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - get
+      - storagecluster
+      - "{{ openshift_post_install_odf_storage_cluster_name }}"
+      - -n
+      - "{{ openshift_post_install_odf_storage_cluster_namespace }}"
+      - -o
+      - jsonpath={.status.phase}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_storagecluster_phase
+  changed_when: false
+  retries: 60
+  delay: 15
+  until: openshift_post_install_odf_storagecluster_phase.stdout != "Error"
+
+- name: Wait for ODF StorageCluster to report Available=True
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - get
+      - storagecluster
+      - "{{ openshift_post_install_odf_storage_cluster_name }}"
+      - -n
+      - "{{ openshift_post_install_odf_storage_cluster_namespace }}"
+      - -o
+      - jsonpath={.status.conditions[?(@.type=="Available")].status}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_storagecluster_available
+  changed_when: false
+  retries: 60
+  delay: 15
+  until: openshift_post_install_odf_storagecluster_available.stdout == 'True'
+
+- name: Wait for ODF StorageCluster to report Degraded=False
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - get
+      - storagecluster
+      - "{{ openshift_post_install_odf_storage_cluster_name }}"
+      - -n
+      - "{{ openshift_post_install_odf_storage_cluster_namespace }}"
+      - -o
+      - jsonpath={.status.conditions[?(@.type=="Degraded")].status}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_storagecluster_degraded
+  changed_when: false
+  retries: 60
+  delay: 15
+  until: openshift_post_install_odf_storagecluster_degraded.stdout == 'False'
+
+- name: Wait for ODF StorageCluster not to be deleting
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - get
+      - storagecluster
+      - "{{ openshift_post_install_odf_storage_cluster_name }}"
+      - -n
+      - "{{ openshift_post_install_odf_storage_cluster_namespace }}"
+      - -o
+      - jsonpath={.metadata.deletionTimestamp}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_storagecluster_deleting
+  changed_when: false
+  retries: 20
+  delay: 15
+  until: openshift_post_install_odf_storagecluster_deleting.stdout == ''
+
+- name: Wait for CephCluster to report Ready
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - get
+      - cephcluster
+      - "{{ openshift_post_install_odf_storage_cluster_name }}-cephcluster"
+      - -n
+      - "{{ openshift_post_install_odf_storage_cluster_namespace }}"
+      - -o
+      - jsonpath={.status.phase}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_cephcluster_phase
+  changed_when: false
+  retries: 60
+  delay: 15
+  until: openshift_post_install_odf_cephcluster_phase.stdout == 'Ready'
+
+- name: Wait for CephCluster not to be deleting
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - get
+      - cephcluster
+      - "{{ openshift_post_install_odf_storage_cluster_name }}-cephcluster"
+      - -n
+      - "{{ openshift_post_install_odf_storage_cluster_namespace }}"
+      - -o
+      - jsonpath={.metadata.deletionTimestamp}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_cephcluster_deleting
+  changed_when: false
+  retries: 20
+  delay: 15
+  until: openshift_post_install_odf_cephcluster_deleting.stdout == ''
+
+- name: Wait for ODF-backed storage classes required by later roles
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - get
+      - storageclass
+      - "{{ item }}"
+      - -o
+      - name
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  loop: "{{ openshift_post_install_odf_required_storage_classes }}"
+  loop_control:
+    label: "{{ item }}"
+  register: openshift_post_install_odf_required_storage_class_results
+  changed_when: false
+  retries: 40
+  delay: 15
+  until: openshift_post_install_odf_required_storage_class_results is succeeded
+
+- name: Publish ODF phase summary
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_remote_oc_path }}"
+      - get
+      - storagecluster
+      - "{{ openshift_post_install_odf_storage_cluster_name }}"
+      - -n
+      - "{{ openshift_post_install_odf_storage_cluster_namespace }}"
+      - -o
+      - wide
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_summary
+  changed_when: false
+
+- name: Show ODF phase summary
+  ansible.builtin.debug:
+    msg: "{{ openshift_post_install_odf_summary.stdout_lines }}"

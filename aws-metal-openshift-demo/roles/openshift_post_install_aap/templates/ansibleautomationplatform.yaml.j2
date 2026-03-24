@@ -1,0 +1,27 @@
+apiVersion: aap.ansible.com/v1alpha1
+kind: AnsibleAutomationPlatform
+metadata:
+  name: {{ openshift_aap.instance_name }}
+  namespace: {{ openshift_aap.namespace }}
+spec:
+  no_log: {{ openshift_aap.no_log | to_json }}
+  image_pull_policy: {{ openshift_aap.image_pull_policy }}
+  admin_password_secret: {{ openshift_aap.admin_password_secret_name }}
+  route_host: {{ openshift_aap.route_host }}
+  bundle_cacert_secret: {{ openshift_aap.bundle_cacert_secret }}
+  database:
+    postgres_storage_class: {{ openshift_aap.database.postgres_storage_class }}
+    resource_requirements:
+{{ openshift_aap.database.resource_requirements | to_nice_yaml(indent=6) | indent(6, true) }}
+    storage_requirements:
+      requests:
+        storage: {{ openshift_aap.database.storage }}
+  controller:
+    disabled: {{ openshift_aap.controller.disabled | to_json }}
+    name: {{ openshift_aap.controller.name }}
+  hub:
+    disabled: {{ openshift_aap.hub.disabled | to_json }}
+  eda:
+    disabled: {{ openshift_aap.eda.disabled | to_json }}
+  lightspeed:
+    disabled: {{ openshift_aap.lightspeed.disabled | to_json }}

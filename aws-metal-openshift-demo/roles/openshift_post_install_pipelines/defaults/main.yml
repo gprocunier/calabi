@@ -1,0 +1,10 @@
+---
+openshift_post_install_pipelines_remote_dir: >-
+  /var/tmp/openshift-post-install-pipelines
+openshift_post_install_pipelines_source: cs-redhat-operator-index-v4-20
+openshift_post_install_pipelines_source_namespace: openshift-marketplace
+openshift_post_install_pipelines_storagecluster_namespace: openshift-storage
+openshift_post_install_pipelines_storagecluster_name: ocs-storagecluster
+openshift_post_install_pipelines_cephcluster_namespace: openshift-storage
+openshift_post_install_pipelines_cephcluster_name: >-
+  ocs-storagecluster-cephcluster

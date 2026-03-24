@@ -1,0 +1,279 @@
+---
+- name: Derive post-install infra conversion context
+  ansible.builtin.set_fact:
+    openshift_post_install_infra_oc_local_path: >-
+      {{ lab_execution_tools_root }}/{{
+      mirror_registry_ocp_release }}/bin/oc
+    openshift_post_install_infra_kubeconfig_local_path: >-
+      {{ lab_execution_ocp_generated_root }}/auth/kubeconfig
+    openshift_post_install_infra_remote_dir: >-
+      /var/tmp/openshift-post-install-infra
+    openshift_post_install_infra_remote_oc_path: >-
+      /var/tmp/openshift-post-install-infra/oc
+    openshift_post_install_infra_remote_kubeconfig_path: >-
+      /var/tmp/openshift-post-install-infra/kubeconfig
+    openshift_post_install_infra_nodes: >-
+      {{
+        openshift_install_cluster.nodes
+        | selectattr('role', 'equalto', 'infra')
+        | map(attribute='name')
+        | list
+      }}
+
+- name: Assert local oc binary exists
+  ansible.builtin.stat:
+    path: "{{ openshift_post_install_infra_oc_local_path }}"
+  delegate_to: localhost
+  become: true
+  register: openshift_post_install_infra_oc_local_stat
+
+- name: Assert generated kubeconfig exists
+  ansible.builtin.stat:
+    path: "{{ openshift_post_install_infra_kubeconfig_local_path }}"
+  delegate_to: localhost
+  become: true
+  register: openshift_post_install_infra_kubeconfig_local_stat
+
+- name: Fail when required local infra-conversion artifacts are missing
+  ansible.builtin.assert:
+    that:
+      - openshift_post_install_infra_oc_local_stat.stat.exists
+      - openshift_post_install_infra_kubeconfig_local_stat.stat.exists
+    fail_msg: >-
+      Expected local post-install infra-conversion artifacts were not found.
+      Ensure installer binaries and generated auth assets exist first.
+
+- name: Skip infra conversion when no infra nodes are defined
+  ansible.builtin.debug:
+    msg: >-
+      No nodes with role=infra are defined in openshift_install_cluster.yml.
+      Skipping post-install infra conversion.
+  when: openshift_post_install_infra_nodes | length == 0
+
+- name: Create remote infra-conversion workspace
+  ansible.builtin.file:
+    path: "{{ openshift_post_install_infra_remote_dir }}"
+    state: directory
+    mode: "0700"
+  when: openshift_post_install_infra_nodes | length > 0
+
+- name: Copy pinned oc binary to the hypervisor
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_infra_oc_local_path }}"
+    dest: "{{ openshift_post_install_infra_remote_oc_path }}"
+    mode: "0755"
+  when: openshift_post_install_infra_nodes | length > 0
+
+- name: Copy generated kubeconfig to the hypervisor
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_infra_kubeconfig_local_path }}"
+    dest: "{{ openshift_post_install_infra_remote_kubeconfig_path }}"
+    mode: "0600"
+  when: openshift_post_install_infra_nodes | length > 0
+
+- name: Assert all designated infra nodes are present in the cluster
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_infra_remote_oc_path }}"
+      - get
+      - node
+      - "{{ item }}"
+      - -o
+      - name
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_infra_remote_kubeconfig_path }}"
+  loop: "{{ openshift_post_install_infra_nodes }}"
+  loop_control:
+    label: "{{ item }}"
+  register: openshift_post_install_infra_node_presence
+  changed_when: false
+  when: openshift_post_install_infra_nodes | length > 0
+
+- name: Label designated infra nodes
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_infra_remote_oc_path }}"
+      - label
+      - node
+      - "{{ item }}"
+      - node-role.kubernetes.io/infra=
+      - --overwrite
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_infra_remote_kubeconfig_path }}"
+  loop: "{{ openshift_post_install_infra_nodes }}"
+  loop_control:
+    label: "{{ item }}"
+  register: openshift_post_install_infra_label
+  changed_when: >-
+    'not labeled' not in openshift_post_install_infra_label.stdout
+  when: openshift_post_install_infra_nodes | length > 0
+
+- name: Move the default IngressController to infra nodes
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_infra_remote_oc_path }}"
+      - patch
+      - ingresscontroller/default
+      - -n
+      - openshift-ingress-operator
+      - --type=merge
+      - -p
+      - >-
+        {"spec":{"nodePlacement":{"nodeSelector":{"matchLabels":{
+        "node-role.kubernetes.io/infra":""}},"tolerations":[{
+        "key":"node.ocs.openshift.io/storage","value":"true",
+        "effect":"NoSchedule"}]}}}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_infra_remote_kubeconfig_path }}"
+  register: openshift_post_install_infra_ingress_patch
+  changed_when: "'no change' not in openshift_post_install_infra_ingress_patch.stdout"
+  when: openshift_post_install_infra_nodes | length > 0
+
+- name: Move cluster monitoring stack to infra nodes
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      {{ openshift_post_install_infra_remote_oc_path }} apply -f - <<'EOF'
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: cluster-monitoring-config
+        namespace: openshift-monitoring
+      data:
+        config.yaml: |
+          prometheusOperator:
+            nodeSelector:
+              node-role.kubernetes.io/infra: ""
+            tolerations:
+              - key: node.ocs.openshift.io/storage
+                value: "true"
+                effect: NoSchedule
+          prometheusK8s:
+            nodeSelector:
+              node-role.kubernetes.io/infra: ""
+            tolerations:
+              - key: node.ocs.openshift.io/storage
+                value: "true"
+                effect: NoSchedule
+          alertmanagerMain:
+            nodeSelector:
+              node-role.kubernetes.io/infra: ""
+            tolerations:
+              - key: node.ocs.openshift.io/storage
+                value: "true"
+                effect: NoSchedule
+          kubeStateMetrics:
+            nodeSelector:
+              node-role.kubernetes.io/infra: ""
+            tolerations:
+              - key: node.ocs.openshift.io/storage
+                value: "true"
+                effect: NoSchedule
+          openshiftStateMetrics:
+            nodeSelector:
+              node-role.kubernetes.io/infra: ""
+            tolerations:
+              - key: node.ocs.openshift.io/storage
+                value: "true"
+                effect: NoSchedule
+          thanosQuerier:
+            nodeSelector:
+              node-role.kubernetes.io/infra: ""
+            tolerations:
+              - key: node.ocs.openshift.io/storage
+                value: "true"
+                effect: NoSchedule
+          metricsServer:
+            nodeSelector:
+              node-role.kubernetes.io/infra: ""
+            tolerations:
+              - key: node.ocs.openshift.io/storage
+                value: "true"
+                effect: NoSchedule
+      EOF
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_infra_remote_kubeconfig_path }}"
+  register: openshift_post_install_infra_monitoring_apply
+  changed_when: >-
+    'configured' in openshift_post_install_infra_monitoring_apply.stdout
+    or 'created' in openshift_post_install_infra_monitoring_apply.stdout
+  when: openshift_post_install_infra_nodes | length > 0
+
+- name: Move the internal image registry to infra nodes
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_infra_remote_oc_path }}"
+      - patch
+      - configs.imageregistry/cluster
+      - --type=merge
+      - -p
+      - >-
+        {"spec":{"nodeSelector":{"node-role.kubernetes.io/infra":""},
+        "tolerations":[{"key":"node.ocs.openshift.io/storage",
+        "value":"true","effect":"NoSchedule"}]}}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_infra_remote_kubeconfig_path }}"
+  register: openshift_post_install_infra_registry_patch
+  changed_when: "'no change' not in openshift_post_install_infra_registry_patch.stdout"
+  when: openshift_post_install_infra_nodes | length > 0
+
+- name: Wait for ingress pods to be running on infra nodes
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_infra_remote_oc_path }}"
+      - get
+      - pods
+      - -n
+      - openshift-ingress
+      - -o
+      - >-
+        jsonpath={.items[?(@.status.phase=="Running")].metadata.name}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_infra_remote_kubeconfig_path }}"
+  register: openshift_post_install_infra_ingress_pods
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_infra_ingress_pods.stdout | length > 0
+  when: openshift_post_install_infra_nodes | length > 0
+
+- name: Wait for cluster monitoring operator to finish progressing
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_infra_remote_oc_path }}"
+      - get
+      - clusteroperator
+      - monitoring
+      - -o
+      - >-
+        jsonpath={.status.conditions[?(@.type=="Progressing")].status}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_infra_remote_kubeconfig_path }}"
+  register: openshift_post_install_infra_monitoring_settled
+  changed_when: false
+  retries: 60
+  delay: 10
+  until: openshift_post_install_infra_monitoring_settled.stdout == 'False'
+  when: openshift_post_install_infra_nodes | length > 0
+
+- name: Capture labeled infra nodes
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_infra_remote_oc_path }}"
+      - get
+      - nodes
+      - -l
+      - node-role.kubernetes.io/infra
+      - -o
+      - wide
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_infra_remote_kubeconfig_path }}"
+  register: openshift_post_install_infra_summary
+  changed_when: false
+  when: openshift_post_install_infra_nodes | length > 0
+
+- name: Publish infra conversion summary
+  ansible.builtin.debug:
+    msg: "{{ openshift_post_install_infra_summary.stdout_lines }}"
+  when: openshift_post_install_infra_nodes | length > 0

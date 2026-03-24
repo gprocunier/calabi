@@ -1,0 +1,51 @@
+---
+- name: Derive bastion cleanup facts
+  ansible.builtin.set_fact:
+    bastion_cleanup_vm_fqdn: "{{ bastion_vm.name }}.{{ bastion_vm.domain }}"
+    bastion_cleanup_runtime_dir: "{{ bastion_runtime_root }}/{{ bastion_vm.name }}"
+
+- name: Check whether the bastion libvirt domain exists
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - dominfo
+      - "{{ bastion_cleanup_vm_fqdn }}"
+  register: bastion_cleanup_domain_info
+  changed_when: false
+  failed_when: false
+
+- name: Destroy the bastion VM when present
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - destroy
+      - "{{ bastion_cleanup_vm_fqdn }}"
+  when: bastion_cleanup_domain_info.rc == 0
+  changed_when: true
+  failed_when: false
+
+- name: Undefine the bastion VM when present
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - undefine
+      - "{{ bastion_cleanup_vm_fqdn }}"
+      - --nvram
+  when: bastion_cleanup_domain_info.rc == 0
+  changed_when: true
+  failed_when: false
+
+- name: Remove bastion runtime artifacts when requested
+  ansible.builtin.file:
+    path: "{{ bastion_cleanup_runtime_dir }}"
+    state: absent
+  when: bastion_cleanup_remove_runtime_dir | default(true) | bool
+
+- name: Wipe the bastion block device when requested
+  ansible.builtin.command:
+    argv:
+      - wipefs
+      - -a
+      - "{{ bastion_vm.disk_path }}"
+  when: bastion_cleanup_wipe_block_device | default(false) | bool
+  changed_when: true

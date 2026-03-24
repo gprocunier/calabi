@@ -1,0 +1,30 @@
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: {{ openshift_post_install_web_terminal_tooling_imagestream_name }}
+  namespace: {{ openshift_post_install_web_terminal_namespace }}
+spec:
+  output:
+    to:
+      kind: ImageStreamTag
+      name: >-
+        {{ openshift_post_install_web_terminal_tooling_imagestream_name }}:{{
+        openshift_post_install_web_terminal_tooling_tag }}
+  source:
+    type: Dockerfile
+    dockerfile: |
+      FROM {{ openshift_post_install_web_terminal_tooling_base_image }}
+      USER 0
+      RUN dnf -y install \
+{% for package_name in openshift_post_install_web_terminal_tooling_packages %}
+          {{ package_name }} \
+{% endfor %}
+       && dnf clean all \
+       && rm -rf /var/cache/dnf
+      USER 1001
+  strategy:
+    dockerStrategy:
+      forcePull: true
+    type: Docker
+  triggers: []

@@ -1,0 +1,32 @@
+---
+openshift_post_install_pipelines_operator_namespace: openshift-operators
+openshift_post_install_pipelines_default_storage_class: >-
+  ocs-storagecluster-ceph-rbd
+openshift_post_install_pipelines_subscription_name: >-
+  openshift-pipelines-operator-rh
+openshift_post_install_pipelines_package_name: >-
+  openshift-pipelines-operator-rh
+openshift_post_install_pipelines_channel: pipelines-1.20
+
+openshift_post_install_pipelines_namespace: windows-image-builder
+openshift_post_install_pipelines_pipeline_name: windows-efi-installer
+openshift_post_install_pipelines_version: 4.20.7
+openshift_post_install_pipelines_catalog_version: 4.20.7
+
+openshift_post_install_pipelines_source_url: >-
+  https://raw.githubusercontent.com/openshift-pipelines/tektoncd-catalog/p/pipelines/windows-efi-installer/{{
+  openshift_post_install_pipelines_version }}/windows-efi-installer.yaml
+openshift_post_install_pipelines_configmaps_url: >-
+  https://raw.githubusercontent.com/kubevirt/kubevirt-tekton-tasks/main/release/pipelines/windows-efi-installer/configmaps/windows-efi-installer-configmaps.yaml
+
+openshift_post_install_pipelines_default_pipeline_run_name: >-
+  windows-efi-installer-run
+openshift_post_install_pipelines_default_instancetype: u1.large
+openshift_post_install_pipelines_default_preference: windows.11.virtio
+openshift_post_install_pipelines_default_base_dv_name: win11
+openshift_post_install_pipelines_default_iso_dv_name: win11-install
+openshift_post_install_pipelines_default_autounattend_configmap: >-
+  windows11-autounattend
+openshift_post_install_pipelines_default_virtio_containerdisk: >-
+  registry.redhat.io/container-native-virtualization/virtio-win-rhel9:v{{
+  openshift_post_install_pipelines_catalog_version }}

@@ -1,0 +1,11 @@
+---
+- name: Configure OperatorHub to use mirrored catalogs only
+  hosts: aws_metal
+  gather_facts: true
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/mirror_content.yml
+    - ../../vars/guests/mirror_registry_vm.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+  roles:
+    - role: openshift_disconnected_operatorhub

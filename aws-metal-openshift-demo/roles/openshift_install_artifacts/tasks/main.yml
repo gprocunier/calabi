@@ -1,0 +1,193 @@
+---
+- name: Derive install artifact context
+  ansible.builtin.set_fact:
+    openshift_install_artifacts_hypervisor_host: >-
+      {{ groups['aws_metal'] | first }}
+    openshift_install_artifacts_render_dir: >-
+      {{ openshift_install_artifacts.output_dir }}
+    openshift_install_artifacts_idm_ca_file: >-
+      {{ openshift_install_artifacts.idm_ca.output_file }}
+
+- name: Validate hypervisor inventory is present
+  ansible.builtin.assert:
+    that:
+      - groups['aws_metal'] | default([]) | length > 0
+    fail_msg: >-
+      playbooks/cluster/openshift-install-artifacts.yml requires an aws_metal inventory host so
+      the role can fetch the IdM CA bundle through the hypervisor.
+
+- name: Validate pull secret exists on the control node
+  ansible.builtin.stat:
+    path: "{{ openshift_install_artifacts.pull_secret_file }}"
+  register: openshift_install_artifacts_pull_secret_stat
+
+- name: Validate SSH public key exists on the control node
+  ansible.builtin.stat:
+    path: "{{ openshift_install_artifacts.ssh_public_key_file }}"
+  register: openshift_install_artifacts_ssh_pubkey_stat
+
+- name: Assert required local files are available
+  ansible.builtin.assert:
+    that:
+      - openshift_install_artifacts_pull_secret_stat.stat.exists
+      - openshift_install_artifacts_ssh_pubkey_stat.stat.exists
+    fail_msg: >-
+      Required local input files are missing. Expected
+      {{ openshift_install_artifacts.pull_secret_file }} and
+      {{ openshift_install_artifacts.ssh_public_key_file }} on the control node.
+
+- name: Validate node counts between install matrix and VM matrix
+  ansible.builtin.assert:
+    that:
+      - >-
+        openshift_install_cluster.nodes | length
+        == openshift_cluster_nodes | length
+    fail_msg: >-
+      openshift_install_cluster.nodes and openshift_cluster_nodes must define
+      the same number of hosts.
+
+- name: Validate node names align between install matrix and VM matrix
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          openshift_install_cluster.nodes
+          | map(attribute='name')
+          | list
+          | sort
+        ) == (
+          openshift_cluster_nodes
+          | map(attribute='name')
+          | list
+          | sort
+        )
+    fail_msg: >-
+      Node names in openshift_install_cluster.yml and
+      openshift_cluster_vm.yml do not match.
+
+- name: Validate node MACs align between install matrix and VM matrix
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          openshift_install_cluster.nodes
+          | map(attribute='mac_address')
+          | list
+          | sort
+        ) == (
+          openshift_cluster_nodes
+          | map(attribute='mac_address')
+          | list
+          | sort
+        )
+    fail_msg: >-
+      Node MAC addresses in openshift_install_cluster.yml and
+      openshift_cluster_vm.yml do not match.
+
+- name: Validate every VM node defines a root disk serial
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          openshift_cluster_nodes
+          | map(attribute='disks.root.serial')
+          | reject('equalto', '')
+          | list
+          | length
+        ) == (openshift_cluster_nodes | length)
+    fail_msg: >-
+      Every openshift_cluster_node root disk must define a non-empty serial so
+      agent-config.yaml can render deterministic rootDeviceHints.
+
+- name: Validate root disk serials are unique
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          openshift_cluster_nodes
+          | map(attribute='disks.root.serial')
+          | list
+          | unique
+          | length
+        ) == (openshift_cluster_nodes | length)
+    fail_msg: >-
+      openshift_cluster_vm.yml root disk serials must be unique across all
+      OpenShift nodes.
+
+- name: Read pull secret from the control node
+  ansible.builtin.slurp:
+    src: "{{ openshift_install_artifacts.pull_secret_file }}"
+  register: openshift_install_artifacts_pull_secret_raw
+
+- name: Read SSH public key from the control node
+  ansible.builtin.slurp:
+    src: "{{ openshift_install_artifacts.ssh_public_key_file }}"
+  register: openshift_install_artifacts_ssh_public_key_raw
+
+- name: Create render directory
+  ansible.builtin.file:
+    path: "{{ openshift_install_artifacts_render_dir }}"
+    state: absent
+  when: openshift_install_artifacts.reset_render_dir | bool
+
+- name: Create render directory
+  ansible.builtin.file:
+    path: "{{ openshift_install_artifacts_render_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Fetch the IdM CA bundle through the hypervisor
+  ansible.builtin.command:
+    argv:
+      - ssh
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - -i
+      - >-
+        {{
+          hostvars[openshift_install_artifacts_hypervisor_host]
+          .ansible_ssh_private_key_file
+        }}
+      - >-
+        {{
+          hostvars[openshift_install_artifacts_hypervisor_host].ansible_user
+        }}@{{
+          hostvars[openshift_install_artifacts_hypervisor_host].ansible_host
+        }}
+      - >-
+        curl -fsSL --resolve {{
+          openshift_install_cluster.services.idm_dns_ntp_server
+        }}:80:{{
+          openshift_install_cluster.services.idm_dns_ntp_ipv4
+        }} http://{{
+          openshift_install_cluster.services.idm_dns_ntp_server
+        }}/ipa/config/ca.crt
+  register: openshift_install_artifacts_idm_ca_raw
+  changed_when: false
+  when: openshift_install_artifacts.idm_ca.fetch_via_hypervisor | bool
+
+- name: Write the IdM CA bundle locally
+  ansible.builtin.copy:
+    dest: "{{ openshift_install_artifacts_idm_ca_file }}"
+    content: "{{ openshift_install_artifacts_idm_ca_raw.stdout }}\n"
+    mode: "0644"
+  when: openshift_install_artifacts.idm_ca.fetch_via_hypervisor | bool
+
+- name: Read the IdM CA bundle
+  ansible.builtin.slurp:
+    src: "{{ openshift_install_artifacts_idm_ca_file }}"
+  register: openshift_install_artifacts_idm_ca_bundle_raw
+
+- name: Render install-config.yaml
+  ansible.builtin.template:
+    src: install-config.yaml.j2
+    dest: "{{ openshift_install_artifacts_render_dir }}/install-config.yaml"
+    mode: "0644"
+
+- name: Render agent-config.yaml
+  ansible.builtin.template:
+    src: agent-config.yaml.j2
+    dest: "{{ openshift_install_artifacts_render_dir }}/agent-config.yaml"
+    mode: "0644"

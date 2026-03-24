@@ -1,0 +1,391 @@
+---
+- name: Derive mirror registry VM facts from the orchestration data
+  ansible.builtin.set_fact:
+    mirror_registry_role_vm_fqdn: >-
+      {{ mirror_registry_vm.name }}.{{ mirror_registry_vm.domain }}
+    mirror_registry_role_vm_ip_cidr: >-
+      {{ mirror_registry_vm.network.ipv4_address }}/{{
+      mirror_registry_vm.network.prefix_length }}
+    mirror_registry_role_runtime_dir: >-
+      {{ mirror_registry_runtime_root }}/{{ mirror_registry_vm.name }}
+    mirror_registry_role_cloudinit_dir: >-
+      {{ mirror_registry_runtime_root }}/{{ mirror_registry_vm.name }}/cloudinit
+    mirror_registry_role_cloudinit_iso: >-
+      {{ mirror_registry_runtime_root }}/{{ mirror_registry_vm.name }}/{{
+      mirror_registry_vm.name }}-cidata.iso
+    mirror_registry_role_performance_domain_settings: >-
+      {{
+        lab_host_resource_management.performance_domains[
+          mirror_registry_vm.performance_domain.tier
+        ]
+      }}
+
+- name: Initialize the mirror registry virt-install cputune entries
+  ansible.builtin.set_fact:
+    mirror_registry_role_cputune_entries: >-
+      {{
+        [
+          'shares=' ~
+          (mirror_registry_role_performance_domain_settings.cpu_shares | string),
+          'emulatorpin.cpuset=' ~
+          lab_host_resource_management.cpu_pools.host_emulator
+        ]
+        + (
+          [
+            'iothreadpin0.iothread=1',
+            'iothreadpin0.cpuset=' ~
+            lab_host_resource_management.cpu_pools.host_emulator
+          ]
+          if (mirror_registry_vm.performance_domain.iothreads | int) > 0
+          else []
+        )
+      }}
+
+- name: Add mirror registry vCPU pinning entries to the virt-install cputune list
+  ansible.builtin.set_fact:
+    mirror_registry_role_cputune_entries: >-
+      {{
+        mirror_registry_role_cputune_entries
+        + [
+            'vcpupin' ~ (item | string) ~ '.vcpu=' ~ (item | string),
+            'vcpupin' ~ (item | string) ~ '.cpuset=' ~
+            lab_host_resource_management.cpu_pools.guest_domain
+          ]
+      }}
+  loop: "{{ range(0, mirror_registry_vm.resources.vcpus | int) | list }}"
+
+- name: Derive mirror registry virt-install performance-domain arguments
+  ansible.builtin.set_fact:
+    mirror_registry_role_performance_args: >-
+      {{
+        [
+          '--resource',
+          'partition=' ~ mirror_registry_role_performance_domain_settings.partition,
+          '--cputune',
+          mirror_registry_role_cputune_entries | join(',')
+        ]
+        + (
+          [
+            '--iothreads',
+            'iothreads=' ~ (
+              mirror_registry_vm.performance_domain.iothreads | string
+            )
+          ]
+          if (mirror_registry_vm.performance_domain.iothreads | int) > 0
+          else []
+        )
+      }}
+
+- name: Validate the mirror registry VM orchestration data
+  ansible.builtin.assert:
+    that:
+      - mirror_registry_vm.name | length > 0
+      - mirror_registry_vm.domain | length > 0
+      - mirror_registry_vm.source_image | length > 0
+      - mirror_registry_vm.disk_path | length > 0
+      - mirror_registry_vm.network.libvirt_network | length > 0
+      - mirror_registry_vm.network.libvirt_portgroup | length > 0
+      - mirror_registry_vm.network.interface_name | length > 0
+      - mirror_registry_vm.network.mac_address | length > 0
+      - mirror_registry_vm.network.ipv4_address | length > 0
+      - (mirror_registry_vm.network.prefix_length | int) > 0
+      - mirror_registry_vm.network.gateway | length > 0
+      - mirror_registry_vm.access.admin_user | length > 0
+    fail_msg: >-
+      vars/guests/mirror_registry_vm.yml is missing required mirror registry guest
+      settings. Populate the identity, disk path, and network/access data
+      before running this role.
+
+- name: Validate RHSM data when mirror guest registration is enabled
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          mirror_registry_vm.subscription.activation_key | length > 0 and
+          mirror_registry_vm.subscription.organization_id | length > 0
+        ) or (
+          mirror_registry_vm.subscription.username | length > 0 and
+          mirror_registry_vm.subscription.password | length > 0
+        )
+    fail_msg: >-
+      Mirror registry subscription enablement requires either activation_key
+      + organization_id or username + password in vars/guests/mirror_registry_vm.yml.
+  when: mirror_registry_vm.subscription.enabled | bool
+
+- name: Install packages needed for the mirror registry VM build workflow
+  ansible.builtin.package:
+    name:
+      - xorriso
+      - qemu-kvm
+      - virt-install
+    state: present
+
+- name: Check whether the mirror registry block device is present
+  ansible.builtin.stat:
+    path: "{{ mirror_registry_vm.disk_path }}"
+  register: mirror_registry_role_block_device_stat
+
+- name: Fail when the mirror registry block device is missing
+  ansible.builtin.assert:
+    that:
+      - mirror_registry_role_block_device_stat.stat.exists
+    fail_msg: >-
+      Mirror registry block device {{ mirror_registry_vm.disk_path }} was not
+      found. Ensure the EBS volume is attached and mapped before running the
+      mirror registry role.
+
+- name: Check whether the base QCOW2 image is present
+  ansible.builtin.stat:
+    path: "{{ mirror_registry_vm.source_image }}"
+  register: mirror_registry_role_source_image_stat
+
+- name: Inspect the mirror registry block device partition table
+  ansible.builtin.command:
+    argv:
+      - lsblk
+      - -nro
+      - PTTYPE
+      - "{{ mirror_registry_vm.disk_path }}"
+  register: mirror_registry_role_disk_pttype
+  changed_when: false
+  failed_when: false
+
+- name: Derive whether the mirror registry disk must be seeded from the image
+  ansible.builtin.set_fact:
+    mirror_registry_role_seed_disk_from_image: >-
+      {{
+        (mirror_registry_vm.provisioning.rebuild_disk_from_image | bool) or
+        (mirror_registry_role_disk_pttype.stdout | trim | length == 0)
+      }}
+
+- name: Fail when the base QCOW2 image is missing
+  ansible.builtin.assert:
+    that:
+      - mirror_registry_role_source_image_stat.stat.exists
+    fail_msg: >-
+      Mirror registry source image {{ mirror_registry_vm.source_image }} was
+      not found. Provide a RHEL 10 QCOW2 guest image on the managed
+      hypervisor before running this role.
+  when: mirror_registry_role_seed_disk_from_image | bool
+
+- name: Check whether the mirror registry libvirt domain already exists
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - dominfo
+      - "{{ mirror_registry_role_vm_fqdn }}"
+  register: mirror_registry_role_domain_info
+  changed_when: false
+  failed_when: false
+
+- name: Stop the existing mirror registry VM before disk reseed or recreation
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - destroy
+      - "{{ mirror_registry_role_vm_fqdn }}"
+  when:
+    - >-
+      mirror_registry_vm.provisioning.recreate_domain | bool or
+      mirror_registry_role_seed_disk_from_image | bool
+    - mirror_registry_role_domain_info.rc == 0
+  changed_when: true
+  failed_when: false
+
+- name: Undefine the existing mirror registry VM before reseeding the disk
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - undefine
+      - "{{ mirror_registry_role_vm_fqdn }}"
+      - --nvram
+  when:
+    - >-
+      mirror_registry_vm.provisioning.recreate_domain | bool or
+      mirror_registry_role_seed_disk_from_image | bool
+    - mirror_registry_role_domain_info.rc == 0
+  changed_when: true
+  failed_when: false
+
+- name: Create the mirror registry working directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ mirror_registry_role_cloudinit_dir }}"
+    - "{{ mirror_registry_role_cloudinit_iso | dirname }}"
+
+- name: Render mirror registry cloud-init metadata
+  ansible.builtin.template:
+    src: meta-data.j2
+    dest: "{{ mirror_registry_role_cloudinit_dir }}/meta-data"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Render mirror registry cloud-init user-data
+  ansible.builtin.template:
+    src: user-data.j2
+    dest: "{{ mirror_registry_role_cloudinit_dir }}/user-data"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Render mirror registry cloud-init network-config
+  ansible.builtin.template:
+    src: network-config.j2
+    dest: "{{ mirror_registry_role_cloudinit_dir }}/network-config"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Stage the mirror registry SSH public key for offline guest injection
+  ansible.builtin.copy:
+    content: "{{ mirror_registry_vm.access.ssh_authorized_keys | first }}\n"
+    dest: "{{ mirror_registry_role_cloudinit_dir }}/access.pub"
+    owner: root
+    group: root
+    mode: "0600"
+  when:
+    - mirror_registry_role_seed_disk_from_image | bool
+    - (mirror_registry_vm.access.ssh_authorized_keys | length) > 0
+
+- name: Rebuild the mirror registry disk from the QCOW2 image when requested
+  ansible.builtin.command:
+    argv:
+      - qemu-img
+      - convert
+      - -p
+      - -f
+      - qcow2
+      - -O
+      - raw
+      - "{{ mirror_registry_vm.source_image }}"
+      - "{{ mirror_registry_vm.disk_path }}"
+  when: mirror_registry_role_seed_disk_from_image | bool
+  changed_when: true
+
+- name: Force the kernel to reread the mirror registry block device
+  # partition table after the raw image write
+  ansible.builtin.command:
+    argv:
+      - blockdev
+      - --rereadpt
+      - "{{ mirror_registry_vm.disk_path }}"
+  when: mirror_registry_role_seed_disk_from_image | bool
+  changed_when: true
+
+- name: Inject mirror registry access credentials into the reseeded guest disk
+  ansible.builtin.command:
+    argv: >-
+      {{
+        ['virt-customize', '-a', mirror_registry_vm.disk_path]
+        + [
+            '--run-command',
+            'id -u ' ~ mirror_registry_vm.access.admin_user ~
+            ' >/dev/null 2>&1 || useradd -m -G wheel -s /bin/bash ' ~
+            mirror_registry_vm.access.admin_user,
+            '--run-command',
+            'usermod -aG wheel ' ~ mirror_registry_vm.access.admin_user,
+            '--run-command',
+            'printf ''%s\\n'' ' ~
+            (mirror_registry_vm.access.admin_user ~ ' ALL=(ALL) NOPASSWD:ALL' | quote) ~
+            ' > /etc/sudoers.d/90-' ~ mirror_registry_vm.access.admin_user,
+            '--run-command',
+            'chmod 0440 /etc/sudoers.d/90-' ~ mirror_registry_vm.access.admin_user
+          ]
+        + (
+          [
+            '--ssh-inject',
+            mirror_registry_vm.access.admin_user ~ ':file:' ~
+            mirror_registry_role_cloudinit_dir ~ '/access.pub'
+          ]
+          if (mirror_registry_vm.access.ssh_authorized_keys | length) > 0
+          else []
+        )
+        + (
+          [
+            '--password',
+            mirror_registry_vm.access.admin_user ~ ':password:' ~
+            mirror_registry_vm.access.admin_password,
+            '--password-crypto',
+            'sha512'
+          ]
+          if (mirror_registry_vm.access.admin_password | length) > 0
+          else []
+        )
+      }}
+  when: mirror_registry_role_seed_disk_from_image | bool
+  changed_when: true
+
+- name: Generate the mirror registry cloud-init ISO
+  ansible.builtin.command:
+    argv:
+      - xorriso
+      - -as
+      - mkisofs
+      - -o
+      - "{{ mirror_registry_role_cloudinit_iso }}"
+      - -V
+      - CIDATA
+      - -J
+      - -R
+      - -graft-points
+      - user-data={{ mirror_registry_role_cloudinit_dir }}/user-data
+      - meta-data={{ mirror_registry_role_cloudinit_dir }}/meta-data
+      - network-config={{ mirror_registry_role_cloudinit_dir }}/network-config
+  changed_when: true
+
+- name: Ensure libvirt can read the mirror registry cloud-init ISO
+  ansible.builtin.file:
+    path: "{{ mirror_registry_role_cloudinit_iso }}"
+    owner: qemu
+    group: qemu
+    mode: "0644"
+
+- name: Install the mirror registry VM when absent or recreation was requested
+  ansible.builtin.command:
+    argv: >-
+      {{
+        [
+          'virt-install',
+          '--name', mirror_registry_role_vm_fqdn,
+          '--osinfo', mirror_registry_vm.osinfo,
+          '--boot', mirror_registry_vm.boot.firmware,
+          '--machine', mirror_registry_vm.boot.machine,
+          '--memory', (mirror_registry_vm.resources.memory_mb | string),
+          '--vcpus', (mirror_registry_vm.resources.vcpus | string),
+          '--cpu', mirror_registry_vm.boot.cpu_model,
+          '--controller', 'type=scsi,model=virtio-scsi',
+          '--disk',
+          'path=' ~ mirror_registry_vm.disk_path ~
+          ',format=raw,bus=scsi,cache=none,io=native,discard=unmap,' ~
+          'rotation_rate=1',
+          '--disk',
+          'path=' ~ mirror_registry_role_cloudinit_iso ~ ',device=cdrom',
+          '--network',
+          'network=' ~ mirror_registry_vm.network.libvirt_network ~
+          ',portgroup=' ~ mirror_registry_vm.network.libvirt_portgroup ~
+          ',model=virtio,mac=' ~ mirror_registry_vm.network.mac_address,
+          '--rng', 'builtin',
+          '--import',
+          '--graphics', 'none',
+          '--console', 'pty,target_type=serial',
+          '--autostart',
+          '--noautoconsole'
+        ]
+        + mirror_registry_role_performance_args +
+        (
+          ['--tpm', 'none']
+          if not (mirror_registry_vm.boot.tpm_enabled | default(false) | bool)
+          else []
+        )
+      }}
+  when: >-
+    mirror_registry_role_domain_info.rc != 0 or
+    mirror_registry_vm.provisioning.recreate_domain | bool or
+    mirror_registry_role_seed_disk_from_image | bool
+  changed_when: true

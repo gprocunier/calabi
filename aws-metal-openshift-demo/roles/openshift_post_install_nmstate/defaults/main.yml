@@ -1,0 +1,16 @@
+---
+openshift_post_install_nmstate_namespace: openshift-nmstate
+openshift_post_install_nmstate_subscription_name: kubernetes-nmstate-operator
+openshift_post_install_nmstate_channel: stable
+openshift_post_install_nmstate_source: cs-redhat-operator-index-v4-20
+openshift_post_install_nmstate_source_namespace: openshift-marketplace
+openshift_post_install_nmstate_instance_name: nmstate
+openshift_post_install_nmstate_configure_migration_vlan: true
+openshift_post_install_nmstate_migration_nncp_name: kubevirt-live-migration-vlan
+openshift_post_install_nmstate_migration_base_interface: enp1s0
+openshift_post_install_nmstate_migration_node_selector:
+  node-role.kubernetes.io/worker: ""
+openshift_post_install_nmstate_configure_vm_data_vlans: true
+openshift_post_install_nmstate_vm_data_vlan_base_interface: enp1s0
+openshift_post_install_nmstate_vm_data_vlan_node_selector:
+  node-role.kubernetes.io/worker: ""

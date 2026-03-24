@@ -1,0 +1,330 @@
+---
+- name: Derive bastion guest facts
+  ansible.builtin.set_fact:
+    bastion_guest_vm_fqdn: "{{ bastion_vm.name }}.{{ bastion_vm.domain }}"
+    bastion_guest_hypervisor_host: "{{ groups['aws_metal'] | first }}"
+    bastion_guest_cloudinit_iso: >-
+      /var/lib/aws-metal-openshift-demo/{{ bastion_vm.name }}/{{
+      bastion_vm.name }}-cidata.iso
+    bastion_guest_ipa_server: "{{ idm_vm.name }}.{{ idm_vm.domain }}"
+    bastion_guest_ipa_admin_password: "{{ idm_server.admin_password }}"
+    bastion_guest_ipa_admin_principal: >-
+      {{
+        bastion_client.admin_principal
+        if '@' in bastion_client.admin_principal
+        else bastion_client.admin_principal ~ '@' ~ idm_server.realm
+      }}
+    bastion_guest_idm_ca_path: /etc/ipa/ca.crt
+
+- name: Ensure insights-client is installed on the bastion guest
+  ansible.builtin.package:
+    name: insights-client
+    state: present
+  when: bastion_vm.subscription.enabled | bool
+
+- name: Check current Insights registration status on the bastion guest
+  ansible.builtin.stat:
+    path: /etc/insights-client/.registered
+  register: bastion_guest_insights_registered
+  when: bastion_vm.subscription.enabled | bool
+
+- name: Register the bastion guest with Red Hat Insights
+  ansible.builtin.command:
+    argv:
+      - insights-client
+      - --register
+  when:
+    - bastion_vm.subscription.enabled | bool
+    - not bastion_guest_insights_registered.stat.exists
+  changed_when: true
+
+- name: Update the bastion guest packages
+  ansible.builtin.dnf:
+    name: "*"
+    state: latest
+    update_cache: true
+  register: bastion_guest_package_update
+
+- name: Power-cycle the bastion domain after guest updates so persistent XML changes take effect
+  block:
+    - name: Request a bastion guest poweroff after updates
+      ansible.builtin.shell: |
+        nohup bash -c 'sleep 5; systemctl poweroff' >/dev/null 2>&1 &
+      args:
+        executable: /bin/bash
+      async: 30
+      poll: 0
+      changed_when: true
+
+    - name: Wait for the bastion libvirt domain to power off
+      ansible.builtin.command:
+        argv:
+          - virsh
+          - domstate
+          - "{{ bastion_guest_vm_fqdn }}"
+      register: bastion_guest_domain_state_after_update
+      until: "'shut off' in (bastion_guest_domain_state_after_update.stdout | lower)"
+      retries: 90
+      delay: 10
+      changed_when: false
+      delegate_to: "{{ bastion_guest_hypervisor_host }}"
+
+    - name: Identify matching bastion cloud-init CD-ROM targets in persistent XML
+      ansible.builtin.shell: |
+        set -euo pipefail
+        virsh domblklist "{{ bastion_guest_vm_fqdn }}" --details \
+          | awk -v media="{{ bastion_guest_cloudinit_iso }}" \
+              '$2 == "cdrom" && ($4 == media || $4 == "-") {print $3}'
+      args:
+        executable: /bin/bash
+      register: bastion_guest_cdrom_targets
+      changed_when: false
+      delegate_to: "{{ bastion_guest_hypervisor_host }}"
+
+    - name: Remove bastion cloud-init CD-ROM devices from persistent XML
+      ansible.builtin.command:
+        argv:
+          - virt-xml
+          - "{{ bastion_guest_vm_fqdn }}"
+          - --remove-device
+          - --disk
+          - "target={{ item }}"
+      loop: "{{ bastion_guest_cdrom_targets.stdout_lines }}"
+      changed_when: true
+      delegate_to: "{{ bastion_guest_hypervisor_host }}"
+
+    - name: Reset bastion guest boot order to disk only
+      ansible.builtin.command:
+        argv:
+          - virt-xml
+          - "{{ bastion_guest_vm_fqdn }}"
+          - --edit
+          - --boot
+          - hd
+      changed_when: true
+      delegate_to: "{{ bastion_guest_hypervisor_host }}"
+
+    - name: Remove the bastion cloud-init ISO from the hypervisor
+      ansible.builtin.file:
+        path: "{{ bastion_guest_cloudinit_iso }}"
+        state: absent
+      delegate_to: "{{ bastion_guest_hypervisor_host }}"
+
+    - name: Start the bastion libvirt domain after offline media cleanup
+      ansible.builtin.command:
+        argv:
+          - virsh
+          - start
+          - "{{ bastion_guest_vm_fqdn }}"
+      changed_when: true
+      delegate_to: "{{ bastion_guest_hypervisor_host }}"
+  when: bastion_guest_package_update.changed
+
+- name: Wait for the bastion guest after the optional domain restart
+  ansible.builtin.wait_for_connection:
+    timeout: 1800
+    sleep: 10
+  when: bastion_guest_package_update.changed
+
+- name: Refresh facts after the optional bastion power-cycle
+  ansible.builtin.setup:
+
+- name: Install the bastion guest package set
+  ansible.builtin.package:
+    name: "{{ bastion_client.packages + ['oddjob', 'oddjob-mkhomedir'] }}"
+    state: present
+
+- name: Ensure firewalld is enabled on the bastion guest
+  ansible.builtin.service:
+    name: firewalld
+    state: started
+    enabled: true
+
+- name: Check bastion firewall services
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --permanent
+      - --query-service={{ item }}
+  loop: "{{ bastion_client.firewall_services }}"
+  register: bastion_guest_firewall_service_queries
+  changed_when: false
+  failed_when: false
+
+- name: Open bastion firewall services
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --permanent
+      - --add-service={{ item.item }}
+  loop: "{{ bastion_guest_firewall_service_queries.results }}"
+  when: item.rc != 0
+  changed_when: true
+  notify: Reload bastion firewalld
+
+- name: Ensure Cockpit and PCP services are enabled on the bastion guest
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop: "{{ bastion_client.cockpit_services }}"
+
+- name: Ensure oddjobd is enabled on the bastion guest
+  ansible.builtin.service:
+    name: oddjobd.service
+    state: started
+    enabled: true
+
+- name: Ensure bastion workspace directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ bastion_client.workspace_root }}"
+    - "{{ bastion_client.artifact_root }}"
+    - "{{ bastion_client.cluster_artifact_root }}"
+    - "{{ bastion_client.tools_root }}"
+
+- name: Check whether the bastion guest is already enrolled in IdM
+  ansible.builtin.stat:
+    path: /etc/ipa/default.conf
+  register: bastion_guest_ipa_default_conf
+
+- name: Refresh the local IdM CA file from the active IdM server before bastion enrollment checks
+  ansible.builtin.get_url:
+    url: "http://{{ bastion_guest_ipa_server }}/ipa/config/ca.crt"
+    dest: "{{ bastion_guest_idm_ca_path }}"
+    mode: "0644"
+
+- name: Trust the active IdM CA before bastion enrollment checks
+  ansible.builtin.copy:
+    src: "{{ bastion_guest_idm_ca_path }}"
+    dest: /etc/pki/ca-trust/source/anchors/idm-rootCA.pem
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Refresh the guest CA trust before bastion enrollment checks
+  ansible.builtin.command:
+    argv:
+      - update-ca-trust
+      - extract
+  changed_when: false
+
+- name: Acquire an IPA admin ticket before validating bastion host state
+  ansible.builtin.command:
+    argv:
+      - kinit
+      - "{{ bastion_guest_ipa_admin_principal }}"
+    stdin: "{{ bastion_guest_ipa_admin_password }}\n"
+  changed_when: true
+
+- name: Check whether the bastion host object already exists in IdM
+  ansible.builtin.command:
+    argv:
+      - ipa
+      - host-show
+      - "{{ bastion_guest_vm_fqdn }}"
+  register: bastion_guest_ipa_host_show
+  changed_when: false
+  failed_when: false
+
+- name: Determine whether the bastion guest must rejoin IdM
+  ansible.builtin.set_fact:
+    bastion_guest_ipa_rejoin_required: >-
+      {{
+        (not bastion_guest_ipa_default_conf.stat.exists)
+        or bastion_guest_ipa_host_show.rc != 0
+      }}
+
+- name: Prepare FreeIPA client role variables for bastion enrollment
+  ansible.builtin.set_fact:
+    ipaclient_install_packages: false
+    ipaclient_force_join: true
+    ipaclient_domain: "{{ idm_vm.domain }}"
+    ipaclient_realm: "{{ idm_server.realm }}"
+    ipaclient_servers:
+      - "{{ idm_vm.name }}.{{ idm_vm.domain }}"
+    ipaclient_hostname: "{{ bastion_vm.name }}.{{ bastion_vm.domain }}"
+    ipaclient_no_dns_lookup: true
+    ipasssd_enable_dns_updates: true
+    ipaadmin_principal: "{{ bastion_client.admin_principal }}"
+    ipaadmin_password: "{{ idm_server.admin_password }}"
+  when: bastion_guest_ipa_rejoin_required
+
+- name: Uninstall the stale bastion IPA client before rejoining
+  ansible.builtin.command:
+    argv:
+      - ipa-client-install
+      - --uninstall
+      - -U
+  when:
+    - bastion_guest_ipa_rejoin_required
+    - bastion_guest_ipa_default_conf.stat.exists
+  changed_when: true
+
+- name: Join the bastion guest to IdM with the FreeIPA client role
+  ansible.builtin.include_role:
+    name: freeipa.ansible_freeipa.ipaclient
+  vars:
+    state: present
+  no_log: true
+  when: bastion_guest_ipa_rejoin_required
+
+- name: Wait for bastion SSH to settle after IdM enrollment
+  ansible.builtin.wait_for_connection:
+    timeout: 300
+  when: bastion_guest_ipa_rejoin_required
+
+- name: Reacquire an IPA admin ticket after the optional bastion rejoin
+  ansible.builtin.command:
+    argv:
+      - kinit
+      - "{{ bastion_guest_ipa_admin_principal }}"
+    stdin: "{{ bastion_guest_ipa_admin_password }}\n"
+  when: bastion_guest_ipa_rejoin_required
+  changed_when: true
+
+- name: Confirm bastion IdM enrollment completed
+  ansible.builtin.command:
+    argv:
+      - ipa
+      - host-show
+      - "{{ bastion_guest_vm_fqdn }}"
+  register: bastion_guest_ipa_host_show_after_join
+  changed_when: false
+  until: bastion_guest_ipa_host_show_after_join.rc == 0
+  retries: 20
+  delay: 15
+  when: bastion_guest_ipa_rejoin_required
+
+- name: Check the current authselect profile on the bastion guest
+  ansible.builtin.command:
+    argv:
+      - authselect
+      - current
+      - --raw
+  register: bastion_guest_authselect_current
+  changed_when: false
+
+- name: Enable authselect mkhomedir support on the bastion guest
+  ansible.builtin.command:
+    argv:
+      - authselect
+      - select
+      - sssd
+      - with-mkhomedir
+      - with-sudo
+      - --force
+  when: >-
+    'with-mkhomedir' not in bastion_guest_authselect_current.stdout or
+    'with-sudo' not in bastion_guest_authselect_current.stdout
+  changed_when: true
+  notify: Restart sssd
+
+- name: Flush bastion firewalld handler
+  ansible.builtin.meta: flush_handlers

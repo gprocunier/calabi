@@ -1,0 +1,454 @@
+---
+- name: Check current RHSM registration status
+  ansible.builtin.command:
+    argv:
+      - subscription-manager
+      - identity
+  register: lab_host_base_rhsm_identity
+  changed_when: false
+  failed_when: false
+  when: lab_rhsm.enabled | default(false) | bool
+
+- name: Read the current default kernel boot args
+  ansible.builtin.shell: |
+    set -euo pipefail
+    grubby --info "$(grubby --default-kernel)"
+  args:
+    executable: /bin/bash
+  register: lab_host_base_current_kernel_entry
+  changed_when: false
+  tags:
+    - host_kernel_cmdline
+
+- name: Ensure kernel boot args for host CPU affinity are present on all installed kernels
+  ansible.builtin.command:
+    argv:
+      - grubby
+      - --update-kernel=ALL
+      - >-
+        --args={{
+        lab_host_resource_management.kernel_cmdline.systemd_cpu_affinity }}
+        {{ lab_host_resource_management.kernel_cmdline.irqaffinity }}
+  register: lab_host_base_kernel_cmdline_update
+  changed_when: >-
+    (
+      lab_host_resource_management.kernel_cmdline.systemd_cpu_affinity
+      not in lab_host_base_current_kernel_entry.stdout
+    ) or (
+      lab_host_resource_management.kernel_cmdline.irqaffinity
+      not in lab_host_base_current_kernel_entry.stdout
+    )
+  when: lab_host_resource_management.host_policy.manage_kernel_cmdline | bool
+  tags:
+    - host_kernel_cmdline
+
+- name: Remove kernel boot args for host CPU affinity from all installed kernels
+  ansible.builtin.command:
+    argv:
+      - grubby
+      - --update-kernel=ALL
+      - >-
+        --remove-args={{
+        lab_host_resource_management.kernel_cmdline.systemd_cpu_affinity }}
+        {{ lab_host_resource_management.kernel_cmdline.irqaffinity }}
+  register: lab_host_base_kernel_cmdline_update
+  changed_when: >-
+    (
+      lab_host_resource_management.kernel_cmdline.systemd_cpu_affinity
+      in lab_host_base_current_kernel_entry.stdout
+    ) or (
+      lab_host_resource_management.kernel_cmdline.irqaffinity
+      in lab_host_base_current_kernel_entry.stdout
+    )
+  when: not (lab_host_resource_management.host_policy.manage_kernel_cmdline | bool)
+  tags:
+    - host_kernel_cmdline
+
+- name: Check whether the hypervisor already has an RHSM consumer certificate
+  ansible.builtin.stat:
+    path: /etc/pki/consumer/cert.pem
+  register: lab_host_base_rhsm_consumer_cert
+  when: lab_rhsm.enabled | default(false) | bool
+
+- name: Register the hypervisor with RHSM using activation key
+  ansible.builtin.command:
+    argv:
+      - subscription-manager
+      - register
+      - --org
+      - "{{ lab_rhsm.organization_id }}"
+      - --activationkey
+      - "{{ lab_rhsm.activation_key }}"
+  register: lab_host_base_rhsm_register_activation_key
+  changed_when: lab_host_base_rhsm_register_activation_key.rc == 0
+  failed_when: >-
+    lab_host_base_rhsm_register_activation_key.rc != 0 and
+    'already registered' not in (
+      lab_host_base_rhsm_register_activation_key.stderr | lower
+    )
+  when:
+    - lab_rhsm.enabled | default(false) | bool
+    - not lab_host_base_rhsm_consumer_cert.stat.exists
+    - lab_rhsm.activation_key | default('') | length > 0
+    - lab_rhsm.organization_id | default('') | length > 0
+
+- name: Register the hypervisor with RHSM using username and password
+  ansible.builtin.command:
+    argv:
+      - subscription-manager
+      - register
+      - --username
+      - "{{ lab_rhsm.username }}"
+      - --password
+      - "{{ lab_rhsm.password }}"
+  register: lab_host_base_rhsm_register_userpass
+  changed_when: lab_host_base_rhsm_register_userpass.rc == 0
+  failed_when: >-
+    lab_host_base_rhsm_register_userpass.rc != 0 and
+    'already registered' not in (
+      lab_host_base_rhsm_register_userpass.stderr | lower
+    )
+  when:
+    - lab_rhsm.enabled | default(false) | bool
+    - not lab_host_base_rhsm_consumer_cert.stat.exists
+    - not (
+        lab_rhsm.activation_key | default('') | length > 0 and
+        lab_rhsm.organization_id | default('') | length > 0
+      )
+    - lab_rhsm.username | default('') | length > 0
+    - lab_rhsm.password | default('') | length > 0
+
+- name: Enable subscription-manager CDN repo management
+  ansible.builtin.command:
+    argv:
+      - subscription-manager
+      - config
+      - --rhsm.manage_repos=1
+  register: lab_host_base_manage_repos
+  changed_when: "'manage_repos = 1' in lab_host_base_manage_repos.stdout"
+  when: lab_rhsm.enabled | default(false) | bool
+
+- name: Disable RHUI-managed repositories when present
+  ansible.builtin.shell: |
+    python3 - <<'PY'
+    from configparser import ConfigParser
+    from pathlib import Path
+    path = Path('/etc/yum.repos.d/redhat-rhui.repo')
+    if not path.exists():
+        raise SystemExit(0)
+    parser = ConfigParser()
+    parser.read(path)
+    changed = False
+    for section in parser.sections():
+        if parser.has_option(section, 'enabled') and parser.get(section, 'enabled') != '0':
+            parser.set(section, 'enabled', '0')
+            changed = True
+    if changed:
+        with path.open('w') as handle:
+            parser.write(handle)
+        print('changed')
+    PY
+  args:
+    executable: /bin/bash
+  register: lab_host_base_disable_rhui
+  changed_when: "'changed' in lab_host_base_disable_rhui.stdout"
+  when: lab_rhsm.enabled | default(false) | bool
+
+- name: Enable required CDN repositories for the hypervisor
+  ansible.builtin.command:
+    argv:
+      - subscription-manager
+      - repos
+      - --enable
+      - "{{ item }}"
+  loop:
+    - "{{ lab_baseos_repo }}"
+    - "{{ lab_appstream_repo }}"
+    - "{{ lab_fast_datapath_repo }}"
+  register: lab_host_base_enable_cdn_repos
+  changed_when: >-
+    'is enabled for this system' in (lab_host_base_enable_cdn_repos.stdout | lower) or
+    'has been enabled' in (lab_host_base_enable_cdn_repos.stdout | lower)
+  when: lab_rhsm.enabled | default(false) | bool
+
+- name: Enable optional CodeReady Builder repository for the hypervisor
+  ansible.builtin.command:
+    argv:
+      - subscription-manager
+      - repos
+      - --enable
+      - "{{ lab_codeready_repo }}"
+  register: lab_host_base_enable_codeready_repo
+  changed_when: >-
+    'is enabled for this system' in (lab_host_base_enable_codeready_repo.stdout | lower) or
+    'has been enabled' in (lab_host_base_enable_codeready_repo.stdout | lower)
+  failed_when: false
+  when: lab_rhsm.enabled | default(false) | bool
+
+- name: Clean package metadata after repo source changes
+  ansible.builtin.command:
+    argv:
+      - dnf
+      - clean
+      - all
+  changed_when: true
+  when:
+    - lab_rhsm.enabled | default(false) | bool
+    - >
+      lab_host_base_disable_rhui.changed or
+      lab_host_base_manage_repos.changed or
+      lab_host_base_enable_codeready_repo.changed or
+      (
+        lab_host_base_enable_cdn_repos.results
+        | default([])
+        | selectattr('changed', 'equalto', true)
+        | list
+        | length
+      ) > 0
+
+- name: Ensure insights-client is installed on the hypervisor
+  ansible.builtin.package:
+    name: insights-client
+    state: present
+  when: lab_rhsm.enabled | default(false) | bool
+
+- name: Check current Insights registration status on the hypervisor
+  ansible.builtin.stat:
+    path: /etc/insights-client/.registered
+  register: lab_host_base_insights_registered
+  when: lab_rhsm.enabled | default(false) | bool
+
+- name: Register the hypervisor with Red Hat Insights
+  ansible.builtin.command:
+    argv:
+      - insights-client
+      - --register
+  when:
+    - lab_rhsm.enabled | default(false) | bool
+    - not lab_host_base_insights_registered.stat.exists
+  changed_when: true
+
+- name: Update all host packages to the latest available versions
+  ansible.builtin.dnf:
+    name: "*"
+    state: latest
+    update_cache: true
+  register: lab_host_base_package_update
+
+- name: Install virtualization and networking packages
+  ansible.builtin.package:
+    name: "{{ lab_packages }}"
+    state: present
+
+- name: Reboot the hypervisor after package updates when needed
+  ansible.builtin.reboot:
+    reboot_timeout: 1800
+  when: lab_host_base_package_update.changed
+
+- name: Set the hypervisor static hostname
+  ansible.builtin.hostname:
+    name: "{{ virt_host.name }}.{{ virt_host.domain }}"
+
+- name: Ensure ec2-user is not locked so Cockpit password login works
+  ansible.builtin.user:
+    name: ec2-user
+    password_lock: false
+
+- name: Ensure the hypervisor short hostname is resolvable locally
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.1\.1\s+'
+    line: "127.0.1.1 {{ virt_host.name }}.{{ virt_host.domain }} {{ virt_host.name }}"
+    state: present
+
+- name: Determine the active NetworkManager connection for the hypervisor uplink
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - -t
+      - -f
+      - NAME,DEVICE
+      - connection
+      - show
+      - --active
+  register: lab_host_base_active_connections
+  changed_when: false
+
+- name: Store the active hypervisor uplink connection name
+  ansible.builtin.set_fact:
+    lab_host_base_uplink_connection_name: >-
+      {{
+        (
+          lab_host_base_active_connections.stdout_lines
+          | select('search', ':' ~ ansible_default_ipv4.interface ~ '$')
+          | map('split', ':')
+          | map('first')
+          | list
+          | first
+        ) | default('')
+      }}
+
+- name: Configure the hypervisor uplink to use IdM DNS first
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - connection
+      - modify
+      - "{{ lab_host_base_uplink_connection_name }}"
+      - ipv4.dns
+      - "{{ idm_vm.network.ipv4_address }} 1.1.1.1"
+      - ipv4.ignore-auto-dns
+      - "yes"
+  register: lab_host_base_dns_modify
+  changed_when: true
+  when: lab_host_base_uplink_connection_name | length > 0
+
+- name: Reapply the hypervisor uplink connection after DNS changes
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - connection
+      - up
+      - "{{ lab_host_base_uplink_connection_name }}"
+  changed_when: true
+  when: lab_host_base_uplink_connection_name | length > 0
+
+- name: Persist tmpfiles configuration for the stable EBS symlink directory
+  ansible.builtin.copy:
+    dest: /etc/tmpfiles.d/ebs-friendly.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      d /dev/ebs 0755 root root -
+  register: lab_host_base_ebs_tmpfiles
+
+- name: Ensure the stable EBS symlink directory exists immediately
+  ansible.builtin.command:
+    argv:
+      - systemd-tmpfiles
+      - --create
+      - /etc/tmpfiles.d/ebs-friendly.conf
+  changed_when: lab_host_base_ebs_tmpfiles.changed
+
+- name: Install the managed EBS-friendly udev rules
+  ansible.builtin.template:
+    src: 99-ebs-friendly.rules.j2
+    dest: /etc/udev/rules.d/99-ebs-friendly.rules
+    owner: root
+    group: root
+    mode: "0644"
+  register: lab_host_base_ebs_udev_rules
+
+- name: Reload udev rules when the managed EBS mapping changes
+  ansible.builtin.command:
+    argv:
+      - udevadm
+      - control
+      - --reload-rules
+  when: lab_host_base_ebs_udev_rules.changed
+  changed_when: true
+
+- name: Trigger block-device udev events when the managed EBS mapping changes
+  ansible.builtin.command:
+    argv:
+      - udevadm
+      - trigger
+      - --subsystem-match=block
+      - --action=change
+  when: lab_host_base_ebs_udev_rules.changed
+  changed_when: true
+
+- name: Wait for udev to settle when the managed EBS mapping changes
+  ansible.builtin.command:
+    argv:
+      - udevadm
+      - settle
+  when: lab_host_base_ebs_udev_rules.changed
+  changed_when: false
+
+- name: Gather available systemd units after package installation
+  ansible.builtin.service_facts:
+
+- name: Enable required services that are present on the host
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop: "{{ lab_service_units }}"
+  when: item in ansible_facts.services
+
+- name: Disable nftables service if present so firewalld owns the ruleset
+  ansible.builtin.systemd:
+    name: nftables
+    enabled: false
+    state: stopped
+  failed_when: false
+
+- name: Check whether the default libvirt network exists
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - -c
+      - qemu:///system
+      - net-info
+      - default
+  register: lab_host_base_default_network_info
+  changed_when: false
+  failed_when: false
+
+- name: Stop the default libvirt network
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - -c
+      - qemu:///system
+      - net-destroy
+      - default
+  when: lab_host_base_default_network_info.rc == 0
+  changed_when: true
+  failed_when: false
+
+- name: Disable autostart for the default libvirt network
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - -c
+      - qemu:///system
+      - net-autostart
+      - default
+      - --disable
+  when: lab_host_base_default_network_info.rc == 0
+  changed_when: true
+  failed_when: false
+
+- name: Undefine the default libvirt network
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - -c
+      - qemu:///system
+      - net-undefine
+      - default
+  when: lab_host_base_default_network_info.rc == 0
+  changed_when: true
+  failed_when: false
+
+- name: Persist kernel forwarding settings
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/90-aws-metal-openshift-lab.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      net.ipv4.ip_forward = 1
+      net.ipv4.conf.all.rp_filter = 0
+      net.ipv4.conf.default.rp_filter = 0
+  register: lab_host_base_sysctl
+
+- name: Apply kernel forwarding settings immediately
+  ansible.builtin.command:
+    argv:
+      - sysctl
+      - --system
+  changed_when: lab_host_base_sysctl.changed

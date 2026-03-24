@@ -1,0 +1,15 @@
+/* User customization for BIND named
+ *
+ * This file is included in /etc/named.conf and is not modified during IPA
+ * upgrades.
+ *
+ * "options" settings must be configured in /etc/named/ipa-options-ext.conf.
+ */
+
+acl "trusted_network" {
+  localhost;
+  localnets;
+{% for cidr in idm_server.trusted_networks %}
+  {{ cidr }};
+{% endfor %}
+};

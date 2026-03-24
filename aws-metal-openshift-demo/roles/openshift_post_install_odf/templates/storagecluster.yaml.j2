@@ -1,0 +1,105 @@
+apiVersion: ocs.openshift.io/v1
+kind: StorageCluster
+metadata:
+  name: {{ openshift_post_install_odf_storage_cluster_name }}
+  namespace: {{ openshift_post_install_odf_storage_cluster_namespace }}
+spec:
+  manageNodes: false
+  monDataDirHostPath: /var/lib/rook
+  multiCloudGateway:
+    reconcileStrategy: manage
+{% if openshift_post_install_odf_multus_enabled %}
+  network:
+    ipFamily: IPv4
+    provider: multus
+    selectors:
+      public: >-
+        {{ openshift_post_install_odf_storage_cluster_namespace }}/{{ openshift_post_install_odf_multus_public_network_name }}
+{% endif %}
+  resources:
+    mds:
+      limits:
+        cpu: "3"
+        memory: 8Gi
+      requests:
+        cpu: "1"
+        memory: 4Gi
+    mgr:
+      limits:
+        cpu: "3"
+        memory: 5Gi
+      requests:
+        cpu: "1"
+        memory: 1Gi
+    mon:
+      limits:
+        cpu: "3"
+        memory: 10Gi
+      requests:
+        cpu: "1"
+        memory: 2Gi
+    noobaa-core:
+      limits:
+        cpu: "2"
+        memory: 4Gi
+      requests:
+        cpu: "1"
+        memory: 4Gi
+    noobaa-db:
+      limits:
+        cpu: "2"
+        memory: 4Gi
+      requests:
+        cpu: "1"
+        memory: 4Gi
+    osd:
+      limits:
+        cpu: "2"
+        memory: 6Gi
+      requests:
+        cpu: "1"
+        memory: 2Gi
+    prepareosd:
+      limits:
+        cpu: "2"
+        memory: 2Gi
+      requests:
+        cpu: "1"
+        memory: 500Mi
+  storageDeviceSets:
+    - name: ocs-deviceset
+      count: 1
+      replica: 3
+      portable: false
+      config: {}
+      dataPVCTemplate:
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: {{ openshift_post_install_odf_osd_size }}
+          storageClassName: {{ openshift_post_install_odf_local_volume_set_name }}
+          volumeMode: Block
+      placement:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: {{ openshift_post_install_odf_storage_label }}
+                    operator: Exists
+        tolerations:
+          - key: node-role.kubernetes.io/infra
+            operator: Exists
+            effect: NoSchedule
+          - key: {{ openshift_post_install_odf_storage_taint_key }}
+            operator: Equal
+            value: "{{ openshift_post_install_odf_storage_taint_value }}"
+            effect: {{ openshift_post_install_odf_storage_taint_effect }}
+      resources:
+        limits:
+          cpu: "2"
+          memory: 6Gi
+        requests:
+          cpu: "1"
+          memory: 2Gi

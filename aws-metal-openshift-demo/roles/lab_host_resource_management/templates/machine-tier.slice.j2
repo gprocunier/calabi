@@ -1,0 +1,7 @@
+[Unit]
+Description={{ lab_host_resource_management_tier_name | title }} performance domain slice
+Before=slices.target
+
+[Slice]
+CPUAccounting=yes
+CPUWeight={{ lab_host_resource_management_tier.cpu_weight }}

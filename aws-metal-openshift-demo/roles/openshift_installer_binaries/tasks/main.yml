@@ -1,0 +1,85 @@
+---
+- name: Derive OpenShift installer binary paths
+  ansible.builtin.set_fact:
+    openshift_installer_binaries_download_dir: >-
+      {{ openshift_installer_binaries.download_dir }}
+    openshift_installer_binaries_install_dir: >-
+      {{ openshift_installer_binaries.install_dir }}
+
+- name: Install local packages required for agent media generation
+  ansible.builtin.package:
+    name: "{{ openshift_installer_binaries.local_packages }}"
+    state: present
+
+- name: Create local download and install directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ openshift_installer_binaries_download_dir }}"
+    - "{{ openshift_installer_binaries_install_dir }}"
+
+- name: Download openshift-install archive for the mirrored release
+  ansible.builtin.get_url:
+    url: >-
+      {{
+        openshift_installer_binaries.base_url ~ '/'
+        ~ openshift_installer_binaries.binaries.openshift_install.archive
+      }}
+    dest: >-
+      {{
+        openshift_installer_binaries_download_dir ~ '/'
+        ~ openshift_installer_binaries.binaries.openshift_install.archive
+      }}
+    mode: "0644"
+
+- name: Download OpenShift client archive for the mirrored release
+  ansible.builtin.get_url:
+    url: >-
+      {{
+        openshift_installer_binaries.base_url ~ '/'
+        ~ openshift_installer_binaries.binaries.openshift_client.archive
+      }}
+    dest: >-
+      {{
+        openshift_installer_binaries_download_dir ~ '/'
+        ~ openshift_installer_binaries.binaries.openshift_client.archive
+      }}
+    mode: "0644"
+
+- name: Extract openshift-install binary
+  ansible.builtin.unarchive:
+    src: >-
+      {{
+        openshift_installer_binaries_download_dir ~ '/'
+        ~ openshift_installer_binaries.binaries.openshift_install.archive
+      }}
+    dest: "{{ openshift_installer_binaries_install_dir }}"
+    remote_src: true
+    creates: >-
+      {{
+        openshift_installer_binaries_install_dir ~ '/'
+        ~ openshift_installer_binaries.binaries.openshift_install.binary_name
+      }}
+
+- name: Extract OpenShift client binaries
+  ansible.builtin.unarchive:
+    src: >-
+      {{
+        openshift_installer_binaries_download_dir ~ '/'
+        ~ openshift_installer_binaries.binaries.openshift_client.archive
+      }}
+    dest: "{{ openshift_installer_binaries_install_dir }}"
+    remote_src: true
+  register: openshift_installer_binaries_client_extract
+
+- name: Ensure extracted OpenShift binaries are executable
+  ansible.builtin.file:
+    path: "{{ openshift_installer_binaries_install_dir }}/{{ item }}"
+    mode: "0755"
+  loop: >-
+    {{
+      [openshift_installer_binaries.binaries.openshift_install.binary_name]
+      + openshift_installer_binaries.binaries.openshift_client.binary_names
+    }}

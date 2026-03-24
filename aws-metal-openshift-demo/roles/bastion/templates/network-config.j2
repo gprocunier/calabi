@@ -1,0 +1,16 @@
+version: 2
+ethernets:
+  {{ bastion_vm.network.interface_name }}:
+    match:
+      macaddress: "{{ bastion_vm.network.mac_address }}"
+    set-name: {{ bastion_vm.network.interface_name }}
+    addresses:
+      - {{ bastion_role_vm_ip_cidr }}
+    routes:
+      - to: 0.0.0.0/0
+        via: {{ bastion_vm.network.gateway }}
+    nameservers:
+      addresses:
+{% for dns_server in bastion_vm.network.dns_servers %}
+        - {{ dns_server }}
+{% endfor %}

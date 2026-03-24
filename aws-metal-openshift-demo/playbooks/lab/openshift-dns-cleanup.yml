@@ -1,0 +1,63 @@
+---
+- name: Register the IDM guest for OpenShift DNS cleanup
+  hosts: aws_metal
+  become: true
+  gather_facts: true
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+
+  tasks:
+    - name: Register the IDM guest as a temporary Ansible host
+      ansible.builtin.add_host:
+        name: "{{ idm_vm.name }}.{{ idm_vm.domain }}"
+        groups:
+          - idm_guest
+        ansible_host: "{{ idm_vm.network.ipv4_address }}"
+        ansible_user: "{{ idm_vm.access.admin_user }}"
+        ansible_ssh_private_key_file: >-
+          {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+        ansible_become: true
+        ansible_ssh_common_args: >-
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          -o ProxyCommand="ssh -i {{
+          hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          {{ hostvars[inventory_hostname].ansible_user }}@{{
+          hostvars[inventory_hostname].ansible_host }} -W %h:%p"
+
+- name: Remove OpenShift DNS records from IDM
+  hosts: idm_guest
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+
+  pre_tasks:
+    - name: Wait for the IDM guest SSH port from the hypervisor network
+      ansible.builtin.wait_for:
+        host: "{{ idm_vm.network.ipv4_address }}"
+        port: 22
+        timeout: 900
+        sleep: 10
+      delegate_to: "{{ groups['aws_metal'] | first }}"
+      become: false
+
+    - name: Reset any cached SSH state before connecting to the IDM guest
+      ansible.builtin.meta: reset_connection
+
+    - name: Wait for the IDM guest to accept SSH connections
+      ansible.builtin.wait_for_connection:
+        timeout: 900
+        sleep: 10
+
+    - name: Gather IDM guest facts after SSH is available
+      ansible.builtin.setup:
+
+  roles:
+    - role: idm_openshift_dns_cleanup

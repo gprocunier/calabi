@@ -1,0 +1,15 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: CatalogSource
+metadata:
+  name: {{ item.name }}
+  namespace: openshift-marketplace
+spec:
+  displayName: {{ item.displayName }}
+  publisher: Local Mirror
+  sourceType: grpc
+  image: {{ item.image }}
+  secrets:
+    - {{ openshift_disconnected_operatorhub_catalog_pull_secret_name }}
+  updateStrategy:
+    registryPoll:
+      interval: 240m

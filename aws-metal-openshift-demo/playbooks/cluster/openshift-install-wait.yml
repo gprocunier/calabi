@@ -1,0 +1,54 @@
+---
+- name: Wait for the OpenShift agent-based install to complete
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/mirror_content.yml
+  vars:
+    openshift_install_wait_install_dir: "{{ lab_execution_ocp_generated_root }}"
+    openshift_install_wait_binary: >-
+      {{ lab_execution_tools_root }}/{{ mirror_registry_ocp_release }}/bin/openshift-install
+  tasks:
+    - name: Validate the rendered install directory exists
+      ansible.builtin.stat:
+        path: "{{ openshift_install_wait_install_dir }}"
+      register: openshift_install_wait_dir_stat
+
+    - name: Validate the installer binary exists
+      ansible.builtin.stat:
+        path: "{{ openshift_install_wait_binary }}"
+      register: openshift_install_wait_binary_stat
+
+    - name: Assert the installer wait prerequisites are present
+      ansible.builtin.assert:
+        that:
+          - openshift_install_wait_dir_stat.stat.exists
+          - openshift_install_wait_binary_stat.stat.exists
+        fail_msg: >-
+          Expected the rendered install directory at
+          {{ openshift_install_wait_install_dir }} and installer binary at
+          {{ openshift_install_wait_binary }} before waiting for bootstrap and
+          install completion.
+
+    - name: Wait for bootstrap completion
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_install_wait_binary }}"
+          - --dir={{ openshift_install_wait_install_dir }}
+          - wait-for
+          - bootstrap-complete
+          - --log-level=debug
+      changed_when: false
+
+    - name: Wait for install completion
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_install_wait_binary }}"
+          - --dir={{ openshift_install_wait_install_dir }}
+          - wait-for
+          - install-complete
+          - --log-level=debug
+      changed_when: false

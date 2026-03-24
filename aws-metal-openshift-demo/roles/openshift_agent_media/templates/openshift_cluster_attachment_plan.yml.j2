@@ -1,0 +1,8 @@
+---
+openshift_cluster_node_attachment_plan:
+{% for node in openshift_cluster_nodes %}
+  {{ node.name }}:
+    access:
+      attach_agent_boot_media: true
+      agent_boot_media_path: "{{ openshift_agent_media_attachment_boot_path }}"
+{% endfor %}

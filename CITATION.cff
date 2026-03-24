@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+title: Calabi
+message: If you reference this project, please cite it using the metadata below.
+type: software
+license: GPL-3.0
+repository-code: https://github.com/gprocunier/calabi
+authors:
+  - family-names: Procunier
+    given-names: Greg
+keywords:
+  - openshift
+  - disconnected-install
+  - agent-based-installer
+  - bare-metal
+  - nested-virtualization
+  - ansible
+  - kvm
+  - libvirt
+  - openvswitch
+  - cloudformation
+  - rhel
+  - cgroup
+  - infrastructure-as-code
+  - kubernetes
+  - homelab
+abstract: >-
+  Ansible-driven automation that deploys a full 9-node disconnected OpenShift 4
+  cluster on a single bare-metal host using nested KVM, Open vSwitch VLAN
+  segmentation, cgroup-based CPU performance domains, and day-2 operator
+  management.

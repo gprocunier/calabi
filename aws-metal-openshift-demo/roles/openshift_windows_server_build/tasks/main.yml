@@ -1,0 +1,121 @@
+---
+- name: Derive Windows Server build context
+  ansible.builtin.set_fact:
+    openshift_windows_server_build_oc_local_path: >-
+      {{ lab_execution_tools_root }}/{{
+      mirror_registry_ocp_release }}/bin/oc
+    openshift_windows_server_build_kubeconfig_local_path: >-
+      {{ lab_execution_ocp_generated_root }}/auth/kubeconfig
+    openshift_windows_server_build_remote_dir: >-
+      /var/tmp/openshift-windows-server-build
+    openshift_windows_server_build_remote_oc_path: >-
+      /var/tmp/openshift-windows-server-build/oc
+    openshift_windows_server_build_remote_kubeconfig_path: >-
+      /var/tmp/openshift-windows-server-build/kubeconfig
+    openshift_windows_server_build_local_template_path: >-
+      {{ lab_execution_generated_root }}/windows/windows-server-2022-pipelinerun.yaml
+    openshift_windows_server_build_remote_template_path: >-
+      /var/tmp/openshift-windows-server-build/windows-server-2022-pipelinerun.yaml
+
+- name: Assert local oc binary exists for Windows build orchestration
+  ansible.builtin.stat:
+    path: "{{ openshift_windows_server_build_oc_local_path }}"
+  delegate_to: localhost
+  become: false
+  register: openshift_windows_server_build_oc_local_stat
+
+- name: Assert generated kubeconfig exists for Windows build orchestration
+  ansible.builtin.stat:
+    path: "{{ openshift_windows_server_build_kubeconfig_local_path }}"
+  delegate_to: localhost
+  become: false
+  register: openshift_windows_server_build_kubeconfig_local_stat
+
+- name: Fail when required local Windows build artifacts are missing
+  ansible.builtin.assert:
+    that:
+      - openshift_windows_server_build_oc_local_stat.stat.exists
+      - openshift_windows_server_build_kubeconfig_local_stat.stat.exists
+    fail_msg: >-
+      Windows build orchestration requires a generated oc binary and kubeconfig.
+
+- name: Fail when Windows ISO URL is not configured
+  ansible.builtin.assert:
+    that:
+      - openshift_windows_build_iso_url != 'REPLACE_WITH_WINDOWS_SERVER_ISO_URL'
+    fail_msg: >-
+      Set openshift_windows_build_iso_url in vars/day2/windows_server_build.yml (or
+      override it on the command line) before launching a Windows build.
+
+- name: Create local generated Windows build directory
+  ansible.builtin.file:
+    path: "{{ lab_execution_generated_root }}/windows"
+    state: directory
+    mode: "0755"
+  delegate_to: localhost
+  become: false
+
+- name: Render Windows Server PipelineRun template locally
+  ansible.builtin.template:
+    src: pipelinerun-windows-server.yaml.j2
+    dest: "{{ openshift_windows_server_build_local_template_path }}"
+    mode: "0644"
+  delegate_to: localhost
+  become: false
+
+- name: Create remote Windows build workspace
+  ansible.builtin.file:
+    path: "{{ openshift_windows_server_build_remote_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Copy pinned oc binary to hypervisor for Windows build orchestration
+  ansible.builtin.copy:
+    src: "{{ openshift_windows_server_build_oc_local_path }}"
+    dest: "{{ openshift_windows_server_build_remote_oc_path }}"
+    mode: "0755"
+
+- name: Copy generated kubeconfig to hypervisor for Windows build orchestration
+  ansible.builtin.copy:
+    src: "{{ openshift_windows_server_build_kubeconfig_local_path }}"
+    dest: "{{ openshift_windows_server_build_remote_kubeconfig_path }}"
+    mode: "0600"
+
+- name: Copy rendered Windows Server PipelineRun to hypervisor
+  ansible.builtin.copy:
+    src: "{{ openshift_windows_server_build_local_template_path }}"
+    dest: "{{ openshift_windows_server_build_remote_template_path }}"
+    mode: "0644"
+
+- name: Apply Windows Server PipelineRun
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_windows_server_build_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_windows_server_build_remote_template_path }}"
+  environment:
+    KUBECONFIG: "{{ openshift_windows_server_build_remote_kubeconfig_path }}"
+  register: openshift_windows_server_build_pipelinerun_apply
+  changed_when: >-
+    'created' in openshift_windows_server_build_pipelinerun_apply.stdout
+    or 'configured' in openshift_windows_server_build_pipelinerun_apply.stdout
+
+- name: Wait for PipelineRun to start
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_windows_server_build_remote_oc_path }}"
+      - get
+      - pipelinerun
+      - "{{ openshift_windows_build_pipelinerun_name }}"
+      - -n
+      - "{{ openshift_windows_build_namespace }}"
+      - -o
+      - jsonpath={.status.startTime}
+  environment:
+    KUBECONFIG: "{{ openshift_windows_server_build_remote_kubeconfig_path }}"
+  register: openshift_windows_server_build_start_time
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_windows_server_build_start_time.stdout | length > 0

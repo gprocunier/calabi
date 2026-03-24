@@ -1,0 +1,64 @@
+---
+openshift_post_install_netobserv_loki_namespace: netobserv
+openshift_post_install_netobserv_loki_operator_namespace: >-
+  openshift-operators-redhat
+openshift_post_install_netobserv_operator_namespace: >-
+  openshift-netobserv-operator
+openshift_post_install_netobserv_loki_subscription_name: loki-operator
+openshift_post_install_netobserv_subscription_name: netobserv-operator
+openshift_post_install_netobserv_loki_channel: stable-6.2
+openshift_post_install_netobserv_channel: stable
+openshift_post_install_netobserv_loki_source: cs-redhat-operator-index-v4-20
+openshift_post_install_netobserv_source: cs-redhat-operator-index-v4-20
+openshift_post_install_netobserv_source_namespace: openshift-marketplace
+openshift_post_install_netobserv_loki_stack_name: netobserv-loki
+openshift_post_install_netobserv_loki_stack_size: 1x.extra-small
+openshift_post_install_netobserv_loki_storage_class_name: >-
+  ocs-storagecluster-ceph-rbd
+openshift_post_install_netobserv_loki_storage_secret_name: netobserv-loki-odf
+openshift_post_install_netobserv_obc_name: netobserv-loki
+openshift_post_install_netobserv_obc_storage_class_name: >-
+  openshift-storage.noobaa.io
+openshift_post_install_netobserv_loki_node_selector:
+  cluster.ocs.openshift.io/openshift-storage: ""
+openshift_post_install_netobserv_loki_tolerations:
+  - key: node.ocs.openshift.io/storage
+    operator: Equal
+    value: "true"
+    effect: NoSchedule
+openshift_post_install_netobserv_flowcollector_name: cluster
+openshift_post_install_netobserv_flowcollector_namespace: netobserv
+openshift_post_install_netobserv_flowcollector_sampling: 100
+openshift_post_install_netobserv_flowcollector_cache_active_timeout: 15s
+openshift_post_install_netobserv_flowcollector_cache_max_flows: 120000
+openshift_post_install_netobserv_flowcollector_ebpf_privileged: true
+openshift_post_install_netobserv_flowcollector_ebpf_features:
+  - PacketDrop
+  - DNSTracking
+  - FlowRTT
+  - NetworkEvents
+  - PacketTranslation
+openshift_post_install_netobserv_flowcollector_processor_replicas: 3
+openshift_post_install_netobserv_flowcollector_metrics_server_tls:
+  insecureSkipVerify: false
+openshift_post_install_netobserv_flowcollector_subnet_labels:
+  openShiftAutoDetect: true
+  customLabels:
+    - name: EXT:management
+      cidrs:
+        - 172.16.0.0/24
+    - name: EXT:data300
+      cidrs:
+        - 172.16.20.0/24
+    - name: EXT:data301
+      cidrs:
+        - 172.16.21.0/24
+    - name: EXT:isolated302
+      cidrs:
+        - 172.16.22.0/24
+openshift_post_install_netobserv_flowcollector_ebpf_exclude_interfaces:
+  - lo
+openshift_post_install_netobserv_flowcollector_enable_console_plugin: true
+openshift_post_install_netobserv_flowcollector_enable_prometheus: true
+openshift_post_install_netobserv_flowcollector_enable_network_policy: true
+openshift_post_install_netobserv_flowcollector_disable_alerts: []

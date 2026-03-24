@@ -1,0 +1,14 @@
+---
+- name: Generate OpenShift agent boot media and attachment plan
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/mirror_content.yml
+    - ../../vars/guests/openshift_cluster_vm.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/cluster/openshift_install_artifacts.yml
+    - ../../vars/cluster/openshift_agent_media.yml
+  roles:
+    - openshift_agent_media

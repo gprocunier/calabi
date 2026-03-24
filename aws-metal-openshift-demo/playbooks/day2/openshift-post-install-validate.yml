@@ -1,0 +1,12 @@
+---
+- name: Validate OpenShift cluster status from inside the lab boundary
+  hosts: aws_metal
+  gather_facts: true
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/mirror_content.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/cluster/openshift_agent_media.yml
+    - ../../vars/guests/openshift_cluster_vm.yml
+  roles:
+    - role: openshift_post_install_validate

@@ -1,0 +1,152 @@
+---
+- name: Validate libvirt CD-ROM cleanup input
+  ansible.builtin.assert:
+    that:
+      - libvirt_cdrom_cleanup_domain | length > 0
+      - libvirt_cdrom_cleanup_media_path | length > 0
+    fail_msg: >-
+      libvirt_cdrom_cleanup requires both libvirt_cdrom_cleanup_domain and
+      libvirt_cdrom_cleanup_media_path.
+
+- name: Check whether the target libvirt domain exists
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - dominfo
+      - "{{ libvirt_cdrom_cleanup_domain }}"
+  register: libvirt_cdrom_cleanup_domain_info
+  changed_when: false
+  failed_when: false
+
+- name: Identify matching CD-ROM targets attached to the libvirt domain
+  ansible.builtin.shell: |
+    set -euo pipefail
+    virsh domblklist "{{ libvirt_cdrom_cleanup_domain }}" --details \
+      | awk -v media="{{ libvirt_cdrom_cleanup_media_path }}" \
+          '$2 == "cdrom" && ($4 == media || $4 == "-") {print $3}'
+  args:
+    executable: /bin/bash
+  register: libvirt_cdrom_cleanup_targets
+  changed_when: false
+  when: libvirt_cdrom_cleanup_domain_info.rc == 0
+
+- name: Create a temporary workspace for live CD-ROM detach XML
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: libvirt-cdrom-cleanup-
+  register: libvirt_cdrom_cleanup_tempdir
+  when:
+    - libvirt_cdrom_cleanup_domain_info.rc == 0
+    - (libvirt_cdrom_cleanup_targets.stdout_lines | default([])) | length > 0
+
+- name: Capture live CD-ROM device XML for each matching target
+  ansible.builtin.shell: |
+    set -euo pipefail
+    virsh dumpxml "{{ libvirt_cdrom_cleanup_domain }}" \
+      | python3 -c 'import sys,xml.etree.ElementTree as ET; target=sys.argv[1]; outfile=sys.argv[2]; root=ET.fromstring(sys.stdin.read()); devices=root.find("devices"); assert devices is not None, "devices section not found"; match=next((disk for disk in devices.findall("disk") if disk.get("device")=="cdrom" and disk.find("target") is not None and disk.find("target").get("dev")==target), None); (match is not None) or (_ for _ in ()).throw(SystemExit(f"cdrom target {target} not found")); ET.ElementTree(match).write(outfile, encoding="unicode")' "{{ item }}" "{{ libvirt_cdrom_cleanup_tempdir.path }}/{{ item }}.xml"
+  args:
+    executable: /bin/bash
+  loop: "{{ libvirt_cdrom_cleanup_targets.stdout_lines | default([]) }}"
+  when:
+    - libvirt_cdrom_cleanup_domain_info.rc == 0
+    - (libvirt_cdrom_cleanup_targets.stdout_lines | default([])) | length > 0
+  changed_when: true
+
+- name: Eject matching CD-ROM media from the libvirt domain
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - change-media
+      - "{{ libvirt_cdrom_cleanup_domain }}"
+      - "{{ item }}"
+      - --eject
+      - --config
+      - --live
+  loop: "{{ libvirt_cdrom_cleanup_targets.stdout_lines | default([]) }}"
+  register: libvirt_cdrom_cleanup_media_eject
+  when:
+    - libvirt_cdrom_cleanup_domain_info.rc == 0
+    - (libvirt_cdrom_cleanup_targets.stdout_lines | default([])) | length > 0
+  changed_when: libvirt_cdrom_cleanup_media_eject.rc == 0
+  failed_when: false
+
+- name: Detach matching CD-ROM devices from the live libvirt domain
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - detach-device
+      - "{{ libvirt_cdrom_cleanup_domain }}"
+      - "{{ libvirt_cdrom_cleanup_tempdir.path }}/{{ item }}.xml"
+      - --live
+  loop: "{{ libvirt_cdrom_cleanup_targets.stdout_lines | default([]) }}"
+  register: libvirt_cdrom_cleanup_live_detach
+  when:
+    - libvirt_cdrom_cleanup_domain_info.rc == 0
+    - (libvirt_cdrom_cleanup_targets.stdout_lines | default([])) | length > 0
+  changed_when: true
+  failed_when: false
+
+- name: Remove matching CD-ROM devices
+  ansible.builtin.command:
+    argv:
+      - virt-xml
+      - "{{ libvirt_cdrom_cleanup_domain }}"
+      - --remove-device
+      - --disk
+      - "target={{ item }}"
+  loop: "{{ libvirt_cdrom_cleanup_targets.stdout_lines | default([]) }}"
+  register: libvirt_cdrom_cleanup_remove_device
+  when:
+    - libvirt_cdrom_cleanup_domain_info.rc == 0
+    - (libvirt_cdrom_cleanup_targets.stdout_lines | default([])) | length > 0
+    - libvirt_cdrom_cleanup_remove_device | bool
+  changed_when: libvirt_cdrom_cleanup_remove_device.rc == 0
+  failed_when: false
+
+- name: Reset boot order to disk only when requested
+  ansible.builtin.command:
+    argv:
+      - virt-xml
+      - "{{ libvirt_cdrom_cleanup_domain }}"
+      - --edit
+      - --boot
+      - hd
+  when:
+    - libvirt_cdrom_cleanup_domain_info.rc == 0
+    - libvirt_cdrom_cleanup_reset_boot_to_hd_only | bool
+  changed_when: true
+
+- name: Re-check matching CD-ROM media after cleanup
+  ansible.builtin.shell: |
+    set -euo pipefail
+    virsh domblklist "{{ libvirt_cdrom_cleanup_domain }}" --details \
+      | awk -v media="{{ libvirt_cdrom_cleanup_media_path }}" \
+          '$2 == "cdrom" && $4 == media {print $3}'
+  args:
+    executable: /bin/bash
+  register: libvirt_cdrom_cleanup_remaining_media
+  changed_when: false
+  when: libvirt_cdrom_cleanup_domain_info.rc == 0
+
+- name: Assert matching CD-ROM media is no longer attached
+  ansible.builtin.assert:
+    that:
+      - (libvirt_cdrom_cleanup_remaining_media.stdout_lines | default([])) | length == 0
+    fail_msg: >-
+      Matching CD-ROM media {{ libvirt_cdrom_cleanup_media_path }} is still
+      attached to {{ libvirt_cdrom_cleanup_domain }} after cleanup.
+  when: libvirt_cdrom_cleanup_domain_info.rc == 0
+
+- name: Remove the temporary live CD-ROM detach workspace
+  ansible.builtin.file:
+    path: "{{ libvirt_cdrom_cleanup_tempdir.path }}"
+    state: absent
+  when:
+    - libvirt_cdrom_cleanup_tempdir is defined
+    - libvirt_cdrom_cleanup_tempdir.path is defined
+
+- name: Remove the source CD-ROM file when requested
+  ansible.builtin.file:
+    path: "{{ libvirt_cdrom_cleanup_media_path }}"
+    state: absent
+  when: libvirt_cdrom_cleanup_remove_media_file | bool

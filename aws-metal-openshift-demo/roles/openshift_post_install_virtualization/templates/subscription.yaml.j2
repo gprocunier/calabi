@@ -1,0 +1,11 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: {{ openshift_post_install_virtualization_subscription_name }}
+  namespace: {{ openshift_post_install_virtualization_namespace }}
+spec:
+  channel: {{ openshift_post_install_virtualization_channel }}
+  installPlanApproval: Automatic
+  name: {{ openshift_post_install_virtualization_package_name }}
+  source: {{ openshift_post_install_virtualization_source }}
+  sourceNamespace: {{ openshift_post_install_virtualization_source_namespace }}

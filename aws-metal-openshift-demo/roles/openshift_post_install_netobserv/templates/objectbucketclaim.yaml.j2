@@ -1,0 +1,9 @@
+---
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: {{ openshift_post_install_netobserv_obc_name }}
+  namespace: {{ openshift_post_install_netobserv_loki_namespace }}
+spec:
+  generateBucketName: {{ openshift_post_install_netobserv_obc_name }}-
+  storageClassName: {{ openshift_post_install_netobserv_obc_storage_class_name }}

@@ -1,0 +1,155 @@
+---
+- name: Derive OpenShift DNS cleanup facts
+  ansible.builtin.set_fact:
+    idm_openshift_dns_zone: "{{ openshift_install_cluster.full_domain }}"
+    idm_openshift_dns_ingress_record: >-
+      {{ openshift_install_cluster.dns.ingress_record | default('ingress') }}
+    idm_openshift_dns_storage_suffix: >-
+      {{
+        openshift_install_cluster.dns.storage_hostname_suffix
+        | default('-storage')
+      }}
+    idm_openshift_dns_reverse_zones:
+      - >-
+        {{
+          (
+            openshift_install_cluster.network.machine_cidr
+            | regex_replace('/.*$', '')
+          ).split('.')[2]
+        }}.{{
+          (
+            openshift_install_cluster.network.machine_cidr
+            | regex_replace('/.*$', '')
+          ).split('.')[1]
+        }}.{{
+          (
+            openshift_install_cluster.network.machine_cidr
+            | regex_replace('/.*$', '')
+          ).split('.')[0]
+        }}.in-addr.arpa
+      - >-
+        {{
+          (
+            openshift_install_cluster.network.storage_cidr
+            | regex_replace('/.*$', '')
+          ).split('.')[2]
+        }}.{{
+          (
+            openshift_install_cluster.network.storage_cidr
+            | regex_replace('/.*$', '')
+          ).split('.')[1]
+        }}.{{
+          (
+            openshift_install_cluster.network.storage_cidr
+            | regex_replace('/.*$', '')
+          ).split('.')[0]
+        }}.in-addr.arpa
+
+- name: Build the list of OpenShift DNS records to remove
+  ansible.builtin.set_fact:
+    idm_openshift_dns_cleanup_records: >-
+      {%- set records = [] -%}
+      {%- set _ = records.append({
+        'zone_name': idm_openshift_dns_zone,
+        'name': 'api',
+        'record_type': 'A',
+        'record_value': openshift_install_cluster.network.api_vip
+      }) -%}
+      {%- set _ = records.append({
+        'zone_name': idm_openshift_dns_zone,
+        'name': 'api-int',
+        'record_type': 'A',
+        'record_value': openshift_install_cluster.network.api_vip
+      }) -%}
+      {%- set _ = records.append({
+        'zone_name': idm_openshift_dns_zone,
+        'name': idm_openshift_dns_ingress_record,
+        'record_type': 'A',
+        'record_value': openshift_install_cluster.network.ingress_vip
+      }) -%}
+      {%- set _ = records.append({
+        'zone_name': idm_openshift_dns_zone,
+        'name': '*.apps',
+        'record_type': 'A',
+        'record_value': openshift_install_cluster.network.ingress_vip
+      }) -%}
+      {%- set _ = records.append({
+        'zone_name': idm_openshift_dns_reverse_zones[0],
+        'name': openshift_install_cluster.network.api_vip.split('.')[-1],
+        'record_type': 'PTR',
+        'record_value': openshift_install_cluster.dns.api_fqdn ~ '.'
+      }) -%}
+      {%- set _ = records.append({
+        'zone_name': idm_openshift_dns_reverse_zones[0],
+        'name': openshift_install_cluster.network.ingress_vip.split('.')[-1],
+        'record_type': 'PTR',
+        'record_value': idm_openshift_dns_ingress_record ~ '.' ~
+                        idm_openshift_dns_zone ~ '.'
+      }) -%}
+      {%- for node in openshift_install_cluster.nodes -%}
+      {%- set machine_name = (
+        node.fqdn | regex_replace('\\.' ~ idm_openshift_dns_zone ~ '$', '')
+      ) -%}
+      {%- set storage_name = node.name ~ idm_openshift_dns_storage_suffix -%}
+      {%- set _ = records.append({
+        'zone_name': idm_openshift_dns_zone,
+        'name': machine_name,
+        'record_type': 'A',
+        'record_value': node.machine_network.ipv4_address
+      }) -%}
+      {%- set _ = records.append({
+        'zone_name': idm_openshift_dns_reverse_zones[0],
+        'name': node.machine_network.ipv4_address.split('.')[-1],
+        'record_type': 'PTR',
+        'record_value': node.fqdn ~ '.'
+      }) -%}
+      {%- set _ = records.append({
+        'zone_name': idm_openshift_dns_zone,
+        'name': storage_name,
+        'record_type': 'A',
+        'record_value': node.storage_network.ipv4_address
+      }) -%}
+      {%- set _ = records.append({
+        'zone_name': idm_openshift_dns_reverse_zones[1],
+        'name': node.storage_network.ipv4_address.split('.')[-1],
+        'record_type': 'PTR',
+        'record_value': storage_name ~ '.' ~ idm_openshift_dns_zone ~ '.'
+      }) -%}
+      {%- endfor -%}
+      {{ records }}
+
+- name: Remove OpenShift DNS records when present
+  freeipa.ansible_freeipa.ipadnsrecord:
+    ipaadmin_password: "{{ idm_server.admin_password }}"
+    ipaapi_context: server
+    zone_name: "{{ item.zone_name }}"
+    name: "{{ item.name }}"
+    record_type: "{{ item.record_type }}"
+    record_value: "{{ item.record_value }}"
+    state: absent
+  loop: "{{ idm_openshift_dns_cleanup_records }}"
+  loop_control:
+    label: "{{ item.zone_name }}:{{ item.name }}"
+
+- name: Remove OpenShift reverse DNS zones when requested
+  freeipa.ansible_freeipa.ipadnszone:
+    ipaadmin_password: "{{ idm_server.admin_password }}"
+    ipaapi_context: server
+    name: "{{ item }}"
+    state: absent
+  loop: "{{ idm_openshift_dns_reverse_zones }}"
+  loop_control:
+    label: "{{ item }}"
+  when: >-
+    openshift_install_cluster.dns.remove_reverse_zones_on_cleanup
+    | default(true) | bool
+
+- name: Remove the OpenShift forward DNS zone when requested
+  freeipa.ansible_freeipa.ipadnszone:
+    ipaadmin_password: "{{ idm_server.admin_password }}"
+    ipaapi_context: server
+    name: "{{ idm_openshift_dns_zone }}"
+    state: absent
+  when: >-
+    openshift_install_cluster.dns.remove_forward_zone_on_cleanup
+    | default(true) | bool

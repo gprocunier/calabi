@@ -1,0 +1,211 @@
+---
+- name: Derive post-install validation paths
+  ansible.builtin.set_fact:
+    openshift_post_install_validate_oc_local_path: >-
+      {{ lab_execution_tools_root }}/{{
+      mirror_registry_ocp_release }}/bin/oc
+    openshift_post_install_validate_kubeconfig_local_path: >-
+      {{ lab_execution_ocp_generated_root }}/auth/kubeconfig
+    openshift_post_install_validate_remote_dir: >-
+      /var/tmp/openshift-post-install-validate
+    openshift_post_install_validate_remote_oc_path: >-
+      /var/tmp/openshift-post-install-validate/oc
+    openshift_post_install_validate_remote_kubeconfig_path: >-
+      /var/tmp/openshift-post-install-validate/kubeconfig
+
+- name: Assert local oc binary exists
+  ansible.builtin.stat:
+    path: "{{ openshift_post_install_validate_oc_local_path }}"
+  delegate_to: localhost
+  become: true
+  register: openshift_post_install_validate_oc_local_stat
+
+- name: Assert generated kubeconfig exists
+  ansible.builtin.stat:
+    path: "{{ openshift_post_install_validate_kubeconfig_local_path }}"
+  delegate_to: localhost
+  become: true
+  register: openshift_post_install_validate_kubeconfig_local_stat
+
+- name: Fail when required local validation artifacts are missing
+  ansible.builtin.assert:
+    that:
+      - openshift_post_install_validate_oc_local_stat.stat.exists
+      - openshift_post_install_validate_kubeconfig_local_stat.stat.exists
+    fail_msg: >-
+      Expected local post-install validation artifacts were not found.
+      Ensure installer binaries and generated auth assets exist first.
+
+- name: Create remote validation workspace
+  ansible.builtin.file:
+    path: "{{ openshift_post_install_validate_remote_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Copy pinned oc binary to the hypervisor
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_validate_oc_local_path }}"
+    dest: "{{ openshift_post_install_validate_remote_oc_path }}"
+    mode: "0755"
+
+- name: Copy generated kubeconfig to the hypervisor
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_validate_kubeconfig_local_path }}"
+    dest: "{{ openshift_post_install_validate_remote_kubeconfig_path }}"
+    mode: "0600"
+
+- name: Capture cluster version from inside the lab boundary
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_validate_remote_oc_path }}"
+      - get
+      - clusterversion
+      - -o
+      - json
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_validate_remote_kubeconfig_path }}"
+  register: openshift_post_install_validate_clusterversion
+  changed_when: false
+
+- name: Capture cluster node status from inside the lab boundary
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_validate_remote_oc_path }}"
+      - get
+      - nodes
+      - -o
+      - wide
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_validate_remote_kubeconfig_path }}"
+  register: openshift_post_install_validate_nodes
+  changed_when: false
+
+- name: Capture cluster operator status from inside the lab boundary
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_validate_remote_oc_path }}"
+      - get
+      - clusteroperators
+      - -o
+      - json
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_validate_remote_kubeconfig_path }}"
+  register: openshift_post_install_validate_clusteroperators
+  changed_when: false
+
+- name: Capture pending CSRs from inside the lab boundary
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_validate_remote_oc_path }}"
+      - get
+      - csr
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_validate_remote_kubeconfig_path }}"
+  register: openshift_post_install_validate_csrs
+  changed_when: false
+  failed_when: false
+
+- name: Assert cluster version is available and not progressing
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          openshift_post_install_validate_clusterversion.stdout | from_json
+        )['items'][0].status.conditions
+        | selectattr('type', 'equalto', 'Available')
+        | map(attribute='status')
+        | first == 'True'
+      - >-
+        (
+          openshift_post_install_validate_clusterversion.stdout | from_json
+        )['items'][0].status.conditions
+        | selectattr('type', 'equalto', 'Progressing')
+        | map(attribute='status')
+        | first == 'False'
+    fail_msg: >-
+      Cluster version did not report the expected available/non-progressing
+      state from inside the lab boundary.
+
+- name: Assert all cluster operators are available and not degraded
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          openshift_post_install_validate_clusteroperators.stdout | from_json
+        )['items']
+        | map(attribute='status.conditions')
+        | map('selectattr', 'type', 'equalto', 'Available')
+        | map('map', attribute='status')
+        | map('first')
+        | select('equalto', 'True')
+        | list
+        | length
+        ==
+        (
+          openshift_post_install_validate_clusteroperators.stdout | from_json
+        )['items']
+        | length
+      - >-
+        (
+          openshift_post_install_validate_clusteroperators.stdout | from_json
+        )['items']
+        | map(attribute='status.conditions')
+        | map('selectattr', 'type', 'equalto', 'Degraded')
+        | map('map', attribute='status')
+        | map('first')
+        | select('equalto', 'False')
+        | list
+        | length
+        ==
+        (
+          openshift_post_install_validate_clusteroperators.stdout | from_json
+        )['items']
+        | length
+    fail_msg: >-
+      One or more cluster operators are not available or are degraded.
+      Review the clusteroperators output from the validation play.
+
+- name: Derive concise post-install validation summaries
+  ansible.builtin.set_fact:
+    openshift_post_install_validate_version_summary: >-
+      Cluster version {{
+      (
+        openshift_post_install_validate_clusterversion.stdout | from_json
+      )['items'][0].status.desired.version
+      }} is Available=True and Progressing=False.
+    openshift_post_install_validate_operator_summary: >-
+      {{
+        (
+          openshift_post_install_validate_clusteroperators.stdout | from_json
+        )['items']
+        | length
+      }} cluster operators are Available=True and Degraded=False.
+
+- name: Publish post-install validation summary
+  ansible.builtin.debug:
+    msg:
+      - "{{ openshift_post_install_validate_version_summary }}"
+      - "{{ openshift_post_install_validate_operator_summary }}"
+      - "{{ openshift_post_install_validate_nodes.stdout_lines }}"
+      - "{{ openshift_post_install_validate_csrs.stdout_lines }}"
+
+- name: Detach agent boot media from converged OpenShift domains
+  ansible.builtin.include_role:
+    name: libvirt_cdrom_cleanup
+  vars:
+    libvirt_cdrom_cleanup_domain: >-
+      {{
+        openshift_cluster_node.fqdn
+        | default(
+          openshift_cluster_node.name
+          ~ '.'
+          ~ openshift_install_cluster.full_domain
+        )
+      }}
+    libvirt_cdrom_cleanup_media_path: "{{ openshift_agent_media.hypervisor_boot_media_path }}"
+    libvirt_cdrom_cleanup_reset_boot_to_hd_only: true
+    libvirt_cdrom_cleanup_remove_device: false
+  loop: "{{ openshift_install_cluster.nodes }}"
+  loop_control:
+    loop_var: openshift_cluster_node
+    label: "{{ openshift_cluster_node.name }}"

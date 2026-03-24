@@ -1,0 +1,87 @@
+---
+- name: Derive OpenShift cluster cleanup facts
+  ansible.builtin.set_fact:
+    openshift_cluster_cleanup_nodes: "{{ openshift_cluster_nodes }}"
+    openshift_cluster_cleanup_effective_domain: >-
+      {{
+        openshift_install_cluster.full_domain
+        | default(openshift_cluster_vm_defaults.domain)
+      }}
+
+- name: Check whether the OpenShift node libvirt domains exist
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - dominfo
+      - "{{ item.name }}.{{ item.domain | default(openshift_cluster_cleanup_effective_domain) }}"
+  loop: "{{ openshift_cluster_cleanup_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: openshift_cluster_cleanup_domain_info
+  changed_when: false
+  failed_when: false
+
+- name: Stop the OpenShift node VMs when they exist
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - destroy
+      - "{{ item.item.name }}.{{ item.item.domain | default(openshift_cluster_cleanup_effective_domain) }}"
+  loop: "{{ openshift_cluster_cleanup_domain_info.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.rc == 0
+  changed_when: true
+  failed_when: false
+
+- name: Undefine the OpenShift node VMs when they exist
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - undefine
+      - "{{ item.item.name }}.{{ item.item.domain | default(openshift_cluster_cleanup_effective_domain) }}"
+      - --nvram
+  loop: "{{ openshift_cluster_cleanup_domain_info.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.rc == 0
+  changed_when: true
+  failed_when: false
+
+- name: Remove OpenShift node runtime directories from the hypervisor
+  ansible.builtin.file:
+    path: "{{ openshift_cluster_cleanup_runtime_root }}/{{ item.name }}"
+    state: absent
+  loop: "{{ openshift_cluster_cleanup_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Clear the beginning of OpenShift root block devices when requested
+  ansible.builtin.command:
+    argv:
+      - dd
+      - if=/dev/zero
+      - of={{ item.disks.root.path }}
+      - bs=1M
+      - count=16
+      - conv=fsync
+  loop: "{{ openshift_cluster_cleanup_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: openshift_cluster_cleanup_wipe_block_devices | bool
+  changed_when: true
+
+- name: Clear the beginning of OpenShift additional block devices when requested
+  ansible.builtin.command:
+    argv:
+      - dd
+      - if=/dev/zero
+      - of={{ item.1.path }}
+      - bs=1M
+      - count=16
+      - conv=fsync
+  loop: "{{ openshift_cluster_cleanup_nodes | subelements('disks.additional', skip_missing=True) }}"
+  loop_control:
+    label: "{{ item.0.name }}:{{ item.1.name | default(item.1.path) }}"
+  when: openshift_cluster_cleanup_wipe_block_devices | bool
+  changed_when: true
