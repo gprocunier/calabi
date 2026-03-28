@@ -30,6 +30,32 @@ CPU tier model are earning their keep.
 | **zram Cost-Benefit** | Compression ratio, swap I/O rates, capacity utilization, kswapd cost |
 | **Memory Management Overhead** | Per-thread CPU cost for ksmd, kswapd, kcompactd |
 
+## Panel Screenshots
+
+### KSM Cost-Benefit
+
+![KSM Cost-Benefit](images/observer_ksm_cost_benefit.png)
+
+### CPU Performance Domains
+
+![CPU Performance Domains](images/observer_cpu_performance_domains.png)
+
+### CPU Pool Topology
+
+![CPU Pool Topology](images/observer_cpu_pool_topology.png)
+
+### Memory Overview
+
+![Memory Overview](images/observer_memory_overview.png)
+
+### zram Cost-Benefit
+
+![zram Cost-Benefit](images/observer_zram_cost_benefit.png)
+
+### Memory Management Overhead
+
+![Memory Management Overhead](images/observer_memory_management_overhead.png)
+
 ## Architecture
 
 ```
