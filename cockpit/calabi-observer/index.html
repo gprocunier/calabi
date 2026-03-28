@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Calabi Observer</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="calabi-observer.css" />
+    <script src="../base1/cockpit.js"></script>
+</head>
+<body class="pf-v6-m-tabular-nums">
+    <div id="app">
+        <header id="header">
+            <h2>Calabi Observer</h2>
+            <div id="header-controls">
+                <span id="poll-status" class="status-dot status-dot--waiting" title="Waiting for first sample"></span>
+                <label>
+                    Interval
+                    <select id="interval-select">
+                        <option value="2000">2s</option>
+                        <option value="5000" selected>5s</option>
+                        <option value="10000">10s</option>
+                        <option value="30000">30s</option>
+                    </select>
+                </label>
+                <button id="pause-btn" type="button">Pause</button>
+            </div>
+        </header>
+
+        <section id="ksm-panel" class="calabi-card">
+            <h3>KSM Cost-Benefit</h3>
+            <div id="ksm-content" class="panel-placeholder">Waiting for data...</div>
+        </section>
+
+        <section id="cpu-panel" class="calabi-card">
+            <h3>CPU Performance Domains</h3>
+            <div id="cpu-content" class="panel-placeholder">Waiting for data...</div>
+        </section>
+
+        <section id="cpu-map-panel" class="calabi-card">
+            <h3>CPU Pool Topology</h3>
+            <div id="cpu-map-content" class="panel-placeholder">Waiting for data...</div>
+        </section>
+
+        <section id="mem-panel" class="calabi-card">
+            <h3>Memory Overview</h3>
+            <div id="mem-content" class="panel-placeholder">Waiting for data...</div>
+        </section>
+
+        <section id="zram-panel" class="calabi-card">
+            <h3>zram Cost-Benefit</h3>
+            <div id="zram-content" class="panel-placeholder">Waiting for data...</div>
+        </section>
+
+        <section id="overhead-panel" class="calabi-card">
+            <h3>Memory Management Overhead</h3>
+            <div id="overhead-content" class="panel-placeholder">Waiting for data...</div>
+        </section>
+
+        <div id="error-banner" class="calabi-error" hidden></div>
+    </div>
+
+    <script src="sparkline.js"></script>
+    <script src="calabi-observer.js"></script>
+</body>
+</html>
