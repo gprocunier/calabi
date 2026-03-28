@@ -365,6 +365,193 @@ Expected current state:
   installed with weights `512`, `333`, and `167`
 - no `systemd.cpu_affinity=` or `irqaffinity=` kernel arguments
 
+### Apply The Host Memory-Oversubscription Policy
+
+_This subsection describes the steps performed by `playbooks/bootstrap/site.yml`,
+primarily the `lab_host_memory_oversubscription` role. The same role can be
+re-applied independently using `playbooks/bootstrap/host-memory-oversubscription.yml`
+without re-running the full bootstrap sequence. The orchestration source of truth
+for all memory-policy defaults is `vars/global/host_memory_oversubscription.yml`._
+
+The memory-overcommit policy is kept separate from CPU placement. It improves
+host RAM efficiency through three independent kernel mechanisms:
+
+- **zram** compressed swap — an in-memory block device that stores anonymous
+  pages in compressed form, giving the kernel a cheap place to park cold pages
+  before direct reclaim gets expensive
+- **THP** in `madvise` mode — Transparent Huge Pages only when applications
+  explicitly request them, avoiding background compaction stalls
+- **KSM** with conservative scan settings — Kernel Same-page Merging
+  deduplicates identical memory pages across guests running the same OS image
+
+> [!IMPORTANT]
+> `zram-size = 16G` is not a 16 GiB reservation taken away from the host up
+> front. The device only consumes physical RAM as compressed pages are stored
+> in it. With `zstd` compression the typical effective ratio is 2:1 to 4:1,
+> so 16G of logical swap capacity costs roughly 4-8G of physical RAM when
+> fully utilized.
+
+> [!NOTE]
+> This is most useful when the host is calm or moderately busy. It helps the
+> kernel avoid harsher reclaim behavior and can smooth out bursty pressure, but
+> it is not a substitute for enough real RAM at high contention.
+
+> [!WARNING]
+> Compression, deduplication, and reclaim are CPU work that runs in the host
+> kernel, not inside the Gold/Silver/Bronze tier model. If you lean harder on
+> memory overcommit, expect some host cycles to move from idle capacity into
+> memory management before you see any change in guest throughput.
+
+#### zram
+
+The role creates a systemd oneshot service that manages the zram device
+explicitly using `zramctl`. This avoids relying on `systemd-zram-generator`
+and keeps all three memory subsystems in a single service unit.
+
+```bash
+# Load the zram kernel module
+modprobe zram num_devices=1
+
+# Configure the device with zstd compression and 16G capacity
+zramctl /dev/zram0 --algorithm zstd --size 16G
+
+# Format and activate as swap with high priority
+mkswap -f /dev/zram0
+swapon --priority 100 --discard /dev/zram0
+```
+
+The swap priority of `100` ensures zram is always preferred over any physical
+swap device. The `--discard` flag enables TRIM so that freed pages are
+immediately released back to the host.
+
+#### THP
+
+```bash
+echo madvise > /sys/kernel/mm/transparent_hugepage/enabled
+echo madvise > /sys/kernel/mm/transparent_hugepage/defrag
+```
+
+Setting both to `madvise` means the kernel only allocates and compacts huge
+pages when the application explicitly requests them via `madvise(MADV_HUGEPAGE)`.
+This avoids the pathological case where `always` mode triggers aggressive
+`khugepaged` compaction against memory that no process benefits from.
+
+#### KSM
+
+```bash
+echo 1000 > /sys/kernel/mm/ksm/pages_to_scan
+echo 20   > /sys/kernel/mm/ksm/sleep_millisecs
+echo 1    > /sys/kernel/mm/ksm/run
+```
+
+The scan settings are deliberately conservative: 1000 pages per cycle with a
+20 ms pause. The first full scan pass across all guest memory is slow (minutes
+to hours on a fully deployed lab), but once the internal dedup tree is built
+the steady-state CPU cost is near zero.
+
+#### Wrap It In A Persistent Service
+
+Rather than running these commands ad-hoc, the role installs a systemd
+oneshot service so the policy survives reboot.
+
+```bash
+cat <<'EOF' >/etc/systemd/system/calabi-host-memory-oversubscription.service
+[Unit]
+Description=Apply Calabi host memory oversubscription policy
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=-/usr/sbin/swapoff /dev/zram0
+ExecStartPre=-/usr/sbin/zramctl --reset /dev/zram0
+ExecStartPre=-/usr/sbin/modprobe -r zram
+ExecStartPre=/usr/sbin/modprobe zram num_devices=1
+ExecStart=/usr/sbin/zramctl /dev/zram0 --algorithm zstd --size 16G
+ExecStart=/usr/sbin/mkswap -f /dev/zram0
+ExecStart=/usr/sbin/swapon --priority 100 --discard /dev/zram0
+ExecStop=-/usr/sbin/swapoff /dev/zram0
+ExecStop=-/usr/sbin/zramctl --reset /dev/zram0
+ExecStop=-/usr/sbin/modprobe -r zram
+ExecStart=/usr/bin/bash -lc '\
+if [ -e /sys/kernel/mm/transparent_hugepage/enabled ]; then echo madvise > /sys/kernel/mm/transparent_hugepage/enabled; fi; \
+if [ -e /sys/kernel/mm/transparent_hugepage/defrag ]; then echo madvise > /sys/kernel/mm/transparent_hugepage/defrag; fi; \
+if [ -e /sys/kernel/mm/ksm/pages_to_scan ]; then echo 1000 > /sys/kernel/mm/ksm/pages_to_scan; fi; \
+if [ -e /sys/kernel/mm/ksm/sleep_millisecs ]; then echo 20 > /sys/kernel/mm/ksm/sleep_millisecs; fi; \
+if [ -e /sys/kernel/mm/ksm/run ]; then echo 1 > /sys/kernel/mm/ksm/run; fi; \
+true'
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now calabi-host-memory-oversubscription.service
+```
+
+#### Validate The Memory-Oversubscription State
+
+```bash
+# Service state
+systemctl is-enabled calabi-host-memory-oversubscription.service
+systemctl is-active calabi-host-memory-oversubscription.service
+
+# zram device and swap
+zramctl
+swapon --show
+
+# THP mode
+cat /sys/kernel/mm/transparent_hugepage/enabled
+cat /sys/kernel/mm/transparent_hugepage/defrag
+
+# KSM state
+cat /sys/kernel/mm/ksm/run
+cat /sys/kernel/mm/ksm/pages_to_scan
+cat /sys/kernel/mm/ksm/sleep_millisecs
+```
+
+Expected current state:
+
+- service is enabled and active
+- `zramctl` shows `/dev/zram0` with `zstd` algorithm and `16G` disk size
+- `swapon` shows `/dev/zram0` at priority `100`
+- THP enabled shows `[madvise]` (bracketed = active selection)
+- THP defrag shows `[madvise]`
+- KSM `run` is `1`, pages and sleep match the configured values
+
+#### Monitor KSM Effectiveness
+
+KSM deduplication savings grow over time as the scanner finds identical pages
+across guests. Check convergence after the cluster is fully deployed and idle:
+
+```bash
+# Pages shared (unique pages backing merged regions)
+cat /sys/kernel/mm/ksm/pages_shared
+
+# Pages sharing (total pages being deduplicated, including copies)
+cat /sys/kernel/mm/ksm/pages_sharing
+
+# Pages not yet merged
+cat /sys/kernel/mm/ksm/pages_unshared
+```
+
+If `pages_sharing` significantly exceeds `pages_shared`, KSM is saving
+meaningful memory. If `pages_unshared` remains high relative to `pages_sharing`
+for extended periods, the scan rate may be too conservative.
+
+The project includes a monitoring script for continuous observation:
+
+```bash
+<project-root>/scripts/host-memory-overcommit-status.py \
+  --host <hypervisor-public-ip> --user ec2-user
+```
+
+Use `--watch 30` for a live dashboard or `--delta 60` for a before-and-after
+comparison across an interval.
+
+The rationale is not to squeeze masters or infra. It is to improve host RAM
+efficiency while keeping Bronze workers as the primary elasticity lever.
+
 ## 5. Remove The Default Libvirt Network
 
 _This section describes the steps performed by `playbooks/bootstrap/site.yml`, primarily the `lab_libvirt` role._

@@ -1,0 +1,19 @@
+---
+lab_host_memory_oversubscription:
+  enabled: false
+  verify_state: true
+  zram:
+    enabled: false
+    device_name: zram0
+    size: 16G
+    compression_algorithm: zstd
+    swap_priority: 100
+  transparent_hugepages:
+    enabled: false
+    mode: madvise
+    defrag_mode: madvise
+  ksm:
+    enabled: false
+    run: 0
+    pages_to_scan: 1000
+    sleep_millisecs: 20

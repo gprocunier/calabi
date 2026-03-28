@@ -1,0 +1,43 @@
+[Unit]
+Description=Apply Calabi host memory oversubscription policy
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+{% if lab_host_memory_oversubscription.zram.enabled | bool %}
+ExecStartPre=-/usr/sbin/swapoff /dev/{{ lab_host_memory_oversubscription.zram.device_name }}
+ExecStartPre=-/usr/sbin/zramctl --reset /dev/{{ lab_host_memory_oversubscription.zram.device_name }}
+ExecStartPre=-/usr/sbin/modprobe -r zram
+ExecStartPre=/usr/sbin/modprobe zram num_devices=1
+ExecStart=/usr/sbin/zramctl /dev/{{ lab_host_memory_oversubscription.zram.device_name }} --algorithm {{ lab_host_memory_oversubscription.zram.compression_algorithm }} --size {{ lab_host_memory_oversubscription.zram.size }}
+ExecStart=/usr/sbin/mkswap -f /dev/{{ lab_host_memory_oversubscription.zram.device_name }}
+ExecStart=/usr/sbin/swapon --priority {{ lab_host_memory_oversubscription.zram.swap_priority }} --discard /dev/{{ lab_host_memory_oversubscription.zram.device_name }}
+ExecStop=-/usr/sbin/swapoff /dev/{{ lab_host_memory_oversubscription.zram.device_name }}
+ExecStop=-/usr/sbin/zramctl --reset /dev/{{ lab_host_memory_oversubscription.zram.device_name }}
+ExecStop=-/usr/sbin/modprobe -r zram
+{% endif %}
+ExecStart=/usr/bin/bash -lc '\
+{% if lab_host_memory_oversubscription.transparent_hugepages.enabled | bool %}
+if [ -e /sys/kernel/mm/transparent_hugepage/enabled ]; then \
+  echo {{ lab_host_memory_oversubscription.transparent_hugepages.mode }} > /sys/kernel/mm/transparent_hugepage/enabled; \
+fi; \
+if [ -e /sys/kernel/mm/transparent_hugepage/defrag ]; then \
+  echo {{ lab_host_memory_oversubscription.transparent_hugepages.defrag_mode }} > /sys/kernel/mm/transparent_hugepage/defrag; \
+fi; \
+{% endif %}
+{% if lab_host_memory_oversubscription.ksm.enabled | bool %}
+if [ -e /sys/kernel/mm/ksm/pages_to_scan ]; then \
+  echo {{ lab_host_memory_oversubscription.ksm.pages_to_scan }} > /sys/kernel/mm/ksm/pages_to_scan; \
+fi; \
+if [ -e /sys/kernel/mm/ksm/sleep_millisecs ]; then \
+  echo {{ lab_host_memory_oversubscription.ksm.sleep_millisecs }} > /sys/kernel/mm/ksm/sleep_millisecs; \
+fi; \
+if [ -e /sys/kernel/mm/ksm/run ]; then \
+  echo {{ lab_host_memory_oversubscription.ksm.run }} > /sys/kernel/mm/ksm/run; \
+fi; \
+{% endif %}
+true'
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+---
+- name: Apply the host memory oversubscription policy to the hypervisor
+  hosts: all
+  become: true
+  gather_facts: true
+  vars_files:
+    - ../../vars/global/host_resource_management.yml
+    - ../../vars/global/host_memory_oversubscription.yml
+  roles:
+    - role: lab_host_memory_oversubscription
+      tags:
+        - host-memory-oversubscription
