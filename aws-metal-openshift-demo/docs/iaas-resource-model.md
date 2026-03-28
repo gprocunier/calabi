@@ -171,59 +171,128 @@ The lab keeps a shape that still feels like a real deployment:
 - a full `3` control-plane / `3` infra / `3` worker cluster
 - realistic storage carve-up
 - network boundaries that map cleanly to what you would do across multiple hosts
+- Windows AD guest for hybrid identity testing
 
 That is the first win. You get a deployment pattern that is much easier to
 relate to a real environment than a toy single-node build, while still keeping
 it small enough to run on one public-cloud metal instance.
 
-If you price the intended guest footprint as a native-cloud fanout in
-`us-east-2`, the current numbers are close enough that cost is not the whole
-story:
+### Native instance equivalents
 
-| Shape | Native fanout total / month | Calabi total / month |
+Pricing the current guest estate as individual EC2 instances in `us-east-2`,
+rounding each guest up to the nearest practical instance type:
+
+| Role | Count | Guest shape | EC2 equivalent | EC2 specs | $/hr | $/hr total |
+| --- | --- | --- | --- | --- | ---: | ---: |
+| ocp-master | 3 | 8 vCPU, 24 GiB | m5.2xlarge | 8 vCPU, 32 GiB | `$0.384` | `$1.152` |
+| ocp-infra | 3 | 16 vCPU, 64 GiB | m5.4xlarge | 16 vCPU, 64 GiB | `$0.768` | `$2.304` |
+| ocp-worker | 3 | 12 vCPU, 16 GiB | c5.4xlarge | 16 vCPU, 32 GiB | `$0.680` | `$2.040` |
+| idm | 1 | 2 vCPU, 8 GiB | m5.large | 2 vCPU, 8 GiB | `$0.096` | `$0.096` |
+| bastion | 1 | 4 vCPU, 16 GiB | m5.xlarge | 4 vCPU, 16 GiB | `$0.192` | `$0.192` |
+| mirror-registry | 1 | 4 vCPU, 16 GiB | m5.xlarge | 4 vCPU, 16 GiB | `$0.192` | `$0.192` |
+| ad | 1 | 4 vCPU, 8 GiB | m5.xlarge (Windows) | 4 vCPU, 16 GiB | `$0.376` | `$0.376` |
+| **native total** | **13** | | | | | **`$6.352`** |
+| **Calabi m5.metal** | **1** | | m5.metal | 96 vCPU, 384 GiB | | **`$4.608`** |
+
+> [!NOTE]
+> Workers at 12 vCPU have no exact EC2 match. The native path is forced to
+> buy c5.4xlarge at 16 vCPU -- 33% more CPU than needed per worker. This is
+> one of the structural inefficiencies that the one-host model avoids: Calabi
+> allocates exactly 12 vCPU to each worker because it controls the guest
+> shape directly.
+
+> [!NOTE]
+> The AD server carries a Windows license premium. The m5.xlarge Windows
+> on-demand rate (`$0.376/hr`) is nearly double the Linux rate (`$0.192/hr`).
+> On the Calabi host, the Windows guest runs as a KVM domain with no AWS
+> license surcharge -- the license is supplied by the operator.
+
+### EBS storage
+
+EBS cost is essentially the same in both models. All guest disks are gp3
+volumes attached to `virt-01` in the Calabi model and would attach directly
+to each instance in the native model. The current volume layout:
+
+| Volume class | Count | Per volume | Total GiB |
+| --- | --- | --- | --- |
+| virt-01 root | 1 | 100 GiB | 100 |
+| support VM root (idm, bastion, mirror) | 3 | 120-400 GiB | 640 |
+| master root | 3 | 250 GiB | 750 |
+| worker root | 3 | 250 GiB | 750 |
+| infra root | 3 | 250 GiB | 750 |
+| infra ODF data | 3 | 1000 GiB | 3000 |
+| **total** | **16 volumes** | | **5,990 GiB** |
+
+At current gp3 pricing (`$0.08/GiB/month`) plus IOPS and throughput overages
+on the master volumes (6000 IOPS, 250 MB/s), total EBS cost is approximately
+**`$539/month`** in both models. The native model drops the virt-01 root but
+needs a root volume for the AD instance, so the total stays within a few
+dollars.
+
+### Monthly cost comparison
+
+| Component | Native fanout | Calabi |
 | --- | ---: | ---: |
-| baseline workers at `3 x 4 vCPU` | `$3,816.73` | `$3,903.04` |
-| current target workers at `3 x 8 vCPU` | `$4,179.13` | `$3,903.04` |
-| deeper bronze uplift at `3 x 12 vCPU` | `$4,960.96` | `$3,903.04` |
+| EC2 compute (730 hours) | `$4,636.96` | `$3,363.84` |
+| EBS storage | `$539.20` | `$539.20` |
+| **total** | **`$5,176.16`** | **`$3,903.04`** |
+| **difference** | | **`-$1,273.12/month (25%)`** |
 
-Those numbers are based on:
+### Short-run cost comparison
 
-- `1 x m5.metal` for Calabi
-- native-cloud rounding to the nearest practical EC2 shapes for each guest
-- the current guest EBS layout from `cloudformation/virt-01-volume-inventory.yml`
-- current on-demand EC2 and gp3 pricing in `US East (Ohio)`
+For short-lived lab events the EBS cost is amortized across the month regardless
+of runtime, so the per-event savings come entirely from compute hours:
 
-The blunt read is:
-
-- without oversubscription, Calabi is mainly an architectural and realism win
-- with moderate oversubscription, it also becomes a clear cost win
-- with deeper but still controlled oversubscription, the cost gap widens quickly
-
-That is why the host performance-domain work matters. The value is not just
-"more vCPU on paper." The value is being able to present more useful worker
-capacity on the same host without giving up control of who loses first under
-contention.
-
-For short-lived lab events, the gap is smaller in absolute dollars but still
-real. Using the deeper `3 x 12 vCPU` worker target as the representative case:
-
-| Runtime shape | Native fanout | Calabi | Calabi advantage |
+| Runtime shape | Native compute | Calabi compute | Savings |
 | --- | ---: | ---: | ---: |
-| typical demo: `6` hours/day for `3` days (`18` hours) | `$122.32` | `$96.24` | `$26.08` |
-| typical workshop: `8` hours/day for `5` days (`40` hours) | `$271.83` | `$213.87` | `$57.96` |
+| typical demo: `6` hours/day, `3` days (`18` hours) | `$114.34` | `$82.94` | `$31.40` |
+| typical workshop: `8` hours/day, `5` days (`40` hours) | `$254.08` | `$184.32` | `$69.76` |
+| full month (`730` hours) | `$4,636.96` | `$3,363.84` | `$1,273.12` |
 
-Those short-run numbers matter less than the monthly comparison, but they are a
-useful reminder that the one-host model does not need a long-lived environment
-to make sense. Even for a tightly bounded demo or workshop, the same design
-still gives you the realism benefit first and a modest cost benefit alongside
-it.
+### How oversubscription widens the gap
 
-In other words:
+The Calabi cost is fixed at `$4.608/hr` regardless of how many vCPUs or how
+much memory the guests consume. The native cost scales linearly with every
+guest uplift.
 
-- native cloud buys every uplift literally
-- Calabi can turn some of that uplift into policy
+The current layout already demonstrates this:
 
-That is the economic argument for the tiered host design. The one-host model is
-already worthwhile for realism and repeatability. Once the host can safely
-carry a larger worker shape through controlled oversubscription, it starts to
-win on cost as well.
+- 122 guest vCPUs on 72 physical CPUs (`1.69:1` oversubscription)
+- 360 GiB committed guest memory on 384 GiB host (`0.94:1`)
+- the Gold/Silver/Bronze tier model ensures degradation is intentional
+- KSM, zram, and THP provide the memory safety margin
+
+If the same lab had stayed at the original `3 x 4 vCPU` worker shape with
+48 GiB infra nodes, the native fanout cost would have been lower, and the
+Calabi cost advantage would have been marginal. The progression:
+
+| Layout | Guest vCPU | Native EC2 $/hr | Calabi $/hr | Calabi advantage |
+| --- | --- | ---: | ---: | ---: |
+| original (`3 x 4` workers, 48G infra) | 94 | `$5.088` | `$4.608` | `9%` |
+| previous (`3 x 8` workers, 48G infra) | 106 | `$5.088` | `$4.608` | `9%` |
+| current (`3 x 12` workers, 64G infra, AD) | 122 | `$6.352` | `$4.608` | `27%` |
+
+> [!NOTE]
+> The old 3x4 and 3x8 worker shapes both used m5.2xlarge on the native side
+> (same instance, same cost) because 4 and 8 vCPU both fit in that type. The
+> jump to 12 vCPU workers forced c5.4xlarge and the AD server added a Windows
+> license premium. That is why the native cost stepped up sharply while the
+> Calabi cost stayed flat.
+
+### The argument
+
+The one-host model is already worthwhile for realism and repeatability.
+Once the host carries a larger guest footprint through controlled
+oversubscription, it wins on cost as well:
+
+- native cloud buys every guest uplift literally, at the nearest instance shape
+- Calabi absorbs uplift into policy: more vCPU and memory on the same host,
+  managed by tier weights and kernel memory efficiency
+- the cost gap widens with each guest uplift because the native side scales
+  linearly while the Calabi side stays flat
+- the Windows AD guest is a particularly clear example: native AWS charges
+  a license premium per hour, while Calabi runs it as a plain KVM domain
+
+All pricing is `US East (Ohio)` on-demand as of March 2026. Reserved or
+savings-plan pricing reduces both sides proportionally but does not change the
+relative gap.
