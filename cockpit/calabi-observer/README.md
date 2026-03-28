@@ -7,6 +7,21 @@ management system on `virt-01`.
 <a href="../../aws-metal-openshift-demo/docs/host-memory-oversubscription.md"><kbd>&nbsp;&nbsp;HOST MEMORY&nbsp;&nbsp;</kbd></a>
 <a href="../../aws-metal-openshift-demo/docs/README.md"><kbd>&nbsp;&nbsp;DOCS MAP&nbsp;&nbsp;</kbd></a>
 
+## Contents
+
+- [What It Does](#what-it-does)
+- [Panels](#panels)
+- [Panel Screenshots](#panel-screenshots)
+- [Architecture](#architecture)
+- [Files](#files)
+- [Data Sources](#data-sources)
+- [Installation](#installation)
+- [Requirements](#requirements)
+- [Usage](#usage)
+- [Security Posture](#security-posture)
+- [Tier Colors](#tier-colors)
+- [CPU Pool Colors](#cpu-pool-colors)
+
 ## What It Does
 
 The observer answers one question: **is the tiered resource management system
@@ -198,3 +213,35 @@ Used in the CPU Pool Topology heatmap:
 | Host Housekeeping | blue | `#1565c0` |
 | Host Emulator | purple | `#7b1fa2` |
 | Guest Domain | green | `#2e7d32` |
+
+## Security Posture
+
+The plugin runs inside Cockpit's existing authentication and authorization
+boundary. It does not introduce its own auth, listen on any port, or accept
+external input beyond Cockpit's channel protocol.
+
+**Rating: B+**
+
+Strengths:
+
+| Area | Detail |
+| --- | --- |
+| No command injection | `collector.py` uses `subprocess.run()` with list arguments exclusively. No shell expansion, no string interpolation into commands. |
+| XSS resistant | All DOM content is set via `textContent` and `setAttribute`. The frontend never assigns `innerHTML` from collected data. |
+| No external dependencies | Zero third-party Python or JS libraries. The collector uses only the Python standard library; the frontend uses only Cockpit's `base1` and native browser APIs. |
+| Read-only collector | The collector reads sysfs, procfs, cgroups, and virsh XML. It never writes to the host. |
+| Input validation | The collector uses `argparse` for CLI argument parsing. The only accepted flag is `--fast`. |
+| Auth delegation | Authentication and session management are handled entirely by Cockpit. The plugin declares `superuser: "require"` in `manifest.json`, so Cockpit enforces privilege escalation through its own sudo bridge. |
+
+Residual notes:
+
+- The `manifest.json` CSP includes `script-src 'self' 'unsafe-inline'` because
+  Cockpit's own framework requires inline script evaluation. This is a Cockpit
+  platform constraint, not a plugin design choice. Tightening this would require
+  upstream Cockpit changes.
+- The collector runs as root (via Cockpit's superuser channel) because the data
+  sources it reads — `/sys/kernel/mm/ksm/*`, cgroup `cpu.stat` files, `virsh`
+  system connection — require root privileges. The collector does not drop
+  privileges after startup because every read path requires them.
+- Error messages from the collector are written to stderr as JSON
+  (`{"error": "..."}`) and are not rendered into the DOM.

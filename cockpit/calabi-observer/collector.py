@@ -6,6 +6,13 @@ Runs on virt-01 as root, invoked by cockpit.spawn().
 Emits a single JSON blob to stdout with host memory, KSM, zram, cgroup,
 kernel-thread CPU, and (optionally) per-domain libvirt data.
 
+Trust model:
+    This script runs as root via cockpit.spawn(superuser:"require").
+    It is strictly read-only: it reads /proc, /sys, cgroup v2 trees,
+    and runs virsh queries.  It writes nothing to disk, creates no temp
+    files, and modifies no system state.  The only accepted flag is
+    --fast; all other arguments are rejected.
+
 Usage:
     python3 collector.py          # full collection (includes virsh)
     python3 collector.py --fast   # skip virsh, sysfs/procfs/cgroups only
@@ -13,6 +20,7 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import glob
 import json
 import os
@@ -678,9 +686,16 @@ def collect(fast: bool = False) -> dict:
 
 
 def main() -> int:
-    fast = "--fast" in sys.argv
+    parser = argparse.ArgumentParser(
+        description="Calabi Observer metrics collector",
+    )
+    parser.add_argument(
+        "--fast", action="store_true",
+        help="skip virsh domain queries, sysfs/procfs/cgroups only",
+    )
+    args = parser.parse_args()
     try:
-        data = collect(fast=fast)
+        data = collect(fast=args.fast)
         json.dump(data, sys.stdout)
         sys.stdout.write("\n")
         return 0

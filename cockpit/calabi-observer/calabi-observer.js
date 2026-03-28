@@ -75,7 +75,6 @@ function el(tag, attrs, children) {
         for (var k in attrs) {
             if (k === "className") e.className = attrs[k];
             else if (k === "textContent") e.textContent = attrs[k];
-            else if (k === "innerHTML") e.innerHTML = attrs[k];
             else if (k === "title") e.title = attrs[k];
             else if (k.indexOf("data-") === 0) e.setAttribute(k, attrs[k]);
             else e.setAttribute(k, attrs[k]);
