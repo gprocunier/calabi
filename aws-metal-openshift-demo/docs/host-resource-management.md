@@ -210,6 +210,7 @@ Current role-to-tier mapping:
 | `ocp-worker-01..03` | Bronze | least critical general scheduling pool |
 | `mirror-registry` | Bronze | important, but deferrable relative to cluster control plane |
 | `bastion-01` | Bronze | operator access host, but not part of cluster control path |
+| `ad-01` | Bronze | Windows AD for hybrid identity testing, not cluster-critical |
 
 ```mermaid
 flowchart TD
@@ -231,6 +232,7 @@ flowchart TD
     bronze --> worker3[ocp-worker-03]
     bronze --> mirror[mirror-registry]
     bronze --> bastion[bastion-01]
+    bronze --> ad[ad-01]
 ```
 
 ## Thread Placement Model
@@ -288,54 +290,66 @@ all host-side IO noise has been fully isolated.
 
 ## Current Capacity Picture On `m5.metal`
 
-The latest fully validated end-to-end cluster baseline used workers at `3 x 4
-vCPU`. The current repo default now moves workers to `3 x 8 vCPU` so the Bronze
-performance domain can absorb more worker scheduling pressure without
-immediately jumping to the more aggressive `3 x 12` shape.
+`m5.metal` provides 96 logical CPUs and 384 GiB RAM. The current layout
+commits 122 vCPUs and 360 GiB of guest memory across 13 guests. This is a
+deliberate oversubscription on CPU managed by the Gold/Silver/Bronze tier
+model, with memory sitting just under a 1:1 commit ratio where KSM and zram
+provide the safety margin.
 
-Present configured guest vCPU counts for the current repo default:
+Present configured guest allocations:
 
-| Class | Count | Per guest | Total |
-| --- | --- | --- | --- |
-| masters | 3 | 8 | 24 |
-| infra | 3 | 16 | 48 |
-| workers | 3 | 8 | 24 |
-| IdM | 1 | 2 | 2 |
-| mirror-registry | 1 | 4 | 4 |
-| bastion | 1 | 4 | 4 |
-| total | 12 guests | - | 106 |
+| Class | Count | vCPU | Memory | Total vCPU | Total Memory |
+| --- | --- | --- | --- | --- | --- |
+| masters | 3 | 8 | 24 GiB | 24 | 72 GiB |
+| infra | 3 | 16 | 64 GiB | 48 | 192 GiB |
+| workers | 3 | 12 | 16 GiB | 36 | 48 GiB |
+| IdM | 1 | 2 | 8 GiB | 2 | 8 GiB |
+| mirror-registry | 1 | 4 | 16 GiB | 4 | 16 GiB |
+| bastion | 1 | 4 | 16 GiB | 4 | 16 GiB |
+| ad | 1 | 4 | 8 GiB | 4 | 8 GiB |
+| **total** | **13 guests** | | | **122** | **360 GiB** |
 
-Against the current `guest_domain` size:
+Against the host:
 
 - guest execution pool: `72` logical CPUs
-- current aggregate guest vCPU count: `106`
-- current aggregate guest-to-pool ratio: about `1.47:1`
+- current aggregate guest vCPU count: `122`
+- current vCPU oversubscription ratio: `1.69:1`
+- host physical RAM: `384` GiB
+- current memory commit ratio: `0.94:1`
 
-Useful planning checkpoints:
+### vCPU Oversubscription Context
 
-| Scenario | Worker shape | Bronze total | Total guest vCPU | Ratio vs 72-logical guest pool | Recommendation |
-| --- | --- | --- | --- | --- | --- |
-| historical validated baseline | `3 x 4` | 20 | 94 | `1.31:1` | known good baseline before worker uplift |
-| conservative uplift | `3 x 6` | 26 | 100 | `1.39:1` | safe, but modest payoff |
-| current repo default | `3 x 8` | 32 | 106 | `1.47:1` | chosen default |
-| aggressive intermediate | `3 x 10` | 38 | 112 | `1.56:1` | viable, but less clean operationally |
-| later validation target | `3 x 12` | 44 | 118 | `1.64:1` | only after measurement |
+| Scenario | Worker shape | Total guest vCPU | Ratio vs 72-logical guest pool | Notes |
+| --- | --- | --- | --- | --- |
+| historical validated baseline | `3 x 4` | 98 | `1.36:1` | known good baseline before worker uplift |
+| previous repo default | `3 x 8` | 110 | `1.53:1` | first uplift from the original 4-vCPU workers |
+| current repo default | `3 x 12` | 122 | `1.69:1` | chosen default, validated with memory oversub in place |
 
-Current rationale for `3 x 8` workers:
+The move to `3 x 12` workers was made possible by the memory oversubscription
+work (KSM, zram, THP). The host demonstrated low steady-state memory
+utilization and minimal `%steal` at the previous `3 x 8` shape, giving
+confidence to push workers to the larger allocation.
 
-- doubles worker vCPU headroom relative to the historical `3 x 4` layout
-- gives OpenShift materially larger worker nodes without changing the Gold and
-  Silver shapes
-- keeps Bronze at `32 vCPU`, still well below one full `72`-logical
-  guest-execution pool
-- preserves a later path to `3 x 12` if host pressure, `%steal`, and cluster
-  behavior stay healthy
+### Memory Commit Context
 
-The practical strategy is:
+The `0.94:1` memory commit ratio means guest allocations nearly fill host RAM
+before accounting for the host kernel, page cache, and host-side services.
+In practice the host remains comfortable because:
 
-- treat `3 x 8` as the current default
-- validate cluster behavior there first
-- consider `3 x 12` only after real measurements
+- not all guest memory is active simultaneously (cold pages exist in every VM)
+- KSM deduplicates 10-30 GiB of shared RHCOS kernel and base-OS pages
+- zram provides a compressed swap buffer for cold anonymous pages under pressure
+- the host kernel's own page cache and slab are reclaimable
+
+The infra nodes at 64 GiB each are the dominant memory consumers (192 GiB
+total, 53% of host RAM). This is driven by ODF (Ceph OSD memory), monitoring
+stack, and ingress router workloads that all land on infra.
+
+> [!NOTE]
+> The memory commit ratio is deliberately kept below 1.0 so that the host
+> does not depend on KSM or zram for basic stability. Those features improve
+> headroom and absorb transient pressure, but the base allocation fits
+> without them.
 
 ## Resizing Guidance For Other Metal Hosts
 

@@ -90,7 +90,7 @@ openshift_cluster_nodes:
     mac_address: "52:54:00:20:00:21"
     resources:
       vcpus: 16
-      memory_mb: 49152
+      memory_mb: 65536
     performance_domain:
       tier: silver
       iothreads: 1
@@ -112,7 +112,7 @@ openshift_cluster_nodes:
     mac_address: "52:54:00:20:00:22"
     resources:
       vcpus: 16
-      memory_mb: 49152
+      memory_mb: 65536
     performance_domain:
       tier: silver
       iothreads: 1
@@ -134,7 +134,7 @@ openshift_cluster_nodes:
     mac_address: "52:54:00:20:00:23"
     resources:
       vcpus: 16
-      memory_mb: 49152
+      memory_mb: 65536
     performance_domain:
       tier: silver
       iothreads: 1
@@ -155,7 +155,7 @@ openshift_cluster_nodes:
     role: worker
     mac_address: "52:54:00:20:00:31"
     resources:
-      vcpus: 8
+      vcpus: 12
       memory_mb: 16384
     performance_domain:
       tier: bronze
@@ -169,7 +169,7 @@ openshift_cluster_nodes:
     role: worker
     mac_address: "52:54:00:20:00:32"
     resources:
-      vcpus: 8
+      vcpus: 12
       memory_mb: 16384
     performance_domain:
       tier: bronze
@@ -183,7 +183,7 @@ openshift_cluster_nodes:
     role: worker
     mac_address: "52:54:00:20:00:33"
     resources:
-      vcpus: 8
+      vcpus: 12
       memory_mb: 16384
     performance_domain:
       tier: bronze

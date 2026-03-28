@@ -171,6 +171,7 @@ estate:
 - `ocp-worker-01..03`
 - `bastion-01`
 - `mirror-registry`
+- `ad-01`
 
 That makes Bronze the correct place to absorb most elasticity pressure before
 touching masters or infra. The intended sizing policy is:
