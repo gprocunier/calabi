@@ -1,0 +1,22 @@
+{
+    "name": "calabi-observer",
+    "requires": {
+        "cockpit": "219"
+    },
+    "menu": {
+        "index": {
+            "label": "Calabi Observer",
+            "order": 15,
+            "keywords": [
+                {
+                    "matches": [
+                        "ksm", "memory", "overcommit", "cgroup", "tier",
+                        "gold", "silver", "bronze", "zram", "kvm", "calabi",
+                        "performance", "domain"
+                    ]
+                }
+            ]
+        }
+    },
+    "content-security-policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'"
+}

@@ -1,0 +1,666 @@
+/* calabi-observer.css — Calabi Observer Cockpit plugin styles */
+
+/* ---------------------------------------------------------------------------
+   Base
+   --------------------------------------------------------------------------- */
+
+body {
+    margin: 0;
+    padding: 0;
+    font-family: "RedHatText", "Open Sans", -apple-system, BlinkMacSystemFont,
+        "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #151515;
+    background: #f0f0f0;
+}
+
+#app {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 16px;
+}
+
+/* ---------------------------------------------------------------------------
+   Header
+   --------------------------------------------------------------------------- */
+
+#header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+    padding: 8px 0;
+}
+
+#header h2 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+}
+
+#header-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 13px;
+}
+
+#header-controls label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+#header-controls select {
+    padding: 2px 6px;
+    font-size: 13px;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+}
+
+#header-controls button {
+    padding: 4px 12px;
+    font-size: 13px;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    background: #fff;
+    cursor: pointer;
+}
+
+#header-controls button:hover {
+    background: #f5f5f5;
+}
+
+/* Status dot */
+.status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.status-dot--ok { background: #2e7d32; }
+.status-dot--waiting { background: #bbb; }
+.status-dot--error { background: #c62828; }
+.status-dot--paused { background: #e65100; }
+
+/* ---------------------------------------------------------------------------
+   Cards
+   --------------------------------------------------------------------------- */
+
+.calabi-card {
+    background: #fff;
+    border: 1px solid #d2d2d2;
+    border-radius: 4px;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+
+.calabi-card h3 {
+    margin: 0 0 12px 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: #333;
+}
+
+.panel-placeholder {
+    color: #888;
+    font-style: italic;
+    padding: 8px 0;
+}
+
+/* ---------------------------------------------------------------------------
+   Error banner
+   --------------------------------------------------------------------------- */
+
+.calabi-error {
+    background: #fde8e8;
+    border: 1px solid #c62828;
+    border-radius: 4px;
+    padding: 8px 12px;
+    color: #c62828;
+    margin-top: 8px;
+    font-size: 13px;
+}
+
+/* ---------------------------------------------------------------------------
+   KSM Verdict Gauge
+   --------------------------------------------------------------------------- */
+
+.ksm-gauge {
+    display: flex;
+    height: 28px;
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+    margin-bottom: 12px;
+    border: 1px solid #d2d2d2;
+}
+
+.ksm-gauge-zone {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: rgba(0,0,0,0.6);
+}
+
+.ksm-gauge-bad { background: #ffcdd2; }
+.ksm-gauge-warn { background: #fff9c4; }
+.ksm-gauge-good { background: #c8e6c9; }
+
+.ksm-gauge-indicator {
+    position: absolute;
+    top: -4px;
+    width: 2px;
+    height: 36px;
+    background: #151515;
+    transform: translateX(-1px);
+    transition: left 0.3s ease;
+}
+
+.ksm-gauge-indicator::after {
+    content: "";
+    position: absolute;
+    bottom: -6px;
+    left: -4px;
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid #151515;
+}
+
+/* ---------------------------------------------------------------------------
+   KSM Summary / Verdict
+   --------------------------------------------------------------------------- */
+
+.ksm-summary {
+    font-size: 14px;
+    margin-bottom: 12px;
+}
+
+.ksm-verdict {
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+}
+
+.verdict-good { background: #c8e6c9; color: #1b5e20; }
+.verdict-warn { background: #fff9c4; color: #f57f17; }
+.verdict-bad { background: #ffcdd2; color: #b71c1c; }
+.verdict-inactive { background: #e0e0e0; color: #616161; }
+.verdict-standby { background: #e3f2fd; color: #1565c0; }
+
+/* ---------------------------------------------------------------------------
+   zram Verdict Gauge
+   --------------------------------------------------------------------------- */
+
+.zram-gauge {
+    display: flex;
+    height: 28px;
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+    margin-bottom: 12px;
+    border: 1px solid #d2d2d2;
+}
+
+.zram-gauge-zone {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: rgba(0,0,0,0.55);
+}
+
+.zram-gauge-thrash { background: #ffcdd2; }
+.zram-gauge-poor { background: #ffe0b2; }
+.zram-gauge-moderate { background: #fff9c4; }
+.zram-gauge-good { background: #c8e6c9; }
+.zram-gauge-standby { background: #e3f2fd; }
+
+.zram-gauge-indicator {
+    position: absolute;
+    top: -4px;
+    width: 2px;
+    height: 36px;
+    background: #151515;
+    transform: translateX(-1px);
+    transition: left 0.3s ease;
+}
+
+.zram-gauge-indicator::after {
+    content: "";
+    position: absolute;
+    bottom: -6px;
+    left: -4px;
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid #151515;
+}
+
+.zram-io-errors {
+    margin-top: 8px;
+    padding: 6px 12px;
+    background: #fde8e8;
+    border: 1px solid #c62828;
+    border-radius: 3px;
+    font-size: 13px;
+    color: #c62828;
+}
+
+.metric-warn {
+    color: #e65100;
+    font-weight: 600;
+}
+
+.ksm-recommendation {
+    margin-top: 12px;
+    padding: 8px 12px;
+    background: #f5f5f5;
+    border-left: 3px solid #1565c0;
+    border-radius: 0 3px 3px 0;
+    font-size: 13px;
+    color: #333;
+}
+
+/* ---------------------------------------------------------------------------
+   Metrics Grid
+   --------------------------------------------------------------------------- */
+
+.metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 8px;
+    margin: 12px 0;
+}
+
+.metric {
+    display: flex;
+    flex-direction: column;
+    padding: 6px 0;
+}
+
+.metric-label {
+    font-size: 12px;
+    color: #666;
+    margin-bottom: 2px;
+}
+
+.metric-value {
+    font-size: 14px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------------------
+   Sparklines
+   --------------------------------------------------------------------------- */
+
+.sparkline-row {
+    display: flex;
+    gap: 16px;
+    margin: 12px 0;
+}
+
+.sparkline-wrap {
+    flex-wrap: wrap;
+}
+
+.sparkline-group {
+    flex: 1;
+    min-width: 160px;
+}
+
+.sparkline-wide {
+    flex: 2;
+    min-width: 300px;
+}
+
+.sparkline-narrow {
+    flex: 0 1 150px;
+    min-width: 120px;
+}
+
+.sparkline-label {
+    font-size: 12px;
+    color: #666;
+    margin-bottom: 2px;
+}
+
+.sparkline-value {
+    font-size: 13px;
+    font-weight: 500;
+    margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+}
+
+.sparkline-canvas {
+    width: 100%;
+    height: 36px;
+    display: block;
+}
+
+.sparkline-inline {
+    width: 180px;
+    height: 28px;
+    display: inline-block;
+    vertical-align: middle;
+    margin-left: 12px;
+}
+
+.sparkline-small {
+    width: 100%;
+    height: 24px;
+}
+
+/* ---------------------------------------------------------------------------
+   CPU Panel
+   --------------------------------------------------------------------------- */
+
+.cpu-host-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.cpu-host-summary {
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.tier-bar-canvas {
+    width: 100%;
+    height: 20px;
+    display: block;
+    margin: 8px 0;
+}
+
+.tier-legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+    font-size: 13px;
+}
+
+.tier-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.tier-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    display: inline-block;
+}
+
+.throttle-badge {
+    font-size: 11px;
+    font-weight: 600;
+    color: #b71c1c;
+    background: #ffcdd2;
+    padding: 1px 6px;
+    border-radius: 3px;
+    margin-left: 4px;
+}
+
+/* ---------------------------------------------------------------------------
+   Tier badges
+   --------------------------------------------------------------------------- */
+
+.tier-badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1px 8px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.tier-badge-gold { background: #f9f1d0; color: #8a7400; }
+.tier-badge-silver { background: #e8e8ea; color: #555; }
+.tier-badge-bronze { background: #f5e0c5; color: #7d4e1e; }
+
+/* ---------------------------------------------------------------------------
+   CPU Pool Topology Heatmap
+   --------------------------------------------------------------------------- */
+
+.cpu-map-legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+    font-size: 13px;
+}
+
+.cpu-map-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.cpu-map-swatch {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+    display: inline-block;
+}
+
+.cpu-map-numa {
+    margin-bottom: 16px;
+    padding: 12px;
+    border: 2px solid #d2d2d2;
+    border-left: 4px solid #1565c0;
+    border-radius: 4px;
+    background: #fafafa;
+}
+
+.cpu-map-numa-label {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: #333;
+}
+
+.cpu-map-row {
+    display: flex;
+    gap: 2px;
+    margin-bottom: 2px;
+}
+
+.cpu-map-header {
+    margin-bottom: 1px;
+}
+
+.cpu-map-label {
+    width: 24px;
+    min-width: 24px;
+    font-size: 10px;
+    font-weight: 600;
+    color: #666;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.cpu-map-hdr-cell {
+    flex: 1;
+    text-align: center;
+    font-size: 9px;
+    color: #999;
+    min-width: 0;
+}
+
+.cpu-map-cell {
+    flex: 1;
+    min-width: 0;
+    height: 24px;
+    border-radius: 2px;
+    border: 1px solid rgba(0,0,0,0.08);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    transition: background 0.3s ease;
+}
+
+.cpu-map-cell-hot {
+    color: #fff;
+    font-weight: 700;
+    text-shadow: 0 0 2px rgba(0,0,0,0.5);
+}
+
+.cpu-map-freq-row {
+    display: flex;
+    gap: 16px;
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px solid #e0e0e0;
+    font-size: 12px;
+    color: #555;
+    font-variant-numeric: tabular-nums;
+}
+
+.cpu-map-freq-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* ---------------------------------------------------------------------------
+   Domain table
+   --------------------------------------------------------------------------- */
+
+.domain-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin-top: 8px;
+}
+
+.domain-table th {
+    text-align: left;
+    font-weight: 600;
+    padding: 6px 8px;
+    border-bottom: 2px solid #d2d2d2;
+    font-size: 12px;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.domain-table td {
+    padding: 5px 8px;
+    border-bottom: 1px solid #eee;
+    font-variant-numeric: tabular-nums;
+}
+
+.domain-table tbody tr:hover {
+    background: #f8f8f8;
+}
+
+/* ---------------------------------------------------------------------------
+   Memory Panel
+   --------------------------------------------------------------------------- */
+
+.mem-summary {
+    font-size: 14px;
+    margin-bottom: 12px;
+}
+
+.mem-bar-canvas {
+    width: 100%;
+    height: 24px;
+    display: block;
+    margin: 8px 0;
+}
+
+.bar-legend {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: #555;
+    margin-bottom: 12px;
+    align-items: center;
+}
+
+.legend-swatch {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+    display: inline-block;
+    margin-left: 8px;
+}
+
+.legend-swatch:first-child {
+    margin-left: 0;
+}
+
+.ratio-green { color: #2e7d32; font-weight: 600; }
+.ratio-amber { color: #e65100; font-weight: 600; }
+.ratio-red { color: #c62828; font-weight: 600; }
+
+.zram-detail {
+    font-size: 13px;
+    padding: 8px 12px;
+    background: #f5f5f5;
+    border-radius: 3px;
+    margin: 8px 0;
+}
+
+.zram-detail.muted {
+    color: #888;
+    font-style: italic;
+}
+
+.tier-mem-table {
+    margin-top: 12px;
+}
+
+/* ---------------------------------------------------------------------------
+   Overhead Panel
+   --------------------------------------------------------------------------- */
+
+.overhead-summary {
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    margin-bottom: 8px;
+}
+
+/* ---------------------------------------------------------------------------
+   Responsive
+   --------------------------------------------------------------------------- */
+
+@media (max-width: 800px) {
+    .sparkline-row {
+        flex-direction: column;
+    }
+    .sparkline-inline {
+        display: block;
+        width: 100%;
+        margin-left: 0;
+        margin-top: 4px;
+    }
+    .metrics-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+}
