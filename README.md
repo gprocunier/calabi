@@ -80,12 +80,26 @@ pattern:
 flowchart TD
     root[calabi]
     root --> demo[aws-metal-openshift-demo/]
+    root --> cockpit[cockpit/]
     demo --> aws[current AWS tenant and host scaffolding]
     demo --> host[hypervisor and network bootstrap]
     demo --> support[IdM, bastion, mirror-registry]
     demo --> ocp[disconnected OpenShift install]
     demo --> day2[day-2 platform services]
+    cockpit --> observer[calabi-observer]
 ```
+
+## Cockpit Plugins
+
+The `cockpit/` directory contains Cockpit web console plugins that provide
+operational visibility into the running lab. These are standalone packages
+with their own RPM specs, deployed directly to `virt-01`.
+
+| Plugin | Purpose |
+| --- | --- |
+| <a href="./cockpit/calabi-observer/"><kbd>calabi-observer</kbd></a> | Real-time observability for CPU performance domains and host memory oversubscription |
+
+Each plugin has its own README and can be installed via RPM or rsync.
 
 ## Start Here
 
