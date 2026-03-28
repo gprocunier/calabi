@@ -220,7 +220,14 @@ The plugin runs inside Cockpit's existing authentication and authorization
 boundary. It does not introduce its own auth, listen on any port, or accept
 external input beyond Cockpit's channel protocol.
 
-**Rating: B+**
+**Rating: A-**
+
+> [!NOTE]
+> The only residual finding is `script-src 'unsafe-inline'` in the Content
+> Security Policy. This is required by the Cockpit framework itself — all
+> Cockpit plugins inherit it. The plugin's own code never uses `eval()`,
+> `innerHTML`, or inline event handlers. Removing `unsafe-inline` would
+> require an upstream Cockpit platform change.
 
 Strengths:
 
