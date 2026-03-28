@@ -242,10 +242,6 @@ Strengths:
 
 Residual notes:
 
-- The `manifest.json` CSP includes `script-src 'self' 'unsafe-inline'` because
-  Cockpit's own framework requires inline script evaluation. This is a Cockpit
-  platform constraint, not a plugin design choice. Tightening this would require
-  upstream Cockpit changes.
 - The collector runs as root (via Cockpit's superuser channel) because the data
   sources it reads — `/sys/kernel/mm/ksm/*`, cgroup `cpu.stat` files, `virsh`
   system connection — require root privileges. The collector does not drop
