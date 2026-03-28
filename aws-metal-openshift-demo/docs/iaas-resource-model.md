@@ -217,25 +217,25 @@ to each instance in the native model. The current volume layout:
 | --- | --- | --- | --- |
 | virt-01 root | 1 | 100 GiB | 100 |
 | support VM root (idm, bastion, mirror) | 3 | 120-400 GiB | 640 |
+| ad root | 1 | 60 GiB | 60 |
 | master root | 3 | 250 GiB | 750 |
 | worker root | 3 | 250 GiB | 750 |
 | infra root | 3 | 250 GiB | 750 |
 | infra ODF data | 3 | 1000 GiB | 3000 |
-| **total** | **16 volumes** | | **5,990 GiB** |
+| **total** | **17 volumes** | | **6,050 GiB** |
 
 At current gp3 pricing (`$0.08/GiB/month`) plus IOPS and throughput overages
 on the master volumes (6000 IOPS, 250 MB/s), total EBS cost is approximately
-**`$539/month`** in both models. The native model drops the virt-01 root but
-needs a root volume for the AD instance, so the total stays within a few
-dollars.
+**`$544/month`** in both models. The native model drops the virt-01 root but
+the total stays within a few dollars either way.
 
 ### Monthly cost comparison
 
 | Component | Native fanout | Calabi |
 | --- | ---: | ---: |
 | EC2 compute (730 hours) | `$4,636.96` | `$3,363.84` |
-| EBS storage | `$539.20` | `$539.20` |
-| **total** | **`$5,176.16`** | **`$3,903.04`** |
+| EBS storage | `$544.00` | `$544.00` |
+| **total** | **`$5,180.96`** | **`$3,907.84`** |
 | **difference** | | **`-$1,273.12/month (25%)`** |
 
 ### Short-run cost comparison
