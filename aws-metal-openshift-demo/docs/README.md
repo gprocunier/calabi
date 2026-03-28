@@ -9,7 +9,7 @@ the part of the project you actually need.
 <a href="./manual-process.md"><kbd>&nbsp;&nbsp;MANUAL FLOW&nbsp;&nbsp;</kbd></a>
 <a href="./iaas-resource-model.md"><kbd>&nbsp;&nbsp;IAAS MODEL&nbsp;&nbsp;</kbd></a>
 <a href="./host-resource-management.md"><kbd>&nbsp;&nbsp;RESOURCE DESIGN&nbsp;&nbsp;</kbd></a>
-<a href="./host-resource-management.md#host-memory-oversubscription"><kbd>&nbsp;&nbsp;HOST MEMORY&nbsp;&nbsp;</kbd></a>
+<a href="./host-memory-oversubscription.md"><kbd>&nbsp;&nbsp;HOST MEMORY&nbsp;&nbsp;</kbd></a>
 <a href="./network-topology.md"><kbd>&nbsp;&nbsp;NETWORK DESIGN&nbsp;&nbsp;</kbd></a>
 <a href="./openshift-cluster-matrix.md"><kbd>&nbsp;&nbsp;CLUSTER MATRIX&nbsp;&nbsp;</kbd></a>
 <a href="./orchestration-guide.md"><kbd>&nbsp;&nbsp;CODE GUIDE&nbsp;&nbsp;</kbd></a>
