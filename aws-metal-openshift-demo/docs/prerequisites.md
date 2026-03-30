@@ -77,6 +77,30 @@ For the current AWS implementation, that means:
   - a direct-download URL used by the automation
 - a RHEL AMI or equivalent host image source for the metal host
 
+## (OPTIONAL) What You Need From Microsoft
+
+Only needed when you plan to enable the optional AD DS / AD CS build.
+
+- Windows Server 2025 evaluation media from the Microsoft Evaluation Center:
+  - https://www.microsoft.com/en-us/evalcenter/download-windows-server-2025
+- the currently validated path is:
+  - `English (United States)`
+  - `ISO download`
+  - `64-bit edition`
+
+Place the downloaded ISO on `virt-01` at the path expected by the AD build:
+
+```bash
+/root/images/26100.32230.260111-0550.lt_release_svc_refresh_SERVER_EVAL_x64FRE_en-us.iso
+```
+
+You also need `virtio-win.iso` staged on `virt-01` for the Windows guest
+drivers and guest tools:
+
+```bash
+/root/images/virtio-win.iso
+```
+
 ## Local Secrets And Ignored Files
 
 The main local secret file is:

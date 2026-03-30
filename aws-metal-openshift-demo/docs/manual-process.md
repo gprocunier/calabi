@@ -1227,6 +1227,13 @@ _This section describes the validated bastion-native AD path performed by `playb
 > `lab_build_ad_server: false`. Enable it only when you want the lab AD DS /
 > AD CS server.
 
+> [!NOTE]
+> Before enabling this path, download Windows Server 2025 evaluation media from
+> the Microsoft Evaluation Center:
+> https://www.microsoft.com/en-us/evalcenter/download-windows-server-2025
+> The currently validated selection is `English (United States)` ->
+> `ISO download` -> `64-bit edition`.
+
 The current supported path for `ad-01` is the dedicated playbook, not a
 hand-driven Windows install. The automation owns:
 
