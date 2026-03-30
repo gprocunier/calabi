@@ -1220,7 +1220,7 @@ When using an AI assistant to develop against this codebase:
 
 ## 13A. Optionally Build AD DS And AD CS From Bastion
 
-_This section describes the validated bastion-native AD path performed by `playbooks/bootstrap/ad-server.yml`, primarily the `ad_server` and `ad_server_guest` roles._
+_This section describes the manual equivalent of the validated `ad-server` path. Unlike the automation docs, this section is written as a true operator runbook: prepare media on `virt-01`, create the VM, complete the first boot, then configure AD DS and AD CS directly inside Windows._
 
 > [!IMPORTANT]
 > This phase is optional and default-disabled in automation:
@@ -1234,19 +1234,26 @@ _This section describes the validated bastion-native AD path performed by `playb
 > The currently validated selection is `English (United States)` ->
 > `ISO download` -> `64-bit edition`.
 
-The current supported path for `ad-01` is the dedicated playbook, not a
-hand-driven Windows install. The automation owns:
+The manual path below follows the same validated design as the automated AD
+build:
 
-- Windows Server 2025 unattended installation on `/dev/ebs/ad-01`
-- first WinRM reachability
-- post-install virtio drivers and guest tools
-- AD DS promotion
-- AD CS + Web Enrollment
-- demo users and groups
-- root CA export
-- installation-media cleanup
+- install Windows Server 2025 onto `/dev/ebs/ad-01`
+- use `virtio-win.iso` for the required storage and network drivers
+- complete the remaining guest-tools and virtio-driver work after the OS is up
+- promote the server to `corp.lan`
+- install AD CS and Web Enrollment
+- seed the demo users and groups
+- export the root CA
 
-Pre-stage the installation media on `virt-01`:
+Validated guest identity:
+
+- VM/domain: `ad-01.corp.lan`
+- Windows hostname: `AD-01`
+- IPv4: `172.16.0.40/24`
+- gateway: `172.16.0.1`
+- DNS: `172.16.0.10`, `8.8.8.8`
+
+### Confirm The Required Media On `virt-01`
 
 ```bash
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1
@@ -1263,30 +1270,433 @@ If `virtio-win.iso` is not already staged, the current documented source is:
 - direct ISO download referenced there:
   - https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/latest-virtio/virtio-win.iso
 
-Run the validated AD build from the bastion:
+### Prepare The Unattended Install Media On `virt-01`
+
+Create a small `OEMDRV` ISO that provides the answer file to Windows Setup.
+This keeps the manual path aligned with the validated unattended install.
 
 ```bash
-cd /opt/openshift/aws-metal-openshift-demo
-ansible-playbook -i inventory/hosts.yml playbooks/bootstrap/ad-server.yml \
-  -e lab_build_ad_server=true
+ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
+set -euo pipefail
+
+mkdir -p /var/lib/aws-metal-openshift-demo/ad-01/autounattend
+install -o qemu -g qemu -m 0644 \
+  /root/images/26100.32230.260111-0550.lt_release_svc_refresh_SERVER_EVAL_x64FRE_en-us.iso \
+  /var/lib/aws-metal-openshift-demo/ad-01/26100.32230.260111-0550.lt_release_svc_refresh_SERVER_EVAL_x64FRE_en-us.iso
+install -o qemu -g qemu -m 0644 \
+  /root/images/virtio-win.iso \
+  /var/lib/aws-metal-openshift-demo/ad-01/virtio-win.iso
+cat >/var/lib/aws-metal-openshift-demo/ad-01/autounattend/autounattend.xml <<'XML'
+<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="windowsPE">
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <SetupUILanguage><UILanguage>en-US</UILanguage></SetupUILanguage>
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+    <component name="Microsoft-Windows-PnpCustomizationsWinPE"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <DriverPaths>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="1">
+          <Path>E:\vioscsi\2k25\amd64</Path>
+        </PathAndCredentials>
+        <PathAndCredentials wcm:action="add" wcm:keyValue="2">
+          <Path>E:\NetKVM\2k25\amd64</Path>
+        </PathAndCredentials>
+      </DriverPaths>
+    </component>
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <DiskConfiguration>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <CreatePartition wcm:action="add"><Order>1</Order><Size>260</Size><Type>EFI</Type></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>2</Order><Size>128</Size><Type>MSR</Type></CreatePartition>
+            <CreatePartition wcm:action="add"><Order>3</Order><Extend>true</Extend><Type>Primary</Type></CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>FAT32</Format><Label>EFI</Label></ModifyPartition>
+            <ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>2</PartitionID></ModifyPartition>
+            <ModifyPartition wcm:action="add"><Order>3</Order><PartitionID>3</PartitionID><Format>NTFS</Format><Label>Windows</Label><Letter>C</Letter></ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+      <ImageInstall>
+        <OSImage>
+          <InstallTo><DiskID>0</DiskID><PartitionID>3</PartitionID></InstallTo>
+          <InstallFrom>
+            <MetaData wcm:action="add"><Key>/IMAGE/INDEX</Key><Value>2</Value></MetaData>
+          </InstallFrom>
+        </OSImage>
+      </ImageInstall>
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <ProductKey><WillShowUI>Never</WillShowUI></ProductKey>
+      </UserData>
+    </component>
+  </settings>
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <ComputerName>AD-01</ComputerName>
+      <TimeZone>UTC</TimeZone>
+    </component>
+    <component name="Microsoft-Windows-TerminalServices-LocalSessionManager"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <fDenyTSConnections>false</fDenyTSConnections>
+    </component>
+  </settings>
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideLocalAccountScreen>true</HideLocalAccountScreen>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <ProtectYourPC>3</ProtectYourPC>
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+        <SkipUserOOBE>true</SkipUserOOBE>
+      </OOBE>
+      <UserAccounts>
+        <AdministratorPassword>
+          <Value>REPLACE_WITH_LAB_DEFAULT_PASSWORD</Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+      </UserAccounts>
+      <AutoLogon>
+        <Enabled>true</Enabled>
+        <Username>Administrator</Username>
+        <Password>
+          <Value>REPLACE_WITH_LAB_DEFAULT_PASSWORD</Value>
+          <PlainText>true</PlainText>
+        </Password>
+        <LogonCount>3</LogonCount>
+      </AutoLogon>
+      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <CommandLine>powershell -NoProfile -Command "Set-ExecutionPolicy RemoteSigned -Force"</CommandLine>
+          <Description>Set PowerShell execution policy</Description>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <CommandLine>powershell -NoProfile -Command "$adapter = Get-NetAdapter | Where-Object { $_.Status -ne 'Disabled' } | Sort-Object ifIndex | Select-Object -First 1; Get-NetIPAddress -InterfaceAlias $adapter.Name -AddressFamily IPv4 -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue; New-NetIPAddress -InterfaceAlias $adapter.Name -IPAddress '172.16.0.40' -PrefixLength 24 -DefaultGateway '172.16.0.1'; Set-DnsClientServerAddress -InterfaceAlias $adapter.Name -ServerAddresses @('172.16.0.10','8.8.8.8')"</CommandLine>
+          <Description>Configure static IPv4 networking</Description>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <CommandLine>powershell -NoProfile -Command "Set-DnsClientGlobalSetting -SuffixSearchList @('corp.lan')"</CommandLine>
+          <Description>Set the DNS suffix search list</Description>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <CommandLine>powershell -NoProfile -Command "Enable-PSRemoting -Force -SkipNetworkProfileCheck"</CommandLine>
+          <Description>Enable PowerShell remoting</Description>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>5</Order>
+          <CommandLine>powershell -NoProfile -Command "Set-Item WSMan:\localhost\Service\Auth\Basic -Value $true"</CommandLine>
+          <Description>Enable WinRM basic auth</Description>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>6</Order>
+          <CommandLine>powershell -NoProfile -Command "Set-Item WSMan:\localhost\Service\AllowUnencrypted -Value $true"</CommandLine>
+          <Description>Allow unencrypted WinRM for lab</Description>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>7</Order>
+          <CommandLine>powershell -NoProfile -Command "New-NetFirewallRule -DisplayName 'WinRM HTTP' -Direction Inbound -Protocol TCP -LocalPort 5985 -Action Allow"</CommandLine>
+          <Description>Open WinRM firewall port</Description>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>8</Order>
+          <CommandLine>powershell -NoProfile -Command "Restart-Service WinRM"</CommandLine>
+          <Description>Restart WinRM service</Description>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>9</Order>
+          <CommandLine>reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v AutoAdminLogon /t REG_SZ /d 0 /f</CommandLine>
+          <Description>Disable auto-logon</Description>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+    </component>
+  </settings>
+</unattend>
+XML
+
+sed -i "s/REPLACE_WITH_LAB_DEFAULT_PASSWORD/<lab-default-password>/g" \
+  /var/lib/aws-metal-openshift-demo/ad-01/autounattend/autounattend.xml
+
+xorriso -as mkisofs \
+  -o /var/lib/aws-metal-openshift-demo/ad-01/ad-01-autounattend.iso \
+  -V OEMDRV -J -R -graft-points \
+  autounattend.xml=/var/lib/aws-metal-openshift-demo/ad-01/autounattend/autounattend.xml
+
+chown qemu:qemu /var/lib/aws-metal-openshift-demo/ad-01/ad-01-autounattend.iso
+EOF
 ```
 
-For a destructive rebuild from zero:
+### Create The VM On `virt-01`
 
 ```bash
-cd /opt/openshift/aws-metal-openshift-demo
-ansible-playbook -i inventory/hosts.yml playbooks/bootstrap/ad-server.yml \
-  -e lab_build_ad_server=true \
-  -e ad_server_reset_storage_requested=true
+ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
+set -euo pipefail
+
+dd if=/dev/zero of=/dev/ebs/ad-01 bs=1M count=1 conv=notrunc
+
+virt-install \
+  --name ad-01.corp.lan \
+  --osinfo win2k25 \
+  --boot uefi,loader_secure=no \
+  --machine q35 \
+  --memory 8192 \
+  --vcpus 4 \
+  --cpu host-passthrough \
+  --controller type=scsi,model=virtio-scsi \
+  --controller type=virtio-serial,index=0 \
+  --disk path=/dev/ebs/ad-01,format=raw,bus=scsi,cache=none,io=native,discard=unmap,rotation_rate=1,boot_order=2 \
+  --disk path=/var/lib/aws-metal-openshift-demo/ad-01/26100.32230.260111-0550.lt_release_svc_refresh_SERVER_EVAL_x64FRE_en-us.iso,device=cdrom,readonly=on,boot_order=1 \
+  --disk path=/var/lib/aws-metal-openshift-demo/ad-01/virtio-win.iso,device=cdrom,readonly=on \
+  --disk path=/var/lib/aws-metal-openshift-demo/ad-01/ad-01-autounattend.iso,device=cdrom,readonly=on \
+  --network network=lab-switch,portgroup=mgmt-access,model=virtio,mac=52:54:00:50:01:05 \
+  --channel unix,target_type=virtio,name=org.qemu.guest_agent.0 \
+  --rng builtin \
+  --graphics vnc,listen=0.0.0.0 \
+  --console pty,target_type=serial \
+  --autostart \
+  --resource partition=/machine/bronze \
+  --cputune shares=167,emulatorpin.cpuset=2-5,26-29,50-53,74-77,\
+vcpupin0.vcpu=0,vcpupin0.cpuset=6-23,30-47,54-71,78-95,\
+vcpupin1.vcpu=1,vcpupin1.cpuset=6-23,30-47,54-71,78-95,\
+vcpupin2.vcpu=2,vcpupin2.cpuset=6-23,30-47,54-71,78-95,\
+vcpupin3.vcpu=3,vcpupin3.cpuset=6-23,30-47,54-71,78-95 \
+  --noautoconsole
+EOF
 ```
 
-Validated guest identity:
+Use the Cockpit console or `virt-viewer` to watch first boot. On the validated
+media path, UEFI may present a DVD boot menu first. If it does:
 
-- VM/domain: `ad-01.corp.lan`
-- Windows hostname: `AD-01`
-- IPv4: `172.16.0.40/24`
-- gateway: `172.16.0.1`
-- DNS: `172.16.0.10`, `8.8.8.8`
+- choose the first DVD entry
+- at `Press any key to boot from CD or DVD`, press `Enter`
+
+Windows should then:
+
+- load the boot-critical `vioscsi` and `NetKVM` drivers from `virtio-win.iso`
+- partition `/dev/ebs/ad-01`
+- install Server 2025
+- come up as `AD-01`
+- apply the static IP and WinRM settings from `autounattend.xml`
+
+### Verify First WinRM Reachability
+
+From the bastion:
+
+```bash
+curl -sI http://172.16.0.40:5985/wsman | head -n 1
+```
+
+You should see an HTTP response from `Microsoft-HTTPAPI/2.0`, which confirms
+that the WinRM listener is up.
+
+### Install Remaining Virtio Components And Guest Agent
+
+Log in to the Windows console as `Administrator`, open an elevated PowerShell,
+locate the virtio media drive letter, then install the guest-tools bundle, the
+remaining drivers, and the QEMU guest agent:
+
+```powershell
+$virtio = Get-PSDrive -PSProvider FileSystem |
+  ForEach-Object { $_.Root.TrimEnd('\') } |
+  Where-Object { Test-Path "$_\guest-agent\qemu-ga-x86_64.msi" } |
+  Select-Object -First 1
+
+msiexec /i "$virtio\virtio-win-gt-x64.msi" /qn /norestart
+
+pnputil /add-driver "$virtio\Balloon\2k25\amd64\*.inf" /install
+pnputil /add-driver "$virtio\qemufwcfg\2k25\amd64\*.inf" /install
+pnputil /add-driver "$virtio\vioserial\2k25\amd64\*.inf" /install
+pnputil /add-driver "$virtio\viorng\2k25\amd64\*.inf" /install
+
+msiexec /i "$virtio\guest-agent\qemu-ga-x86_64.msi" /qn /norestart
+$svc = Get-Service | Where-Object {
+  $_.Name -in @('QEMU-GA', 'qemu-ga') -or
+  $_.DisplayName -like '*QEMU*Guest*Agent*'
+} | Select-Object -First 1
+Set-Service -Name $svc.Name -StartupType Automatic
+Start-Service -Name $svc.Name
+Get-CimInstance Win32_Service -Filter "Name='$($svc.Name)'"
+```
+
+### Promote The Server To `corp.lan`
+
+Still in elevated PowerShell on `AD-01`:
+
+```powershell
+Install-WindowsFeature AD-Domain-Services,DNS -IncludeManagementTools
+
+Install-ADDSForest `
+  -DomainName 'corp.lan' `
+  -DomainNetbiosName 'CORP' `
+  -SafeModeAdministratorPassword (ConvertTo-SecureString '<lab-default-password>' -AsPlainText -Force) `
+  -InstallDns `
+  -Force
+```
+
+Let the server reboot. After it comes back, verify domain-controller state:
+
+```powershell
+Get-ADDomainController
+Get-ADDomain
+```
+
+### Configure DNS Forwarding And AD CS
+
+```powershell
+Add-DnsServerConditionalForwarderZone `
+  -Name 'workshop.lan' `
+  -MasterServers @('172.16.0.10') `
+  -ReplicationScope Forest
+
+Install-WindowsFeature AD-Certificate,ADCS-Cert-Authority,ADCS-Web-Enrollment -IncludeManagementTools
+
+Install-AdcsCertificationAuthority `
+  -CAType EnterpriseRootCA `
+  -CryptoProviderName 'RSA#Microsoft Software Key Storage Provider' `
+  -KeyLength 4096 `
+  -HashAlgorithmName SHA256 `
+  -CACommonName 'CORP Enterprise Root CA' `
+  -ValidityPeriod Years `
+  -ValidityPeriodUnits 10 `
+  -Force
+
+Install-AdcsWebEnrollment -Force
+certutil -ping
+```
+
+### Seed The Demo Groups And Users
+
+```powershell
+$base = 'CN=Users,DC=corp,DC=lan'
+
+'OpenShift-Admins',
+'OpenShift-Virt-Admins',
+'Ansible-Automation-Admins',
+'Developers' | ForEach-Object {
+  if (-not (Get-ADGroup -Filter "Name -eq '$_'" -ErrorAction SilentlyContinue)) {
+    New-ADGroup -Name $_ -GroupScope Global -GroupCategory Security -Path $base
+  }
+}
+
+$users = @(
+  @{ name='ad-directoryadmin'; first='Directory';     last='Admin';         groups=@('Domain Admins') },
+  @{ name='ad-ocpadmin';      first='OpenShift';     last='Admin';         groups=@('OpenShift-Admins') },
+  @{ name='ad-virtadmin';     first='Virtualization';last='Admin';         groups=@('OpenShift-Virt-Admins') },
+  @{ name='ad-aapadmin';      first='Automation';    last='Admin';         groups=@('Ansible-Automation-Admins') },
+  @{ name='ad-dev01';         first='Developer';     last='One';           groups=@('Developers') }
+)
+
+$pw = ConvertTo-SecureString '<lab-default-password>' -AsPlainText -Force
+foreach ($u in $users) {
+  if (-not (Get-ADUser -Filter "SamAccountName -eq '$($u.name)'" -ErrorAction SilentlyContinue)) {
+    New-ADUser `
+      -Name "$($u.first) $($u.last)" `
+      -GivenName $u.first `
+      -Surname $u.last `
+      -SamAccountName $u.name `
+      -UserPrincipalName "$($u.name)@corp.lan" `
+      -AccountPassword $pw `
+      -Enabled $true `
+      -PasswordNeverExpires $true `
+      -Path $base
+  }
+  foreach ($group in $u.groups) {
+    $members = Get-ADGroupMember -Identity $group -ErrorAction SilentlyContinue |
+      Select-Object -ExpandProperty SamAccountName
+    if ($members -notcontains $u.name) {
+      Add-ADGroupMember -Identity $group -Members $u.name
+    }
+  }
+}
+```
+
+### Open The Required Windows Firewall Groups
+
+```powershell
+$displayGroups = @(
+  'DNS Service',
+  'Kerberos Key Distribution Center',
+  'Active Directory Domain Services',
+  'Certification Authority',
+  'Windows Remote Management'
+)
+
+foreach ($group in $displayGroups) {
+  $rules = Get-NetFirewallRule | Where-Object { $_.DisplayGroup -eq $group }
+  if ($rules) {
+    $rules | Enable-NetFirewallRule
+  }
+}
+```
+
+### Export The AD Root CA And Validate Final State
+
+```powershell
+certutil -ca.cert C:\Windows\Temp\corp-root-ca.cer
+Get-ADDomain
+Get-ADDomainController
+Get-Service CertSvc
+```
+
+From `virt-01`, detach the installation media once the guest configuration is
+complete:
+
+```bash
+ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
+for target in $(virsh domblklist ad-01.corp.lan --details | awk '$2 == "cdrom" { print $3 }'); do
+  virsh change-media ad-01.corp.lan "$target" --eject --config --live --force || true
+done
+EOF
+```
 
 Validated AD outputs:
 
@@ -1304,7 +1714,7 @@ Validated AD outputs:
   - `ad-aapadmin`
   - `ad-dev01`
 
-Quick verification from the bastion:
+Quick verification from the bastion and hypervisor:
 
 ```bash
 curl -sI http://172.16.0.40:5985/wsman | head -n 1
