@@ -101,6 +101,13 @@ drivers and guest tools:
 /root/images/virtio-win.iso
 ```
 
+Current documented source for that ISO:
+
+- `virtio-win` driver installation guidance:
+  - https://virtio-win.github.io/Knowledge-Base/Driver-installation.html
+- direct ISO download referenced there:
+  - https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/latest-virtio/virtio-win.iso
+
 ## Local Secrets And Ignored Files
 
 The main local secret file is:

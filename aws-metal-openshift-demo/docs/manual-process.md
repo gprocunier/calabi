@@ -1256,6 +1256,13 @@ ls -l /dev/ebs/ad-01
 exit
 ```
 
+If `virtio-win.iso` is not already staged, the current documented source is:
+
+- `virtio-win` driver installation guidance:
+  - https://virtio-win.github.io/Knowledge-Base/Driver-installation.html
+- direct ISO download referenced there:
+  - https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/latest-virtio/virtio-win.iso
+
 Run the validated AD build from the bastion:
 
 ```bash
