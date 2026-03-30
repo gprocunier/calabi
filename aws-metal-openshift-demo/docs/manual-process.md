@@ -1723,19 +1723,62 @@ ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 'virsh domsta
 
 ## 13B. Join The Bastion To IdM
 
-_This section describes the bastion enrollment phase performed by `playbooks/bootstrap/bastion-join.yml`, reusing the `bastion_guest` role in join mode._
+_This section describes the manual equivalent of the bastion IdM-enrollment phase. At this point `bastion-01` already exists and `idm-01` is already configured. The remaining work is to trust the active IdM CA, enroll the bastion as an IPA client, and enable the authselect features used by the rest of the lab._
 
-Once `idm-01` is up, join the already-built bastion to IdM from inside the lab:
+From `bastion-01`, make sure the active IdM CA is trusted locally before the
+client install:
 
 ```bash
-cd /opt/openshift/aws-metal-openshift-demo
-ansible-playbook -i inventory/hosts.yml playbooks/bootstrap/bastion-join.yml
+curl -o /tmp/idm-ca.crt http://idm-01.workshop.lan/ipa/config/ca.crt
+sudo install -o root -g root -m 0644 \
+  /tmp/idm-ca.crt /etc/ipa/ca.crt
+sudo install -o root -g root -m 0644 \
+  /tmp/idm-ca.crt /etc/pki/ca-trust/source/anchors/idm-rootCA.pem
+sudo update-ca-trust extract
 ```
 
-This phase refreshes the active IdM CA, enrolls the host with the FreeIPA
-client role, and enables `authselect` with `with-mkhomedir` plus `with-sudo`
-so IdM-backed operators get home directories and SSSD sudo rules on first
-login.
+Enroll the bastion into IdM:
+
+```bash
+sudo dnf -y install \
+  ipa-client \
+  oddjob \
+  oddjob-mkhomedir \
+  sssd \
+  authselect-compat
+
+sudo ipa-client-install -U \
+  --hostname=bastion-01.workshop.lan \
+  --domain=workshop.lan \
+  --realm=WORKSHOP.LAN \
+  --server=idm-01.workshop.lan \
+  --principal=admin \
+  --password='<lab-default-password>' \
+  --force-join \
+  --mkhomedir \
+  --enable-dns-updates \
+  --no-ntp
+```
+
+Enable the same client-side login behavior the automation expects:
+
+```bash
+sudo systemctl enable --now oddjobd.service
+sudo authselect select sssd with-mkhomedir with-sudo --force
+sudo systemctl restart sssd
+sudo sss_cache -E
+```
+
+Validate the bastion is now using IdM:
+
+```bash
+id admin@workshop.lan
+getent passwd admin@workshop.lan
+sudo sssctl domain-status workshop.lan
+```
+
+At this point the bastion is ready for IdM-backed operator access. The next
+support-service phase is the mirror registry build.
 
 ---
 
