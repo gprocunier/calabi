@@ -57,6 +57,11 @@ idm_server:
   realm: WORKSHOP.LAN
   ds_password: "{{ lab_default_password }}"
   admin_password: "{{ lab_default_password }}"
+  pki:
+    mode: "{{ lab_pki_mode }}"
+    external_ca_type: ms-cs
+    external_ca_profile: SubCA
+    controller_work_root: "{{ lookup('env', 'HOME') }}/.local/state/calabi-pki"
   setup_dns: true
   dns_forwarders:
     - 8.8.8.8

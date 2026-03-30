@@ -32,6 +32,7 @@
     name:
       - ansible-core
       - rsync
+      - python3-pip
       - tar
     state: present
 
@@ -268,6 +269,13 @@
       - "{{ bastion_client.collection_root }}"
   environment:
     ANSIBLE_COLLECTIONS_PATH: "{{ bastion_client.collection_root }}"
+  changed_when: false
+
+- name: Install required Python packages for WinRM control on the bastion
+  ansible.builtin.pip:
+    requirements: "{{ bastion_stage_remote_project_root }}/requirements-pip.txt"
+    extra_args: --user
+  become: false
   changed_when: false
 
 - name: Discover the latest rendered OpenShift tool version on the bastion

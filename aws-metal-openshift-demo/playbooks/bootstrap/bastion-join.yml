@@ -1,0 +1,38 @@
+---
+- name: Join the bastion guest to IdM after identity services are available
+  hosts: openshift_bastion
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/bastion.yml
+    - ../../vars/global/rhsm.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/pki.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/bastion_vm.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+
+  vars:
+    bastion_guest_join_idm: true
+
+  pre_tasks:
+    - name: Wait for the IdM guest SSH port from the bastion network
+      ansible.builtin.wait_for:
+        host: "{{ idm_vm.network.ipv4_address }}"
+        port: 22
+        timeout: 900
+        sleep: 10
+
+    - name: Wait for the bastion guest to accept SSH connections
+      ansible.builtin.wait_for_connection:
+        timeout: 900
+        sleep: 10
+
+    - name: Gather facts from the bastion guest
+      ansible.builtin.setup:
+
+  tasks:
+    - name: Run bastion guest configuration in join mode
+      ansible.builtin.include_role:
+        name: bastion_guest

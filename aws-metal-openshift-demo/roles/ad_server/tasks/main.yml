@@ -1,0 +1,453 @@
+---
+# ad_server — Provision a Windows Server 2022 VM on the hypervisor via
+# unattended install, then configure AD DS and AD CS over WinRM.
+#
+# This role runs on the hypervisor host (aws_metal). The guest
+# configuration plays run against the registered Windows host.
+
+- name: Derive AD VM facts from the orchestration data
+  ansible.builtin.set_fact:
+    ad_role_vm_fqdn: "{{ ad_vm.name }}.{{ ad_vm.domain }}"
+    ad_role_install_profile: "{{ ad_server_install_profile | default('full') }}"
+    ad_role_install_is_simple_hardware: >-
+      {{ (ad_server_install_profile | default('full')) in ['vanilla', 'minimal', 'boot-only'] }}
+    ad_role_runtime_dir: /var/lib/aws-metal-openshift-demo/{{ ad_vm.name }}
+    ad_role_autounattend_dir: >-
+      /var/lib/aws-metal-openshift-demo/{{ ad_vm.name }}/autounattend
+    ad_role_autounattend_iso: >-
+      /var/lib/aws-metal-openshift-demo/{{ ad_vm.name }}/{{ ad_vm.name }}-autounattend.iso
+    ad_role_install_iso_staged_path: >-
+      /var/lib/aws-metal-openshift-demo/{{ ad_vm.name }}/{{
+      ad_vm.install_iso | basename }}
+    ad_role_virtio_iso_staged_path: >-
+      /var/lib/aws-metal-openshift-demo/{{ ad_vm.name }}/{{
+      ad_vm.virtio_iso | basename }}
+    ad_role_performance_domain_settings: >-
+      {{
+        lab_host_resource_management.performance_domains[
+          ad_vm.performance_domain.tier
+        ]
+      }}
+
+- name: Derive AD VM install-profile-specific options
+  ansible.builtin.set_fact:
+    ad_role_install_disk_bus: "{{ 'sata' if ad_role_install_is_simple_hardware else 'scsi' }}"
+    ad_role_install_network_model: "{{ 'e1000e' if ad_role_install_profile == 'minimal' else 'virtio' }}"
+    ad_role_install_attach_virtio_iso: "{{ ad_role_install_profile == 'full' }}"
+    ad_role_install_attach_autounattend_iso: "{{ ad_role_install_profile in ['minimal', 'full'] }}"
+    ad_role_install_use_boot_menu_keys: "{{ ad_role_install_profile == 'full' }}"
+    ad_role_install_use_guest_agent_channel: "{{ ad_role_install_profile == 'full' }}"
+
+- name: Initialize the AD VM virt-install cputune entries
+  ansible.builtin.set_fact:
+    ad_role_cputune_entries: >-
+      {{
+        [
+          'shares=' ~
+          (ad_role_performance_domain_settings.cpu_shares | string),
+          'emulatorpin.cpuset=' ~
+          lab_host_resource_management.cpu_pools.host_emulator
+        ]
+        + (
+          [
+            'iothreadpin0.iothread=1',
+            'iothreadpin0.cpuset=' ~
+            lab_host_resource_management.cpu_pools.host_emulator
+          ]
+          if (ad_vm.performance_domain.iothreads | int) > 0
+          else []
+        )
+      }}
+
+- name: Add AD VM vCPU pinning entries to the virt-install cputune list
+  ansible.builtin.set_fact:
+    ad_role_cputune_entries: >-
+      {{
+        ad_role_cputune_entries
+        + [
+            'vcpupin' ~ (item | string) ~ '.vcpu=' ~ (item | string),
+            'vcpupin' ~ (item | string) ~ '.cpuset=' ~
+            lab_host_resource_management.cpu_pools.guest_domain
+          ]
+      }}
+  loop: "{{ range(0, ad_vm.resources.vcpus | int) | list }}"
+
+- name: Derive AD VM virt-install performance-domain arguments
+  ansible.builtin.set_fact:
+    ad_role_performance_args: >-
+      {{
+        [
+          '--resource',
+          'partition=' ~ ad_role_performance_domain_settings.partition,
+          '--cputune',
+          ad_role_cputune_entries | join(',')
+        ]
+        + (
+          [
+            '--iothreads',
+            'iothreads=' ~ (ad_vm.performance_domain.iothreads | string)
+          ]
+          if (ad_vm.performance_domain.iothreads | int) > 0
+          else []
+        )
+      }}
+
+- name: Validate the AD VM orchestration data
+  ansible.builtin.assert:
+    that:
+      - ad_vm.name | length > 0
+      - ad_vm.domain | length > 0
+      - ad_vm.install_iso | length > 0
+      - ad_vm.virtio_iso | length > 0
+      - ad_vm.disk_path | length > 0
+      - ad_vm.network.libvirt_network | length > 0
+      - ad_vm.network.libvirt_portgroup | length > 0
+      - ad_vm.network.mac_address | length > 0
+      - ad_vm.network.ipv4_address | length > 0
+      - (ad_vm.network.prefix_length | int) > 0
+      - ad_vm.network.gateway | length > 0
+      - ad_vm.access.admin_password | length > 0
+    fail_msg: >-
+      vars/guests/ad_vm.yml is missing required AD guest settings.
+
+- name: Remember whether the AD disk path is a raw block device
+  ansible.builtin.set_fact:
+    ad_role_disk_is_block_device: >-
+      {{ ad_vm.disk_path is match('^/dev/') }}
+
+- name: Install packages needed for the AD VM build workflow
+  ansible.builtin.package:
+    name:
+      - qemu-img
+      - qemu-kvm
+      - virt-install
+      - xorriso
+    state: present
+
+- name: Check whether the Windows Server ISO is present
+  ansible.builtin.stat:
+    path: "{{ ad_vm.install_iso }}"
+  register: ad_role_install_iso_stat
+
+- name: Fail when the Windows Server ISO is missing
+  ansible.builtin.assert:
+    that:
+      - ad_role_install_iso_stat.stat.exists
+    fail_msg: >-
+      Windows Server ISO {{ ad_vm.install_iso }} was not found.
+      Download the evaluation ISO from Microsoft and place it at
+      this path on the hypervisor.
+
+- name: Check whether the virtio-win ISO is present
+  ansible.builtin.stat:
+    path: "{{ ad_vm.virtio_iso }}"
+  register: ad_role_virtio_iso_stat
+  when: ad_role_install_attach_virtio_iso | bool
+
+- name: Fail when the virtio-win ISO is missing
+  ansible.builtin.assert:
+    that:
+      - ad_role_virtio_iso_stat.stat.exists
+    fail_msg: >-
+      virtio-win ISO {{ ad_vm.virtio_iso }} was not found.
+      Download from https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/
+  when: ad_role_install_attach_virtio_iso | bool
+
+- name: Ensure the AD disk directory exists when using a file-backed disk
+  ansible.builtin.file:
+    path: "{{ ad_vm.disk_path | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: not ad_role_disk_is_block_device | bool
+
+- name: Ensure the AD media staging directory exists
+  ansible.builtin.file:
+    path: "{{ ad_role_runtime_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Stage the Windows Server ISO where libvirt can read it
+  ansible.builtin.copy:
+    src: "{{ ad_vm.install_iso }}"
+    dest: "{{ ad_role_install_iso_staged_path }}"
+    remote_src: true
+    owner: qemu
+    group: qemu
+    mode: "0644"
+
+- name: Stage the virtio-win ISO where libvirt can read it
+  ansible.builtin.copy:
+    src: "{{ ad_vm.virtio_iso }}"
+    dest: "{{ ad_role_virtio_iso_staged_path }}"
+    remote_src: true
+    owner: qemu
+    group: qemu
+    mode: "0644"
+  when: ad_role_install_attach_virtio_iso | bool
+
+- name: Check whether the AD disk path is present
+  ansible.builtin.stat:
+    path: "{{ ad_vm.disk_path }}"
+  register: ad_role_block_device_stat
+
+- name: Fail when the AD block device path is missing
+  ansible.builtin.assert:
+    that:
+      - ad_role_block_device_stat.stat.exists or not ad_role_disk_is_block_device | bool
+    fail_msg: >-
+      AD block device {{ ad_vm.disk_path }} was not found.
+
+- name: Create the AD raw disk file when it does not exist
+  ansible.builtin.command:
+    argv:
+      - qemu-img
+      - create
+      - -f
+      - raw
+      - "{{ ad_vm.disk_path }}"
+      - "{{ ad_vm.resources.disk_size_gb | string }}G"
+  when:
+    - not ad_role_disk_is_block_device | bool
+    - not ad_role_block_device_stat.stat.exists
+  changed_when: true
+
+- name: Check whether the AD libvirt domain already exists
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - dominfo
+      - "{{ ad_role_vm_fqdn }}"
+  register: ad_role_domain_info
+  changed_when: false
+  failed_when: false
+
+- name: Stop the existing AD VM before recreation
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - destroy
+      - "{{ ad_role_vm_fqdn }}"
+  when:
+    - >-
+      ad_vm.provisioning.recreate_domain | bool or
+      ad_vm.provisioning.rebuild_disk | bool
+    - ad_role_domain_info.rc == 0
+  changed_when: true
+  failed_when: false
+
+- name: Undefine the existing AD VM before rebuilding
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - undefine
+      - "{{ ad_role_vm_fqdn }}"
+      - --nvram
+  when:
+    - >-
+      ad_vm.provisioning.recreate_domain | bool or
+      ad_vm.provisioning.rebuild_disk | bool
+    - ad_role_domain_info.rc == 0
+  changed_when: true
+  failed_when: false
+
+- name: Wipe the AD disk for a clean Windows install
+  ansible.builtin.command:
+    argv:
+      - dd
+      - if=/dev/zero
+      - "of={{ ad_vm.disk_path }}"
+      - bs=1M
+      - count=1
+      - conv=notrunc
+  when: ad_vm.provisioning.rebuild_disk | bool
+  changed_when: true
+
+- name: Create the AD VM working directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ ad_role_autounattend_dir }}"
+  when: ad_role_install_attach_autounattend_iso | bool
+
+- name: Render the autounattend.xml answer file
+  ansible.builtin.template:
+    src: autounattend.xml.j2
+    dest: "{{ ad_role_autounattend_dir }}/autounattend.xml"
+    mode: "0600"
+  when: ad_role_install_attach_autounattend_iso | bool
+
+- name: Generate the autounattend ISO
+  ansible.builtin.command:
+    argv:
+      - xorriso
+      - -as
+      - mkisofs
+      - -o
+      - "{{ ad_role_autounattend_iso }}"
+      - -V
+      - OEMDRV
+      - -J
+      - -R
+      - -graft-points
+      - autounattend.xml={{ ad_role_autounattend_dir }}/autounattend.xml
+  changed_when: true
+  when: ad_role_install_attach_autounattend_iso | bool
+
+- name: Ensure libvirt can read the autounattend ISO
+  ansible.builtin.file:
+    path: "{{ ad_role_autounattend_iso }}"
+    owner: qemu
+    group: qemu
+    mode: "0644"
+  when: ad_role_install_attach_autounattend_iso | bool
+
+- name: Install the AD VM when absent or recreation was requested
+  ansible.builtin.command:
+    argv: >-
+      {{
+        [
+          'virt-install',
+          '--name', ad_role_vm_fqdn,
+          '--osinfo', ad_vm.osinfo,
+          '--boot', ad_vm.boot.firmware,
+          '--machine', ad_vm.boot.machine,
+          '--memory', (ad_vm.resources.memory_mb | string),
+          '--vcpus', (ad_vm.resources.vcpus | string),
+          '--cpu', ad_vm.boot.cpu_model,
+        ]
+        + (
+          [
+            '--controller',
+            'type=scsi,model=virtio-scsi'
+          ]
+          if not ad_role_install_is_simple_hardware | bool
+          else []
+        )
+        + (
+          [
+            '--controller',
+            'type=virtio-serial,index=0'
+          ]
+          if ad_role_install_use_guest_agent_channel | bool
+          else []
+        )
+        + [
+          '--disk',
+          'path=' ~ ad_vm.disk_path ~
+          ',format=raw,bus=' ~ ad_role_install_disk_bus ~ ',cache=none,io=native,discard=unmap,' ~
+          'rotation_rate=1,boot_order=2',
+          '--disk',
+          'path=' ~ ad_role_install_iso_staged_path ~
+          ',device=cdrom,readonly=on,boot_order=1',
+        ]
+        + (
+          [
+            '--disk',
+            'path=' ~ ad_role_virtio_iso_staged_path ~ ',device=cdrom,readonly=on'
+          ]
+          if ad_role_install_attach_virtio_iso | bool
+          else []
+        )
+        + (
+          [
+            '--disk',
+            'path=' ~ ad_role_autounattend_iso ~ ',device=cdrom,readonly=on'
+          ]
+          if ad_role_install_attach_autounattend_iso | bool
+          else []
+        )
+        + [
+          '--network',
+          'network=' ~ ad_vm.network.libvirt_network ~
+          ',portgroup=' ~ ad_vm.network.libvirt_portgroup ~
+          ',model=' ~ ad_role_install_network_model ~
+          ',mac=' ~ ad_vm.network.mac_address,
+        ]
+        + (
+          [
+            '--channel',
+            'unix,target_type=virtio,name=org.qemu.guest_agent.0'
+          ]
+          if ad_role_install_use_guest_agent_channel | bool
+          else []
+        )
+        + [
+          '--rng', 'builtin',
+          '--graphics', 'vnc,listen=0.0.0.0',
+          '--console', 'pty,target_type=serial',
+          '--autostart',
+          '--noautoconsole'
+        ]
+        + ad_role_performance_args +
+        (
+          ['--tpm', 'none']
+          if not (ad_vm.boot.tpm_enabled | default(false) | bool)
+          else []
+        )
+      }}
+  when: >-
+    ad_role_domain_info.rc != 0 or
+    ad_vm.provisioning.recreate_domain | bool or
+    ad_vm.provisioning.rebuild_disk | bool
+  changed_when: true
+
+- name: Open the firmware boot menu from the optical-media prompt
+  ansible.builtin.shell: |
+    set -euo pipefail
+    for attempt in $(seq 1 {{ ad_vm.boot.install_media_boot_keypress_attempts | default(12) }}); do
+      virsh qemu-monitor-command "{{ ad_role_vm_fqdn }}" --hmp "sendkey spc" || true
+      sleep {{ ad_vm.boot.install_media_boot_keypress_interval_seconds | default(1) }}
+    done
+  args:
+    executable: /bin/bash
+  changed_when: true
+  when: >-
+    ad_role_install_use_boot_menu_keys | bool and
+    (
+      ad_role_domain_info.rc != 0 or
+      ad_vm.provisioning.recreate_domain | bool or
+      ad_vm.provisioning.rebuild_disk | bool
+    )
+
+- name: Select the first boot-menu entry after opening the firmware menu
+  ansible.builtin.shell: |
+    set -euo pipefail
+    sleep 2
+    virsh qemu-monitor-command "{{ ad_role_vm_fqdn }}" --hmp "sendkey ret" || true
+  args:
+    executable: /bin/bash
+  changed_when: true
+  when: >-
+    ad_role_install_use_boot_menu_keys | bool and
+    (
+      ad_role_domain_info.rc != 0 or
+      ad_vm.provisioning.recreate_domain | bool or
+      ad_vm.provisioning.rebuild_disk | bool
+    )
+
+- name: Repeatedly confirm boot from the Windows DVD prompt
+  ansible.builtin.shell: |
+    set -euo pipefail
+    sleep 2
+    for attempt in $(seq 1 {{ ad_vm.boot.install_media_boot_keypress_attempts | default(12) }}); do
+      virsh qemu-monitor-command "{{ ad_role_vm_fqdn }}" --hmp "sendkey ret" || true
+      sleep {{ ad_vm.boot.install_media_boot_keypress_interval_seconds | default(1) }}
+    done
+  args:
+    executable: /bin/bash
+  changed_when: true
+  when: >-
+    ad_role_install_use_boot_menu_keys | bool and
+    (
+      ad_role_domain_info.rc != 0 or
+      ad_vm.provisioning.recreate_domain | bool or
+      ad_vm.provisioning.rebuild_disk | bool
+    )

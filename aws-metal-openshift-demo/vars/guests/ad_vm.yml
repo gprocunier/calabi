@@ -1,0 +1,102 @@
+---
+# Paths in this file are evaluated on the managed hypervisor host.
+ad_vm:
+  name: ad-01
+  domain: corp.lan
+  install_iso: /root/images/26100.32230.260111-0550.lt_release_svc_refresh_SERVER_EVAL_x64FRE_en-us.iso
+  virtio_iso: /root/images/virtio-win.iso
+  disk_path: /dev/ebs/ad-01
+  osinfo: win2k25
+  driver_os_id: 2k25
+  boot_critical_driver_components:
+    - vioscsi
+    - NetKVM
+  virtio_driver_components:
+    - Balloon
+    - qemufwcfg
+    - vioserial
+    - viorng
+  provisioning:
+    recreate_domain: false
+    rebuild_disk: "{{ ad_server_reset_storage_requested | bool }}"
+  boot:
+    firmware: uefi,loader_secure=no
+    machine: q35
+    cpu_model: host-passthrough
+    tpm_enabled: false
+    install_media_boot_key: ret
+    install_media_boot_keypress_delay_seconds: 0
+    install_media_boot_keypress_attempts: 12
+    install_media_boot_keypress_interval_seconds: 1
+  resources:
+    memory_mb: 8192
+    vcpus: 4
+    disk_size_gb: 60
+  performance_domain:
+    tier: bronze
+    iothreads: 0
+  network:
+    libvirt_network: lab-switch
+    libvirt_portgroup: mgmt-access
+    interface_name: Ethernet
+    mac_address: "52:54:00:50:01:05"
+    ipv4_address: 172.16.0.40
+    prefix_length: 24
+    gateway: 172.16.0.1
+    dns_servers:
+      - 172.16.0.10
+      - 8.8.8.8
+  access:
+    admin_user: Administrator
+    admin_password: "{{ lab_default_password | default(ansible_password) }}"
+
+ad_server:
+  domain_name: corp.lan
+  domain_netbios: CORP
+  safe_mode_password: "{{ lab_default_password | default(ansible_password) }}"
+  ca_common_name: CORP Enterprise Root CA
+  ca_validity_years: 10
+  dns_forwarders:
+    - 172.16.0.10
+  firewall_rules:
+    - DNS Service
+    - Kerberos Key Distribution Center
+    - Active Directory Domain Services
+    - Certification Authority
+    - Windows Remote Management
+  identity_users:
+    - name: ad-directoryadmin
+      first_name: Directory
+      last_name: Admin
+      password: "{{ lab_default_password | default(ansible_password) }}"
+      groups:
+        - Domain Admins
+    - name: ad-ocpadmin
+      first_name: OpenShift
+      last_name: Admin
+      password: "{{ lab_default_password | default(ansible_password) }}"
+      groups:
+        - OpenShift-Admins
+    - name: ad-virtadmin
+      first_name: Virtualization
+      last_name: Admin
+      password: "{{ lab_default_password | default(ansible_password) }}"
+      groups:
+        - OpenShift-Virt-Admins
+    - name: ad-aapadmin
+      first_name: Automation
+      last_name: Admin
+      password: "{{ lab_default_password | default(ansible_password) }}"
+      groups:
+        - Ansible-Automation-Admins
+    - name: ad-dev01
+      first_name: Developer
+      last_name: One
+      password: "{{ lab_default_password | default(ansible_password) }}"
+      groups:
+        - Developers
+  identity_groups:
+    - OpenShift-Admins
+    - OpenShift-Virt-Admins
+    - Ansible-Automation-Admins
+    - Developers

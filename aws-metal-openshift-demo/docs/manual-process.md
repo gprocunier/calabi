@@ -27,6 +27,13 @@ When bastion-native playbooks need to be rerun after local repository changes,
 the staged repo on bastion is refreshed in place so `generated/` output is not
 thrown away between runs.
 
+> [!IMPORTANT]
+> The validated support-services order changed. The current golden path is:
+> build `bastion-01`, stage the project to bastion, optionally build
+> `ad-01` with AD DS and AD CS, build `idm-01`, join the bastion to IdM, then
+> continue with `mirror-registry`, OpenShift DNS, and cluster work. The legacy
+> section numbering is retained below so older deep links do not break.
+
 The command examples use these neutral placeholders:
 
 - `<operator-ssh-key>`: the SSH private key used from the operator workstation
@@ -44,14 +51,14 @@ The command examples use these neutral placeholders:
 
 | Steps | Where | What happens |
 | --- | --- | --- |
-| 1-13 | Operator workstation / `virt-01` | AWS stacks, hypervisor, support VMs, bastion staging |
-| 14-36 | `bastion-01` | Mirror registry, DNS, cluster build, day-2, debugging |
+| 1-13 | Operator workstation / `virt-01` | AWS stacks, hypervisor, bastion build, bastion staging |
+| 13A-36 | `bastion-01` | optional AD, IdM, bastion join, mirror registry, DNS, cluster build, day-2, debugging |
 
 > [!IMPORTANT]
 > **Pick a side and stay on it.** Steps 1-13 run from the operator workstation
-> against `virt-01`. Steps 14-36 run from the bastion. The project does not
+> against `virt-01`. Steps 13A-36 run from the bastion. The project does not
 > account for switching execution context mid-stream. Once you cross the
-> bastion boundary at step 14, stay on bastion.
+> bastion boundary at step 13A, stay on bastion.
 
 ## Table Of Contents
 
@@ -71,10 +78,26 @@ Use this like a runbook, not a novel. Jump to the phase you actually need.
 
 ### Support Services
 
+Validated support-services order:
+
+- [12. Build The Bastion VM](#12-build-the-bastion-vm)
+- [13. Stage The Project To The Bastion](#13-stage-the-project-to-the-bastion)
+- [13A. Optionally Build AD DS And AD CS From Bastion](#13a-optionally-build-ad-ds-and-ad-cs-from-bastion)
+- [10. Build The IdM VM](#10-build-the-idm-vm)
+- [11. Configure IdM In The Guest](#11-configure-idm-in-the-guest)
+- [13B. Join The Bastion To IdM](#13b-join-the-bastion-to-idm)
+- [14. Build The Mirror Registry VM](#14-build-the-mirror-registry-vm)
+- [15. Mirror OpenShift And Operator Content](#15-mirror-openshift-and-operator-content)
+- [16. Populate OpenShift DNS In IdM](#16-populate-openshift-dns-in-idm)
+
+Legacy section order retained below:
+
 - [10. Build The IdM VM](#10-build-the-idm-vm)
 - [11. Configure IdM In The Guest](#11-configure-idm-in-the-guest)
 - [12. Build The Bastion VM](#12-build-the-bastion-vm)
 - [13. Stage The Project To The Bastion](#13-stage-the-project-to-the-bastion)
+- [13A. Optionally Build AD DS And AD CS From Bastion](#13a-optionally-build-ad-ds-and-ad-cs-from-bastion)
+- [13B. Join The Bastion To IdM](#13b-join-the-bastion-to-idm)
 - [14. Build The Mirror Registry VM](#14-build-the-mirror-registry-vm)
 - [15. Mirror OpenShift And Operator Content](#15-mirror-openshift-and-operator-content)
 - [16. Populate OpenShift DNS In IdM](#16-populate-openshift-dns-in-idm)
@@ -723,12 +746,14 @@ curl -L '<rhel10-kvm-direct-download-url>' \
 
 ## 10. Build The IdM VM
 
-_This section describes the hypervisor-side steps performed by `playbooks/bootstrap/idm.yml`, primarily the `idm` role._
+_This section describes the hypervisor-side steps performed by `playbooks/bootstrap/idm.yml`, primarily the `idm` role. In the current validated flow, it runs from `bastion-01` after bastion staging and after the optional AD build when enabled._
 
 Seed the `idm-01` disk from the RHEL image, create cloud-init, and build the
 VM on the management VLAN.
 
 ```bash
+ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1
+
 mkdir -p /var/lib/aws-metal-openshift-demo/idm-01
 qemu-img convert -f qcow2 -O raw \
   <rhel10-image-path> \
@@ -814,13 +839,13 @@ surviving as an empty CD-ROM through an in-guest reboot.
 
 ## 11. Configure IdM In The Guest
 
-_This section describes the guest-side steps performed by `playbooks/bootstrap/idm.yml`, primarily the `idm_guest` role._
+_This section describes the guest-side steps performed by `playbooks/bootstrap/idm.yml`, primarily the `idm_guest` role. In the validated bastion-first flow, the bastion performs this work after the hypervisor-side IdM build completes._
 
 Update the guest, install IdM, enable Cockpit and session recording, and create
 the core users and groups used by OpenShift.
 
 ```bash
-ssh -i <operator-ssh-key> cloud-user@172.16.0.10
+ssh -i /opt/openshift/secrets/hypervisor-admin.key cloud-user@172.16.0.10
 sudo -i
 
 dnf -y update
@@ -973,6 +998,11 @@ _This section describes the hypervisor-side steps performed by `playbooks/bootst
 Create the bastion on VLAN 100. This becomes the execution host for the rest of
 the lab.
 
+> [!NOTE]
+> The validated flow builds the bastion before IdM. The initial bastion build
+> does not enroll the guest into IdM. That enrollment now happens later in
+> [13B. Join The Bastion To IdM](#13b-join-the-bastion-to-idm).
+
 ```bash
 mkdir -p /var/lib/aws-metal-openshift-demo/bastion-01
 qemu-img convert -f qcow2 -O raw \
@@ -1054,8 +1084,7 @@ ssh -i <operator-ssh-key> cloud-user@172.16.0.30 \
    sudo systemctl enable --now cockpit.socket; \
    sudo systemctl enable --now osbuild-composer.socket; \
    sudo systemctl enable --now pmcd pmlogger pmproxy; \
-   sudo systemctl enable --now oddjobd; \
-   sudo authselect select sssd with-mkhomedir with-sudo --force"
+   sudo systemctl enable --now oddjobd"
 ```
 
 That places `bastion-01` into the Bronze performance domain.
@@ -1080,6 +1109,9 @@ ready-to-use shell environment for `cloud-user` and current IdM `admins`
 members, including `$HOME/bin`, `$HOME/etc`, tool symlinks, and a login-time
 `KUBECONFIG` export when the cluster artifacts exist.
 
+The bastion staging phase also installs the execution-time Python requirements
+needed for Windows orchestration, including `pywinrm`.
+
 ```bash
 rsync -a --delete \
   --exclude generated \
@@ -1103,6 +1135,8 @@ sudo mv /tmp/hypervisor-admin.key /opt/openshift/secrets/hypervisor-admin.key
 sudo mv /tmp/hypervisor-admin.pub /opt/openshift/secrets/hypervisor-admin.pub
 sudo chmod 0600 /opt/openshift/secrets/hypervisor-admin.key
 sudo chown -R cloud-user:cloud-user /opt/openshift
+sudo dnf -y install python3-pip
+sudo python3 -m pip install -r /opt/openshift/aws-metal-openshift-demo/requirements-pip.txt
 EOF
 ```
 
@@ -1184,21 +1218,118 @@ When using an AI assistant to develop against this codebase:
   planning, doc rewrites, and multi-source investigations. Switch to a faster
   model for mechanical execution: running playbooks, committing, syncing.
 
+## 13A. Optionally Build AD DS And AD CS From Bastion
+
+_This section describes the validated bastion-native AD path performed by `playbooks/bootstrap/ad-server.yml`, primarily the `ad_server` and `ad_server_guest` roles._
+
+> [!IMPORTANT]
+> This phase is optional and default-disabled in automation:
+> `lab_build_ad_server: false`. Enable it only when you want the lab AD DS /
+> AD CS server.
+
+The current supported path for `ad-01` is the dedicated playbook, not a
+hand-driven Windows install. The automation owns:
+
+- Windows Server 2025 unattended installation on `/dev/ebs/ad-01`
+- first WinRM reachability
+- post-install virtio drivers and guest tools
+- AD DS promotion
+- AD CS + Web Enrollment
+- demo users and groups
+- root CA export
+- installation-media cleanup
+
+Pre-stage the installation media on `virt-01`:
+
+```bash
+ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1
+ls -l /root/images/26100.32230.260111-0550.lt_release_svc_refresh_SERVER_EVAL_x64FRE_en-us.iso
+ls -l /root/images/virtio-win.iso
+ls -l /dev/ebs/ad-01
+exit
+```
+
+Run the validated AD build from the bastion:
+
+```bash
+cd /opt/openshift/aws-metal-openshift-demo
+ansible-playbook -i inventory/hosts.yml playbooks/bootstrap/ad-server.yml \
+  -e lab_build_ad_server=true
+```
+
+For a destructive rebuild from zero:
+
+```bash
+cd /opt/openshift/aws-metal-openshift-demo
+ansible-playbook -i inventory/hosts.yml playbooks/bootstrap/ad-server.yml \
+  -e lab_build_ad_server=true \
+  -e ad_server_reset_storage_requested=true
+```
+
+Validated guest identity:
+
+- VM/domain: `ad-01.corp.lan`
+- Windows hostname: `AD-01`
+- IPv4: `172.16.0.40/24`
+- gateway: `172.16.0.1`
+- DNS: `172.16.0.10`, `8.8.8.8`
+
+Validated AD outputs:
+
+- AD domain: `corp.lan`
+- Enterprise Root CA: `CORP Enterprise Root CA`
+- groups:
+  - `OpenShift-Admins`
+  - `OpenShift-Virt-Admins`
+  - `Ansible-Automation-Admins`
+  - `Developers`
+- users:
+  - `ad-directoryadmin`
+  - `ad-ocpadmin`
+  - `ad-virtadmin`
+  - `ad-aapadmin`
+  - `ad-dev01`
+
+Quick verification from the bastion:
+
+```bash
+curl -sI http://172.16.0.40:5985/wsman | head -n 1
+ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 'virsh domstate ad-01.corp.lan'
+```
+
+## 13B. Join The Bastion To IdM
+
+_This section describes the bastion enrollment phase performed by `playbooks/bootstrap/bastion-join.yml`, reusing the `bastion_guest` role in join mode._
+
+Once `idm-01` is up, join the already-built bastion to IdM from inside the lab:
+
+```bash
+cd /opt/openshift/aws-metal-openshift-demo
+ansible-playbook -i inventory/hosts.yml playbooks/bootstrap/bastion-join.yml
+```
+
+This phase refreshes the active IdM CA, enrolls the host with the FreeIPA
+client role, and enables `authselect` with `with-mkhomedir` plus `with-sudo`
+so IdM-backed operators get home directories and SSSD sudo rules on first
+login.
+
 ---
 
 ### Bastion boundary — all remaining work runs from `bastion-01`
 
 > [!WARNING]
 > Everything below this line runs from the bastion. Do not switch back to the
-> operator workstation for steps 14-36 unless you are deliberately debugging
+> operator workstation for steps 13A-36 unless you are deliberately debugging
 > the automation itself. Once you cross this boundary, stay on bastion.
 
 ## 14. Build The Mirror Registry VM
 
 _This section describes the steps performed by `playbooks/lab/mirror-registry.yml`, principally the `mirror_registry` and `mirror_registry_guest` roles._
 
-From the bastion, create the mirror-registry VM on `virt-01`, then configure
-the guest, join it to IdM, and install the Quay-based mirror registry stack.
+From the bastion, after the validated support-services order
+(`bastion -> bastion-stage -> optional ad-server -> idm -> bastion-join`),
+create the mirror-registry VM on `virt-01`, then configure the guest, join it
+to IdM, and install the Quay-based mirror registry stack.
 
 ```bash
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1

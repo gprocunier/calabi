@@ -1,0 +1,276 @@
+<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+
+  <!--
+    Unattended Windows Server 2022 installation for Calabi AD/ADCS server.
+    Loads only the boot-critical storage driver during Setup, then enables
+    WinRM so the remaining virtio drivers can be installed post-install.
+  -->
+
+  <settings pass="windowsPE">
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <SetupUILanguage>
+        <UILanguage>en-US</UILanguage>
+      </SetupUILanguage>
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+
+{% if ad_server_install_profile | default('full') == 'full' %}
+    <component name="Microsoft-Windows-PnpCustomizationsWinPE"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <DriverPaths>
+{% for driver in ad_vm.boot_critical_driver_components | default(['vioscsi']) %}
+        <PathAndCredentials wcm:action="add" wcm:keyValue="{{ loop.index }}">
+          <Path>E:\{{ driver }}\{{ ad_vm.driver_os_id | default('2k22') }}\amd64</Path>
+        </PathAndCredentials>
+{% endfor %}
+      </DriverPaths>
+    </component>
+{% endif %}
+
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <DiskConfiguration>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <CreatePartition wcm:action="add">
+              <Order>1</Order>
+              <Size>260</Size>
+              <Type>EFI</Type>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>2</Order>
+              <Size>128</Size>
+              <Type>MSR</Type>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>3</Order>
+              <Extend>true</Extend>
+              <Type>Primary</Type>
+            </CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add">
+              <Order>1</Order>
+              <PartitionID>1</PartitionID>
+              <Format>FAT32</Format>
+              <Label>EFI</Label>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>2</Order>
+              <PartitionID>2</PartitionID>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>3</Order>
+              <PartitionID>3</PartitionID>
+              <Format>NTFS</Format>
+              <Label>Windows</Label>
+              <Letter>C</Letter>
+            </ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+      <ImageInstall>
+        <OSImage>
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>3</PartitionID>
+          </InstallTo>
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/INDEX</Key>
+              <Value>2</Value>
+            </MetaData>
+          </InstallFrom>
+        </OSImage>
+      </ImageInstall>
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <ProductKey>
+          <WillShowUI>Never</WillShowUI>
+        </ProductKey>
+      </UserData>
+    </component>
+  </settings>
+
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <ComputerName>{{ ad_vm.name | upper }}</ComputerName>
+      <TimeZone>UTC</TimeZone>
+    </component>
+
+{% if ad_server_install_profile | default('full') == 'minimal' %}
+    <component name="Microsoft-Windows-TCPIP"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <Interfaces>
+        <Interface wcm:action="add">
+          <Identifier>{{ ad_vm.network.interface_name }}</Identifier>
+          <Ipv4Settings>
+            <DhcpEnabled>false</DhcpEnabled>
+          </Ipv4Settings>
+          <UnicastIpAddresses>
+            <IpAddress wcm:action="add" wcm:keyValue="1">{{ ad_vm.network.ipv4_address }}/{{ ad_vm.network.prefix_length }}</IpAddress>
+          </UnicastIpAddresses>
+          <Routes>
+            <Route wcm:action="add">
+              <Identifier>1</Identifier>
+              <NextHopAddress>{{ ad_vm.network.gateway }}</NextHopAddress>
+              <Prefix>0.0.0.0/0</Prefix>
+              <Metric>10</Metric>
+            </Route>
+          </Routes>
+        </Interface>
+      </Interfaces>
+    </component>
+
+    <component name="Microsoft-Windows-DNS-Client"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <Interfaces>
+        <Interface wcm:action="add">
+          <Identifier>{{ ad_vm.network.interface_name }}</Identifier>
+          <DNSServerSearchOrder>
+{% for dns in ad_vm.network.dns_servers %}
+            <IpAddress wcm:action="add" wcm:keyValue="{{ loop.index }}">{{ dns }}</IpAddress>
+{% endfor %}
+          </DNSServerSearchOrder>
+          <DNSDomain>{{ ad_server.domain_name }}</DNSDomain>
+        </Interface>
+      </Interfaces>
+    </component>
+{% endif %}
+
+    <component name="Microsoft-Windows-TerminalServices-LocalSessionManager"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <fDenyTSConnections>false</fDenyTSConnections>
+    </component>
+  </settings>
+
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS"
+               xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideLocalAccountScreen>true</HideLocalAccountScreen>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <ProtectYourPC>3</ProtectYourPC>
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+        <SkipUserOOBE>true</SkipUserOOBE>
+      </OOBE>
+      <UserAccounts>
+        <AdministratorPassword>
+          <Value>{{ ad_vm.access.admin_password }}</Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+      </UserAccounts>
+      <AutoLogon>
+        <Enabled>true</Enabled>
+        <Username>Administrator</Username>
+        <Password>
+          <Value>{{ ad_vm.access.admin_password }}</Value>
+          <PlainText>true</PlainText>
+        </Password>
+        <LogonCount>3</LogonCount>
+      </AutoLogon>
+{% if ad_server_install_profile | default('full') in ['minimal', 'full'] %}
+      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <CommandLine>powershell -NoProfile -Command "Set-ExecutionPolicy RemoteSigned -Force"</CommandLine>
+          <Description>Set PowerShell execution policy</Description>
+        </SynchronousCommand>
+{% if ad_server_install_profile | default('full') == 'full' %}
+        <SynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <CommandLine>powershell -NoProfile -Command "$adapter = Get-NetAdapter | Where-Object { $_.Status -ne 'Disabled' } | Sort-Object ifIndex | Select-Object -First 1; if (-not $adapter) { throw 'No active network adapter found' }; Get-NetIPAddress -InterfaceAlias $adapter.Name -AddressFamily IPv4 -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue; New-NetIPAddress -InterfaceAlias $adapter.Name -IPAddress '{{ ad_vm.network.ipv4_address }}' -PrefixLength {{ ad_vm.network.prefix_length }} -DefaultGateway '{{ ad_vm.network.gateway }}'; Set-DnsClientServerAddress -InterfaceAlias $adapter.Name -ServerAddresses @({% for dns in ad_vm.network.dns_servers %}'{{ dns }}'{{ ',' if not loop.last else '' }}{% endfor %})"</CommandLine>
+          <Description>Configure the static IPv4 networking</Description>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <CommandLine>powershell -NoProfile -Command "Set-DnsClientGlobalSetting -SuffixSearchList @('{{ ad_server.domain_name }}')"</CommandLine>
+          <Description>Set the DNS suffix search list</Description>
+        </SynchronousCommand>
+{% endif %}
+        <SynchronousCommand wcm:action="add">
+          <Order>{{ '4' if ad_server_install_profile | default('full') == 'full' else '2' }}</Order>
+          <CommandLine>powershell -NoProfile -Command "Enable-PSRemoting -Force -SkipNetworkProfileCheck"</CommandLine>
+          <Description>Enable PowerShell remoting</Description>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>{{ '5' if ad_server_install_profile | default('full') == 'full' else '3' }}</Order>
+          <CommandLine>powershell -NoProfile -Command "Set-Item WSMan:\localhost\Service\Auth\Basic -Value $true"</CommandLine>
+          <Description>Enable WinRM basic auth</Description>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>{{ '6' if ad_server_install_profile | default('full') == 'full' else '4' }}</Order>
+          <CommandLine>powershell -NoProfile -Command "Set-Item WSMan:\localhost\Service\AllowUnencrypted -Value $true"</CommandLine>
+          <Description>Allow unencrypted WinRM for lab</Description>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>{{ '7' if ad_server_install_profile | default('full') == 'full' else '5' }}</Order>
+          <CommandLine>powershell -NoProfile -Command "New-NetFirewallRule -DisplayName 'WinRM HTTP' -Direction Inbound -Protocol TCP -LocalPort 5985 -Action Allow"</CommandLine>
+          <Description>Open WinRM firewall port</Description>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>{{ '8' if ad_server_install_profile | default('full') == 'full' else '6' }}</Order>
+          <CommandLine>powershell -NoProfile -Command "Restart-Service WinRM"</CommandLine>
+          <Description>Restart WinRM service</Description>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>{{ '9' if ad_server_install_profile | default('full') == 'full' else '7' }}</Order>
+          <CommandLine>reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v AutoAdminLogon /t REG_SZ /d 0 /f</CommandLine>
+          <Description>Disable auto-logon</Description>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+{% endif %}
+    </component>
+  </settings>
+</unattend>

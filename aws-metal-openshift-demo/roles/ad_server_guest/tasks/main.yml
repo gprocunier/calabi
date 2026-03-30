@@ -1,0 +1,422 @@
+---
+# ad_server_guest — Configure AD DS, AD CS, DNS, users, and groups on a
+# Windows Server 2022 guest over WinRM.
+
+- name: Locate the virtio driver media inside the guest
+  ansible.windows.win_powershell:
+    script: |
+      $candidates = Get-PSDrive -PSProvider FileSystem |
+        ForEach-Object { $_.Root.TrimEnd('\') } |
+        Where-Object { $_ -match '^[A-Z]:$' }
+
+      foreach ($root in $candidates) {
+        if (Test-Path "$root\guest-agent\qemu-ga-x86_64.msi") {
+          [pscustomobject]@{ drive = $root } | ConvertTo-Json -Compress
+          exit 0
+        }
+      }
+
+      throw "virtio driver media was not found in the guest"
+  register: ad_guest_virtio_media
+  when: ad_server_install_profile | default('full') == 'full'
+
+- name: Remember the virtio driver media drive letter
+  ansible.builtin.set_fact:
+    ad_guest_virtio_media_drive: >-
+      {{ ((ad_guest_virtio_media.output | first) | from_json).drive }}
+  when: ad_server_install_profile | default('full') == 'full'
+
+- name: Locate the virtio guest tools installer on the media
+  ansible.windows.win_powershell:
+    script: |
+      $paths = @(
+        "{{ ad_guest_virtio_media_drive }}\virtio-win-gt-x64.msi",
+        "{{ ad_guest_virtio_media_drive }}\virtio-win-guest-tools.exe"
+      )
+      foreach ($path in $paths) {
+        if (Test-Path $path) {
+          [pscustomobject]@{ path = $path } | ConvertTo-Json -Compress
+          exit 0
+        }
+      }
+      throw "virtio guest tools installer was not found on the virtio media"
+  register: ad_guest_virtio_tools_installer
+  when: ad_server_install_profile | default('full') == 'full'
+
+- name: Remember the virtio guest tools installer path
+  ansible.builtin.set_fact:
+    ad_guest_virtio_tools_installer_path: >-
+      {{ ((ad_guest_virtio_tools_installer.output | first) | from_json).path }}
+  when: ad_server_install_profile | default('full') == 'full'
+
+- name: Install the virtio guest tools bundle before AD role configuration
+  ansible.windows.win_package:
+    path: "{{ ad_guest_virtio_tools_installer_path }}"
+    state: present
+    arguments:
+      - /qn
+      - /norestart
+  register: ad_guest_virtio_tools
+  ignore_unreachable: true
+  when: ad_server_install_profile | default('full') == 'full'
+
+- name: Wait for authenticated WinRM after the virtio guest tools bundle
+  ansible.builtin.wait_for_connection:
+    timeout: 1800
+    sleep: 15
+    connect_timeout: 10
+  when:
+    - ad_server_install_profile | default('full') == 'full'
+
+- name: Reboot after the virtio guest tools bundle requests one
+  ansible.windows.win_reboot:
+    reboot_timeout: 1800
+    post_reboot_delay: 30
+  when:
+    - ad_server_install_profile | default('full') == 'full'
+    - ad_guest_virtio_tools is not unreachable
+    - ad_guest_virtio_tools.reboot_required | default(false) | bool
+
+- name: Install the remaining virtio drivers after Windows setup
+  ansible.windows.win_powershell:
+    script: |
+      $driverPaths = @(
+      {% for driver in ad_vm.virtio_driver_components | default(['NetKVM', 'Balloon', 'qemufwcfg', 'vioserial', 'viorng']) %}
+        '{{ ad_guest_virtio_media_drive }}\{{ driver }}\{{ ad_vm.driver_os_id | default("2k22") }}\amd64\*.inf'{{ ',' if not loop.last else '' }}
+      {% endfor %}
+      )
+      $changed = $false
+      foreach ($path in $driverPaths) {
+        if (-not (Get-ChildItem -Path $path -ErrorAction SilentlyContinue)) {
+          throw "Driver path $path was not found"
+        }
+        $result = & pnputil.exe /add-driver $path /install
+        $resultText = ($result | Out-String)
+        if ($resultText -match 'Added driver packages:' -or $resultText -match 'Driver package added successfully') {
+          $changed = $true
+        }
+      }
+      if ($changed) { 'CHANGED' } else { 'OK' }
+  register: ad_guest_virtio_drivers
+  changed_when: "'CHANGED' in (ad_guest_virtio_drivers.output | join(' '))"
+  when: ad_server_install_profile | default('full') == 'full'
+
+- name: Install the QEMU guest agent package from the virtio media
+  ansible.windows.win_package:
+    path: "{{ ad_guest_virtio_media_drive }}\\guest-agent\\qemu-ga-x86_64.msi"
+    state: present
+    arguments:
+      - /qn
+      - /norestart
+  when: ad_server_install_profile | default('full') == 'full'
+
+- name: Ensure the QEMU guest agent service starts automatically
+  ansible.windows.win_powershell:
+    script: |
+      $svc = Get-Service | Where-Object {
+        $_.Name -in @('QEMU-GA', 'qemu-ga') -or
+        $_.DisplayName -like '*QEMU*Guest*Agent*'
+      } | Select-Object -First 1
+      if (-not $svc) {
+        throw "QEMU guest agent service is not installed"
+      }
+      Set-Service -Name $svc.Name -StartupType Automatic
+      Start-Service -Name $svc.Name
+      $startup = Get-CimInstance Win32_Service -Filter "Name='$($svc.Name)'"
+      Write-Output "ServiceName: $($svc.Name)"
+      Write-Output "State: $($svc.Status)"
+      Write-Output "StartMode: $($startup.StartMode)"
+  when: ad_server_install_profile | default('full') == 'full'
+
+- name: Install the AD DS and DNS Windows features
+  ansible.windows.win_feature:
+    name:
+      - AD-Domain-Services
+      - DNS
+    include_management_tools: true
+    state: present
+  register: ad_guest_features
+
+- name: Reboot after installing the AD DS and DNS Windows features
+  ansible.windows.win_reboot:
+    reboot_timeout: 1800
+    post_reboot_delay: 30
+  when: ad_guest_features.changed | default(false) | bool
+
+- name: Detect whether the guest is already a domain controller
+  ansible.windows.win_powershell:
+    script: |
+      $system = Get-CimInstance Win32_ComputerSystem
+      [pscustomobject]@{
+        domain_role = [int]$system.DomainRole
+        is_domain_controller = ([int]$system.DomainRole -ge 4)
+        part_of_domain = [bool]$system.PartOfDomain
+      } | ConvertTo-Json -Compress
+  register: ad_guest_domain_role
+
+- name: Remember the current AD domain-controller state
+  ansible.builtin.set_fact:
+    ad_guest_is_domain_controller: >-
+      {{ ((ad_guest_domain_role.output | first) | from_json).is_domain_controller }}
+    ad_guest_part_of_domain: >-
+      {{ ((ad_guest_domain_role.output | first) | from_json).part_of_domain }}
+
+- name: Remove AD CS features when a previous partial run installed them before promotion
+  ansible.windows.win_feature:
+    name:
+      - AD-Certificate
+      - ADCS-Cert-Authority
+      - ADCS-Web-Enrollment
+    include_management_tools: true
+    state: absent
+  when: not ad_guest_is_domain_controller | bool
+
+- name: Promote to domain controller and create the AD forest
+  ansible.windows.win_shell: |
+    $params = @{
+      DomainName                    = '{{ ad_server.domain_name }}'
+      DomainNetbiosName             = '{{ ad_server.domain_netbios }}'
+      SafeModeAdministratorPassword = (ConvertTo-SecureString '{{ ad_server.safe_mode_password }}' -AsPlainText -Force)
+      InstallDns                    = $true
+      NoRebootOnCompletion          = $false
+      Force                         = $true
+    }
+    Install-ADDSForest @params
+  register: ad_guest_promote
+  when: not ad_guest_is_domain_controller | bool
+  ignore_unreachable: true
+
+- name: Wait for the AD server to reboot after domain promotion
+  ansible.builtin.wait_for:
+    host: "{{ ad_vm.network.ipv4_address }}"
+    port: "{{ ad_server_winrm_port | default(5985) }}"
+    timeout: 600
+    sleep: 15
+  delegate_to: localhost
+  become: false
+  when: ad_guest_promote is changed
+
+- name: Wait for authenticated WinRM after domain promotion
+  ansible.builtin.wait_for_connection:
+    timeout: 900
+    sleep: 15
+    delay: 30
+  when: ad_guest_promote is changed
+
+- name: Wait for AD DS services to initialize after reboot
+  ansible.windows.win_shell: |
+    $timeout = 300
+    $timer = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($timer.Elapsed.TotalSeconds -lt $timeout) {
+      try {
+        Get-ADDomainController -ErrorAction Stop | Out-Null
+        Write-Output "AD DS ready"
+        exit 0
+      } catch {
+        Start-Sleep -Seconds 10
+      }
+    }
+    Write-Error "AD DS did not become ready within $timeout seconds"
+    exit 1
+  when: ad_guest_is_domain_controller | bool or ad_guest_promote is changed
+
+- name: Configure DNS conditional forwarder for workshop.lan
+  ansible.windows.win_shell: |
+    $existing = Get-DnsServerZone -Name 'workshop.lan' -ErrorAction SilentlyContinue
+    if (-not $existing) {
+      Add-DnsServerConditionalForwarderZone `
+        -Name 'workshop.lan' `
+        -MasterServers @(
+        {% for dns in ad_server.dns_forwarders %}
+          '{{ dns }}'{{ ',' if not loop.last else '' }}
+        {% endfor %}
+        ) `
+        -ReplicationScope 'Forest'
+      Write-Output "CHANGED"
+    } else {
+      Write-Output "OK"
+    }
+  register: ad_guest_dns_forwarder
+  changed_when: "'CHANGED' in ad_guest_dns_forwarder.stdout"
+  when: ad_guest_is_domain_controller | bool or ad_guest_promote is changed
+
+- name: Install the AD Certificate Services feature
+  ansible.windows.win_feature:
+    name:
+      - AD-Certificate
+      - ADCS-Cert-Authority
+      - ADCS-Web-Enrollment
+    include_management_tools: true
+    state: present
+  register: ad_guest_adcs_feature
+  when: ad_guest_is_domain_controller | bool or ad_guest_promote is changed
+
+- name: Configure the Enterprise Root CA
+  ansible.windows.win_shell: |
+    try {
+      $existing = Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration' -ErrorAction Stop
+      Write-Output "OK"
+    } catch {
+      Install-AdcsCertificationAuthority `
+        -CAType EnterpriseRootCA `
+        -CryptoProviderName "RSA#Microsoft Software Key Storage Provider" `
+        -KeyLength 4096 `
+        -HashAlgorithmName SHA256 `
+        -CACommonName '{{ ad_server.ca_common_name }}' `
+        -ValidityPeriod Years `
+        -ValidityPeriodUnits {{ ad_server.ca_validity_years }} `
+        -Force
+      Write-Output "CHANGED"
+    }
+  register: ad_guest_adcs_config
+  changed_when: "'CHANGED' in ad_guest_adcs_config.stdout"
+  when: ad_guest_is_domain_controller | bool or ad_guest_promote is changed
+
+- name: Install the ADCS Web Enrollment service
+  ansible.windows.win_shell: |
+    try {
+      Install-AdcsWebEnrollment -Force -ErrorAction Stop
+      Write-Output "CHANGED"
+    } catch [Microsoft.CertificateServices.Deployment.Common.CertificateServicesBaseSetupException] {
+      Write-Output "OK"
+    }
+  register: ad_guest_web_enroll
+  changed_when: "'CHANGED' in ad_guest_web_enroll.stdout"
+  when: ad_guest_is_domain_controller | bool or ad_guest_promote is changed
+
+- name: Create AD security groups
+  ansible.windows.win_shell: |
+    $group = '{{ item }}'
+    if (-not (Get-ADGroup -Filter "Name -eq '$group'" -ErrorAction SilentlyContinue)) {
+      New-ADGroup -Name $group `
+        -GroupScope Global `
+        -GroupCategory Security `
+        -Path "CN=Users,DC={{ ad_server.domain_name.split('.') | join(',DC=') }}"
+      Write-Output "CHANGED"
+    } else {
+      Write-Output "OK"
+    }
+  loop: "{{ ad_server.identity_groups }}"
+  register: ad_guest_groups
+  changed_when: false
+  when: ad_guest_is_domain_controller | bool or ad_guest_promote is changed
+
+- name: Create AD demo users
+  ansible.windows.win_shell: |
+    $username = '{{ item.name }}'
+    $existing = Get-ADUser -Filter "SamAccountName -eq '$username'" -ErrorAction SilentlyContinue
+    if (-not $existing) {
+      $password = ConvertTo-SecureString '{{ item.password }}' -AsPlainText -Force
+      New-ADUser `
+        -Name '{{ item.first_name }} {{ item.last_name }}' `
+        -GivenName '{{ item.first_name }}' `
+        -Surname '{{ item.last_name }}' `
+        -SamAccountName $username `
+        -UserPrincipalName "$username@{{ ad_server.domain_name }}" `
+        -AccountPassword $password `
+        -Enabled $true `
+        -PasswordNeverExpires $true `
+        -Path "CN=Users,DC={{ ad_server.domain_name.split('.') | join(',DC=') }}"
+      Write-Output "CHANGED"
+    } else {
+      Write-Output "OK"
+    }
+  loop: "{{ ad_server.identity_users }}"
+  register: ad_guest_users
+  changed_when: false
+  no_log: true
+  when: ad_guest_is_domain_controller | bool or ad_guest_promote is changed
+
+- name: Add AD demo users to their groups
+  ansible.windows.win_shell: |
+    $changed = $false
+    {% for group in item.groups %}
+    $members = Get-ADGroupMember -Identity '{{ group }}' -ErrorAction SilentlyContinue |
+      Select-Object -ExpandProperty SamAccountName
+    if ($members -notcontains '{{ item.name }}') {
+      Add-ADGroupMember -Identity '{{ group }}' -Members '{{ item.name }}'
+      $changed = $true
+    }
+    {% endfor %}
+    if ($changed) { Write-Output "CHANGED" } else { Write-Output "OK" }
+  loop: "{{ ad_server.identity_users }}"
+  register: ad_guest_group_membership
+  changed_when: false
+  when: ad_guest_is_domain_controller | bool or ad_guest_promote is changed
+
+- name: Ensure Windows Firewall allows required AD services
+  ansible.windows.win_shell: |
+    $rules = @(
+    {% for rule in ad_server.firewall_rules %}
+      '{{ rule }}'{{ ',' if not loop.last else '' }}
+    {% endfor %}
+    )
+    $changed = $false
+    foreach ($rule in $rules) {
+      $existing = Get-NetFirewallRule | Where-Object { $_.DisplayGroup -eq $rule }
+      if ($existing -and @($existing).Count -gt 0) {
+        $disabled = @($existing | Where-Object { $_.Enabled -ne 'True' })
+        if ($disabled.Count -gt 0) {
+          $disabled | Enable-NetFirewallRule
+          $changed = $true
+        }
+      }
+    }
+    if ($changed) { Write-Output "CHANGED" } else { Write-Output "OK" }
+  register: ad_guest_firewall_rules
+  changed_when: "'CHANGED' in ad_guest_firewall_rules.stdout"
+  when: ad_guest_is_domain_controller | bool or ad_guest_promote is changed
+
+- name: Validate AD DS is operational
+  ansible.windows.win_shell: |
+    $dc = Get-ADDomainController
+    $domain = Get-ADDomain
+    Write-Output "Domain: $($domain.DNSRoot)"
+    Write-Output "Forest: $($domain.Forest)"
+    Write-Output "DC: $($dc.HostName)"
+    Write-Output "Site: $($dc.Site)"
+  when: ad_guest_is_domain_controller | bool or ad_guest_promote is changed
+
+- name: Validate the QEMU guest agent service is installed and starts automatically
+  ansible.windows.win_shell: |
+    $svc = Get-Service | Where-Object {
+      $_.Name -in @('QEMU-GA', 'qemu-ga') -or
+      $_.DisplayName -like '*QEMU*Guest*Agent*'
+    } | Select-Object -First 1
+    if (-not $svc) {
+      Write-Error "QEMU guest agent service is not installed"
+      exit 1
+    }
+    $startup = Get-CimInstance Win32_Service -Filter "Name='$($svc.Name)'"
+    Write-Output "ServiceName: $($svc.Name)"
+    Write-Output "State: $($svc.Status)"
+    Write-Output "StartMode: $($startup.StartMode)"
+    if ($svc.Status -ne 'Running' -or $startup.StartMode -ne 'Auto') {
+      Write-Error "QEMU guest agent service is not running with automatic start"
+      exit 1
+    }
+
+- name: Validate ADCS Enterprise Root CA is operational
+  ansible.windows.win_shell: |
+    $ca = certutil -ping
+    if ($LASTEXITCODE -eq 0) {
+      Write-Output "CA is online"
+      certutil -CAInfo name
+    } else {
+      Write-Error "CA is not responding"
+      exit 1
+    }
+  when: ad_guest_is_domain_controller | bool or ad_guest_promote is changed
+
+- name: Export the ADCS root CA certificate for trust establishment
+  ansible.windows.win_shell: |
+    $certPath = "C:\Windows\Temp\corp-root-ca.cer"
+    if (-not (Test-Path $certPath)) {
+      certutil -ca.cert $certPath
+      Write-Output "CHANGED"
+    } else {
+      Write-Output "OK"
+    }
+  register: ad_guest_ca_export
+  changed_when: "'CHANGED' in ad_guest_ca_export.stdout"
+  when: ad_guest_is_domain_controller | bool or ad_guest_promote is changed

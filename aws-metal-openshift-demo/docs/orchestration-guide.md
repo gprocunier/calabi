@@ -35,6 +35,7 @@ Use this when you need to answer "where should I look" before you answer
 - [Data Files](#data-files)
 - [Project Dependencies](#project-dependencies)
 - [Host Roles](#host-roles)
+- [AD Roles](#ad-roles)
 - [IDM Roles](#idm-roles)
 - [OpenShift Cluster Roles](#openshift-cluster-roles)
 - [Mirror Registry Roles](#mirror-registry-roles)
@@ -63,7 +64,6 @@ Execution model:
 
 - imports:
   - `playbooks/bootstrap/site.yml`
-  - `playbooks/bootstrap/idm.yml`
   - `playbooks/bootstrap/bastion.yml`
   - `playbooks/bootstrap/bastion-stage.yml`
 
@@ -76,6 +76,9 @@ Purpose:
 Execution model:
 
 - imports:
+  - `playbooks/bootstrap/ad-server.yml`
+  - `playbooks/bootstrap/idm.yml`
+  - `playbooks/bootstrap/bastion-join.yml`
   - `playbooks/lab/mirror-registry.yml`
   - `playbooks/lab/openshift-dns.yml`
   - `playbooks/cluster/openshift-installer-binaries.yml`
@@ -83,12 +86,16 @@ Execution model:
   - `playbooks/cluster/openshift-agent-media.yml`
   - `playbooks/cluster/openshift-cluster.yml`
   - `playbooks/cluster/openshift-install-wait.yml`
+  - `playbooks/day2/openshift-post-install-validate.yml`
+  - `playbooks/day2/openshift-post-install.yml`
 - intended to run on `bastion-01`, not on the operator workstation
+- `playbooks/bootstrap/ad-server.yml` is optional and exits early unless
+  `lab_build_ad_server=true`
 - for resilient long-running execution, the project provides:
   - `scripts/run_bastion_playbook.sh`
   - which writes PID, log, and exit-code state under
     `/var/tmp/bastion-playbooks/`
-- support VMs (`idm-01`, `bastion-01`, and `mirror-registry`) default to
+- support VMs (`ad-01`, `idm-01`, `bastion-01`, and `mirror-registry`) default to
   preserving existing disks and libvirt domains on rerun
 - after a successful mirror phase, the preferred resume point for a fresh
   cluster rebuild is:
@@ -131,6 +138,43 @@ Important behavior:
   `IRQBALANCE_BANNED_CPULIST` by default
 - defines the CPU-pool data later consumed by `virt-install` guest definitions
 
+### `playbooks/bootstrap/ad-server.yml`
+
+Purpose:
+
+- provision `ad-01.corp.lan`
+- configure the guest as the optional lab AD DS / AD CS server
+
+Execution model:
+
+- first play runs on the hypervisor and creates the Windows guest with
+  `ad_server`
+- second play waits for the first WinRM listener
+- third play configures the guest with `ad_server_guest`
+- final play removes installation media from persistent XML
+- in the validated flow, bastion reaches the Windows guest directly on VLAN 100
+  with WinRM; it does not proxy back through the operator workstation
+
+Important behavior:
+
+- default-disabled behind `lab_build_ad_server: false`
+- uses an EBS-backed system disk at `/dev/ebs/ad-01`
+- uses Windows Server 2025 media plus `virtio-win.iso`
+- loads only the boot-critical storage and network drivers during Setup
+- installs the remaining virtio drivers and `virtio-win-gt-x64.msi`
+  post-install over WinRM
+- configures:
+  - AD DS
+  - AD CS
+  - Web Enrollment
+  - demo users and groups for the trust-oriented identity story
+- exports the AD root CA after successful configuration
+
+> [!NOTE]
+> The bastion-first AD build is validated. The deeper IdM trust and
+> AD-root/IdM-intermediate PKI path is still follow-on work, not the default
+> documented golden path.
+
 ### `playbooks/bootstrap/idm.yml`
 
 Purpose:
@@ -143,6 +187,8 @@ Execution model:
 - first play runs on the hypervisor and creates the VM with the `idm` role
 - then `add_host` registers the guest dynamically
 - second play waits for SSH and configures the guest with `idm_guest`
+- in the validated bastion-first flow, this playbook runs from the bastion
+  after bastion staging and after the optional AD build when enabled
 
 Important behavior:
 
@@ -192,14 +238,10 @@ Important behavior:
   - `pmcd`
   - `pmlogger`
   - `pmproxy`
-- joins the bastion to IdM when needed
-- uses the FreeIPA client role for enrollment
 - enables `oddjobd`
-- enables `authselect` with:
-  - `with-mkhomedir`
-  - `with-sudo`
-- leaves the bastion ready for IdM users to receive home directories and SSSD
-  sudo policy on first login
+- intentionally does not join IdM during the initial bastion build
+- leaves IdM enrollment to `playbooks/bootstrap/bastion-join.yml` after IdM is
+  available
 
 ### `playbooks/bootstrap/bastion-stage.yml`
 
@@ -217,6 +259,8 @@ Execution model:
   - stages the pull secret and hypervisor SSH key
   - renders a bastion-local inventory for `172.16.0.1`
   - installs Ansible collections
+  - installs pip requirements such as `pywinrm` so bastion-native Windows
+    orchestration can talk to `ad-01`
   - installs `/etc/profile.d/openshift-bastion.sh`
   - publishes a stable `generated/tools/current` symlink
   - creates `$HOME/bin` and `$HOME/etc` link sets for `cloud-user` and current
@@ -260,6 +304,60 @@ The shell profile installed by bastion-stage:
 - exports `KUBECONFIG=$HOME/etc/kubeconfig` only when that file exists and is
   readable
 - leaves early bastion logins clean even before OpenShift auth artifacts exist
+
+### `playbooks/bootstrap/bastion-join.yml`
+
+Purpose:
+
+- join the already-built bastion to IdM after identity services are available
+
+Execution model:
+
+- runs directly on `openshift_bastion`
+- waits for the IdM guest to answer on SSH first
+- reuses the existing `bastion_guest` role in join mode rather than creating a
+  second bastion-enrollment implementation
+
+Important behavior:
+
+- refreshes the active IdM CA before enrollment
+- runs the FreeIPA client role only when enrollment is required
+- enables `authselect` with:
+  - `with-mkhomedir`
+  - `with-sudo`
+- leaves the bastion ready for IdM-backed operator access before
+  `mirror-registry` and cluster work begin
+
+## AD Roles
+
+### `roles/ad_server`
+
+Purpose:
+
+- create, reset, and boot the Windows AD VM on the hypervisor
+
+Important behavior:
+
+- stages the Windows ISO, `virtio-win.iso`, and generated unattend media under
+  `/var/lib/aws-metal-openshift-demo/ad-01/`
+- uses `/dev/ebs/ad-01` for the system disk
+- keeps the Windows install path deterministic enough for reruns by isolating
+  boot-critical drivers from later guest-driver work
+
+### `roles/ad_server_guest`
+
+Purpose:
+
+- configure Windows after the first WinRM listener is available
+
+Important behavior:
+
+- installs remaining virtio drivers after the OS is reachable
+- installs and starts the QEMU guest agent
+- promotes the server to a DC
+- configures AD CS and Web Enrollment
+- seeds demo users and groups
+- exports the root CA
 
 ### `playbooks/lab/mirror-registry.yml`
 

@@ -1,4 +1,16 @@
 ---
+- import_playbook: bootstrap/ad-server.yml
+  tags:
+    - ad-server
+    - support-vms
+- import_playbook: bootstrap/idm.yml
+  tags:
+    - idm
+    - support-vms
+- import_playbook: bootstrap/bastion-join.yml
+  tags:
+    - bastion-join
+    - support-vms
 - import_playbook: lab/mirror-registry.yml
   tags:
     - mirror-registry

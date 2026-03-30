@@ -103,6 +103,19 @@
   changed_when: libvirt_cdrom_cleanup_remove_device.rc == 0
   failed_when: false
 
+- name: Detect whether the libvirt domain already uses per-device boot order
+  ansible.builtin.shell: |
+    set -euo pipefail
+    virsh dumpxml "{{ libvirt_cdrom_cleanup_domain }}" \
+      | python3 -c 'import sys, xml.etree.ElementTree as ET; root = ET.fromstring(sys.stdin.read()); print("yes" if root.findall(".//devices/*/boot") else "no")'
+  args:
+    executable: /bin/bash
+  register: libvirt_cdrom_cleanup_has_device_boot_order
+  changed_when: false
+  when:
+    - libvirt_cdrom_cleanup_domain_info.rc == 0
+    - libvirt_cdrom_cleanup_reset_boot_to_hd_only | bool
+
 - name: Reset boot order to disk only when requested
   ansible.builtin.command:
     argv:
@@ -114,6 +127,7 @@
   when:
     - libvirt_cdrom_cleanup_domain_info.rc == 0
     - libvirt_cdrom_cleanup_reset_boot_to_hd_only | bool
+    - (libvirt_cdrom_cleanup_has_device_boot_order.stdout | default('no') | trim) != 'yes'
   changed_when: true
 
 - name: Re-check matching CD-ROM media after cleanup

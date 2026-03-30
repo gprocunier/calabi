@@ -73,6 +73,7 @@ bastion_client:
     - openssh-clients
     - pcp
     - pcp-system-tools
+    - python3-pip
     - rsync
     - tar
     - tmux

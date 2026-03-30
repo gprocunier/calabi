@@ -1,0 +1,123 @@
+---
+- name: Build the AD/ADCS virtual machine for the Calabi lab
+  hosts: aws_metal
+  become: true
+  gather_facts: true
+  vars_files:
+    - ../../vars/global/pki.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/global/host_resource_management.yml
+    - ../../vars/global/rhsm.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/guests/ad_vm.yml
+
+  pre_tasks:
+    - name: Skip AD server bootstrap when disabled
+      ansible.builtin.meta: end_play
+      when: not (lab_build_ad_server | bool)
+
+  roles:
+    - role: ad_server
+
+  tasks:
+    - name: Register the AD guest as a temporary Ansible host
+      ansible.builtin.add_host:
+        name: ad_server
+        groups:
+          - ad_server
+        ansible_host: "{{ ad_vm.network.ipv4_address }}"
+        ansible_user: "{{ ad_vm.access.admin_user }}"
+        ansible_password: "{{ ad_vm.access.admin_password }}"
+        ansible_connection: ansible.builtin.winrm
+        ansible_port: 5985
+        ansible_winrm_transport: basic
+        ansible_winrm_server_cert_validation: ignore
+
+- name: Wait for the Windows unattended installation to complete
+  hosts: aws_metal
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/pki.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+
+  pre_tasks:
+    - name: Skip AD server bootstrap when disabled
+      ansible.builtin.meta: end_play
+      when: not (lab_build_ad_server | bool)
+
+    - name: Skip AD guest configuration when running the boot-only installer profile
+      ansible.builtin.meta: end_play
+      when: ad_server_install_profile | default('full') in ['vanilla', 'minimal', 'boot-only']
+
+  tasks:
+    - name: Wait for WinRM to become reachable on the AD guest
+      ansible.builtin.wait_for:
+        host: "{{ ad_vm.network.ipv4_address }}"
+        port: 5985
+        timeout: "{{ ad_server_install_timeout | default(3600) }}"
+        sleep: 30
+      register: ad_winrm_wait
+
+    - name: Allow extra time for first-logon commands to complete
+      ansible.builtin.pause:
+        seconds: "{{ ad_server_post_reboot_delay | default(120) }}"
+      when: ad_winrm_wait is changed
+
+- name: Configure AD DS and AD CS on the Windows guest
+  hosts: ad_server
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/pki.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+
+  pre_tasks:
+    - name: Skip AD server bootstrap when disabled
+      ansible.builtin.meta: end_play
+      when: not (lab_build_ad_server | bool)
+
+    - name: Skip AD guest configuration when running the boot-only installer profile
+      ansible.builtin.meta: end_play
+      when: ad_server_install_profile | default('full') in ['vanilla', 'minimal', 'boot-only']
+
+    - name: Wait for authenticated WinRM connectivity to the AD guest
+      ansible.builtin.wait_for_connection:
+        timeout: "{{ ad_server_install_timeout | default(3600) }}"
+        sleep: 15
+        connect_timeout: 10
+
+    - name: Verify WinRM connectivity to the AD guest
+      ansible.windows.win_ping:
+
+  roles:
+    - role: ad_server_guest
+
+- name: Detach AD installation media after guest configuration
+  hosts: aws_metal
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+
+  pre_tasks:
+    - name: Skip AD server bootstrap when disabled
+      ansible.builtin.meta: end_play
+      when: not (lab_build_ad_server | bool)
+
+    - name: Skip AD installation media cleanup when running the boot-only installer profile
+      ansible.builtin.meta: end_play
+      when: ad_server_install_profile | default('full') in ['vanilla', 'minimal', 'boot-only']
+
+  roles:
+    - role: libvirt_cdrom_cleanup
+      vars:
+        libvirt_cdrom_cleanup_domain: >-
+          {{ ad_vm.name }}.{{ ad_vm.domain }}
+        libvirt_cdrom_cleanup_media_path: >-
+          /var/lib/aws-metal-openshift-demo/{{ ad_vm.name }}/{{
+          ad_vm.name }}-autounattend.iso
+        libvirt_cdrom_cleanup_remove_media_file: true
+        libvirt_cdrom_cleanup_reset_boot_to_hd_only: true

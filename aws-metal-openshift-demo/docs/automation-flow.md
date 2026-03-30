@@ -45,9 +45,12 @@ experiences in practice.
     network and guest-volume substrate
 - Phase 2, workstation to `virt-01`:
   - bootstrap the hypervisor
-  - build `idm-01` and `bastion-01`
+  - build `bastion-01`
   - stage the project onto bastion
-- Phase 3, bastion-side lab:
+- Phase 3, bastion-side support services:
+  - optionally build `ad-01` with AD DS and AD CS
+  - build `idm-01`
+  - join `bastion-01` to IdM after identity services are ready
   - build mirror-registry
   - publish OpenShift DNS
   - prepare installer binaries, artifacts, and agent media
@@ -62,12 +65,12 @@ experiences in practice.
 
 | Steps | Where | What happens |
 | --- | --- | --- |
-| 1-7 | Operator workstation | AWS stacks, hypervisor bootstrap, support VMs, bastion staging |
-| 8-17 | `bastion-01` | Mirror registry, DNS, cluster build, day-2 configuration |
+| 1-6 | Operator workstation | AWS stacks, hypervisor bootstrap, bastion build, bastion staging |
+| 7-20 | `bastion-01` | optional AD, IdM, bastion join, mirror registry, DNS, cluster build, day-2 configuration |
 
 > [!IMPORTANT]
-> **Pick a side and stay on it.** Steps 1-7 run from the operator workstation.
-> Steps 8-17 run from the bastion. The project does not account for switching
+> **Pick a side and stay on it.** Steps 1-6 run from the operator workstation.
+> Steps 7-20 run from the bastion. The project does not account for switching
 > execution context mid-stream. If you start a bastion-side step from the
 > workstation and then run the next step directly on bastion (or vice versa),
 > generated state will diverge and later steps will fail in ways that are hard
@@ -108,17 +111,11 @@ experiences in practice.
        ```bash
        ansible-playbook -i inventory/hosts.yml playbooks/bootstrap/site.yml
        ```
-1. `playbooks/bootstrap/idm.yml`
-   - Builds `idm-01`, configures DNS/CA/KRA, Cockpit, session recording, RHSM/Insights, and IPA data.
-   - The IdM install path now uses the FreeIPA server role for server/KRA and FreeIPA modules for users, groups, password policies, and sudo rules.
-   - Example:
-     - `RUN LOCALLY`
-       ```bash
-       ansible-playbook -i inventory/hosts.yml playbooks/bootstrap/idm.yml
-       ```
 1. `playbooks/bootstrap/bastion.yml`
    - Builds `bastion-01` on VLAN 100.
-   - Joins it to IdM with the FreeIPA client role, enables RHSM/Insights, and turns on `with-mkhomedir` plus `with-sudo` so domain users get home directories and SSSD sudo rules on first login.
+   - Enables RHSM/Insights and the bastion management package set, but does not
+     join IdM yet. Bastion enrollment now happens later through
+     `playbooks/bootstrap/bastion-join.yml` after identity services are ready.
    - Example:
      - `RUN LOCALLY`
        ```bash
@@ -127,6 +124,8 @@ experiences in practice.
 1. `playbooks/bootstrap/bastion-stage.yml`
    - Synchronizes the repo onto the bastion with `rsync`, preserving bastion-side `generated/` content and restaging the pull secret and SSH key.
    - Renders the bastion-local inventory.
+   - Installs bastion execution prerequisites, including `python3-pip` and the
+     Python requirements needed for WinRM-backed Windows orchestration.
    - Installs the bastion profile snippet and user helper links so `cloud-user` and IdM `admins` land with working `oc`, `kubectl`, `openshift-install`, helper scripts, and a conditional `KUBECONFIG`.
    - Example:
      - `RUN LOCALLY`
@@ -139,7 +138,7 @@ experiences in practice.
 
 > [!WARNING]
 > Everything below this line runs on the bastion. Do not switch back to the
-> operator workstation for steps 8-17 unless you are deliberately debugging
+> operator workstation for steps 7-20 unless you are deliberately debugging
 > the automation itself. The golden path is bastion-native execution from this
 > point forward. Once you cross this boundary, stay on bastion.
 
@@ -150,11 +149,14 @@ For resilient long-running execution, the bastion helper
 Bastion staging restores `cloud-user` ownership on the staged `generated/`
 workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
 
-8. `playbooks/site-lab.yml`
+7. `playbooks/site-lab.yml`
    - Runs the full inside-facing lab phase from the bastion.
-   - Support VMs (`idm-01`, `bastion-01`, and `mirror-registry`) now default
-     to preserving their existing disks and libvirt domains on rerun instead of
-     being rebuilt automatically.
+   - Imports the validated support-service order:
+     optional `ad-server`, `idm`, `bastion-join`, then `mirror-registry`,
+     followed by cluster preparation, cluster build, validation, and day-2.
+   - Support VMs (`ad-01`, `idm-01`, `bastion-01`, and `mirror-registry`) now
+     default to preserving their existing disks and libvirt domains on rerun
+     instead of being rebuilt automatically.
    - After a successful mirror phase, the recommended resume point for a fresh
      cluster rebuild is:
      `./scripts/run_remote_bastion_playbook.sh playbooks/site-lab.yml --skip-tags mirror-registry`
@@ -172,7 +174,56 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
        ```bash
        ./scripts/run_remote_bastion_playbook.sh playbooks/site-lab.yml
        ```
-9. `playbooks/lab/mirror-registry.yml`
+8. `playbooks/bootstrap/ad-server.yml`
+   - Builds `ad-01.corp.lan` from the bastion-native path when
+     `lab_build_ad_server=true`.
+   - The validated path provisions Windows Server 2025 on `/dev/ebs/ad-01`,
+     enables WinRM, installs guest tools and remaining virtio drivers, then
+     configures AD DS, AD CS, Web Enrollment, demo users and groups, and
+     exports the root CA.
+   - This phase is optional and default-disabled.
+   - Example:
+     - `RUN ON BASTION`
+       ```bash
+       ansible-playbook -i inventory/hosts.yml playbooks/bootstrap/ad-server.yml \
+         -e lab_build_ad_server=true
+       ```
+     - Alternatively, from the workstation:
+       ```bash
+       ./scripts/run_remote_bastion_playbook.sh playbooks/bootstrap/ad-server.yml \
+         -e lab_build_ad_server=true
+       ```
+9. `playbooks/bootstrap/idm.yml`
+   - Builds `idm-01`, configures DNS/CA/KRA, Cockpit, session recording,
+     RHSM/Insights, and IPA data.
+   - In the current validated flow this runs from the bastion, after bastion
+     staging and after the optional AD build when enabled.
+   - The IdM install path uses the FreeIPA server role for server/KRA and
+     FreeIPA modules for users, groups, password policies, and sudo rules.
+   - Example:
+     - `RUN ON BASTION`
+       ```bash
+       ansible-playbook -i inventory/hosts.yml playbooks/bootstrap/idm.yml
+       ```
+     - Alternatively, from the workstation:
+       ```bash
+       ./scripts/run_remote_bastion_playbook.sh playbooks/bootstrap/idm.yml
+       ```
+10. `playbooks/bootstrap/bastion-join.yml`
+   - Joins the already-built bastion to IdM after identity services are ready.
+   - Refreshes the IdM CA, enrolls the host, and enables `with-mkhomedir` plus
+     `with-sudo` so domain users receive home directories and SSSD sudo rules
+     on first login.
+   - Example:
+     - `RUN ON BASTION`
+       ```bash
+       ansible-playbook -i inventory/hosts.yml playbooks/bootstrap/bastion-join.yml
+       ```
+     - Alternatively, from the workstation:
+       ```bash
+       ./scripts/run_remote_bastion_playbook.sh playbooks/bootstrap/bastion-join.yml
+       ```
+11. `playbooks/lab/mirror-registry.yml`
    - Builds `mirror-registry`, joins it to IdM, installs Quay, and prepares disconnected content tooling.
    - Default disconnected path is now `portable`, which runs both `m2d` and
      `d2m` in the same playbook invocation.
@@ -194,7 +245,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
        ```bash
        ./scripts/run_remote_bastion_playbook.sh playbooks/lab/mirror-registry.yml
        ```
-10. `playbooks/lab/openshift-dns.yml`
+12. `playbooks/lab/openshift-dns.yml`
     - Creates the cluster DNS zones and records in IdM.
     - Example:
       - `RUN ON BASTION`
@@ -205,7 +256,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
         ```bash
         ./scripts/run_remote_bastion_playbook.sh playbooks/lab/openshift-dns.yml
         ```
-11. `playbooks/cluster/openshift-installer-binaries.yml`
+13. `playbooks/cluster/openshift-installer-binaries.yml`
     - Downloads the exact OpenShift installer/client toolchain for the pinned mirrored release on the bastion.
     - Example:
       - `RUN ON BASTION`
@@ -216,7 +267,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
         ```bash
         ./scripts/run_remote_bastion_playbook.sh playbooks/cluster/openshift-installer-binaries.yml
         ```
-12. `playbooks/cluster/openshift-install-artifacts.yml`
+14. `playbooks/cluster/openshift-install-artifacts.yml`
     - Renders `install-config.yaml`, `agent-config.yaml`, and the IdM CA bundle on the bastion.
     - `agent-config.yaml` now renders per-node
       `rootDeviceHints.serialNumber` values from the libvirt root-disk serials
@@ -230,7 +281,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
         ```bash
         ./scripts/run_remote_bastion_playbook.sh playbooks/cluster/openshift-install-artifacts.yml
         ```
-13. `playbooks/cluster/openshift-agent-media.yml`
+15. `playbooks/cluster/openshift-agent-media.yml`
     - Generates `agent.x86_64.iso` on the bastion and publishes it to `virt-01`.
     - Example:
       - `RUN ON BASTION`
@@ -241,7 +292,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
         ```bash
         ./scripts/run_remote_bastion_playbook.sh playbooks/cluster/openshift-agent-media.yml
         ```
-14. `playbooks/cluster/openshift-cluster.yml`
+16. `playbooks/cluster/openshift-cluster.yml`
     - Builds the 9 nested OpenShift VMs, attaches the agent ISO, and boots them.
     - Example:
       - `RUN ON BASTION`
@@ -252,7 +303,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
         ```bash
         ./scripts/run_remote_bastion_playbook.sh playbooks/cluster/openshift-cluster.yml
         ```
-15. `playbooks/cluster/openshift-install-wait.yml`
+17. `playbooks/cluster/openshift-install-wait.yml`
     - Runs `openshift-install wait-for bootstrap-complete` and
       `openshift-install wait-for install-complete` from the bastion.
     - Example:
@@ -264,7 +315,19 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
         ```bash
         ./scripts/run_remote_bastion_playbook.sh playbooks/cluster/openshift-install-wait.yml
         ```
-16. `playbooks/day2/openshift-post-install.yml`
+18. `playbooks/day2/openshift-post-install-validate.yml`
+    - Verifies the cluster is ready for day-2 configuration before the
+      aggregated post-install play runs.
+    - Example:
+      - `RUN ON BASTION`
+        ```bash
+        ansible-playbook -i inventory/hosts.yml playbooks/day2/openshift-post-install-validate.yml
+        ```
+      - Alternatively, from the workstation:
+        ```bash
+        ./scripts/run_remote_bastion_playbook.sh playbooks/day2/openshift-post-install-validate.yml
+        ```
+19. `playbooks/day2/openshift-post-install.yml`
     - Applies day-2 configuration.
     - The current default baseline order is:
       disconnected OperatorHub, infra conversion, IdM ingress certs, LDAP
@@ -280,7 +343,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
         ```bash
         ./scripts/run_remote_bastion_playbook.sh playbooks/day2/openshift-post-install.yml
         ```
-17. `playbooks/maintenance/detach-install-media.yml`
+20. `playbooks/maintenance/detach-install-media.yml`
     - Ejects `cidata` and `agent.x86_64.iso` and restores disk-only boot
       intent.
     - For support guests, the persistent CD-ROM device is also removed from the
@@ -321,6 +384,11 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
   - `playbooks/site-lab.yml`
 - once the bastion is staged, guest-side management on VLAN 100 is performed
   directly from the bastion rather than proxied back through `virt-01`
+- `playbooks/site-lab.yml` now begins with support services in this order:
+  - optional `ad-server`
+  - `idm`
+  - `bastion-join`
+  - `mirror-registry`
 - the bastion now also presents a ready-to-use shell environment for
   `cloud-user` and IdM `admins`, including helper links under `$HOME/bin`,
   cluster artifacts under `$HOME/etc`, and conditional login-time `KUBECONFIG`
@@ -329,8 +397,10 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
   - tenant stack
   - host stack
   - hypervisor bootstrap
-  - `idm-01`
   - `bastion-01`
   - bastion staging
+  - `ad-01` when explicitly enabled
+  - `idm-01`
+  - bastion join
   - `mirror-registry`
   - OpenShift cluster install through `openshift-install wait-for install-complete`

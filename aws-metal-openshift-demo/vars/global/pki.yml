@@ -1,0 +1,6 @@
+---
+lab_pki_mode: idm-root
+
+lab_windows_winrm:
+  tunnel_root: "{{ lookup('env', 'HOME') }}/.local/state/calabi-winrm"
+  ad_server_local_port: 55985

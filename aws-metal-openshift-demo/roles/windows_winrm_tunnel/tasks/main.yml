@@ -1,0 +1,136 @@
+---
+- name: Validate the WinRM tunnel input data
+  ansible.builtin.assert:
+    that:
+      - windows_winrm_tunnel_name | length > 0
+      - windows_winrm_tunnel_local_port | int > 0
+      - windows_winrm_tunnel_remote_host | length > 0
+      - windows_winrm_tunnel_remote_port | int > 0
+      - windows_winrm_tunnel_jump_host | length > 0
+      - windows_winrm_tunnel_jump_user | length > 0
+      - windows_winrm_tunnel_jump_key_file | length > 0
+    fail_msg: windows_winrm_tunnel is missing required connection settings.
+  delegate_to: localhost
+  become: false
+
+- name: Derive the WinRM tunnel runtime paths
+  ansible.builtin.set_fact:
+    windows_winrm_tunnel_root: >-
+      {{
+        windows_winrm_tunnel_root
+        | default(lookup('env', 'HOME') + '/.local/state/calabi-winrm')
+      }}
+    windows_winrm_tunnel_socket: >-
+      {{
+        (
+          windows_winrm_tunnel_root
+          | default(lookup('env', 'HOME') + '/.local/state/calabi-winrm')
+        ) ~ '/' ~ windows_winrm_tunnel_name ~ '.sock'
+      }}
+  delegate_to: localhost
+  become: false
+
+- name: Ensure the WinRM tunnel runtime directory exists
+  ansible.builtin.file:
+    path: "{{ windows_winrm_tunnel_root }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+
+- name: Check whether the WinRM tunnel control socket is active
+  ansible.builtin.command:
+    argv:
+      - ssh
+      - -S
+      - "{{ windows_winrm_tunnel_socket }}"
+      - -O
+      - check
+      - "{{ windows_winrm_tunnel_jump_user }}@{{ windows_winrm_tunnel_jump_host }}"
+  register: windows_winrm_tunnel_check
+  changed_when: false
+  failed_when: false
+  delegate_to: localhost
+  become: false
+  when: windows_winrm_tunnel_state | default('present') == 'present'
+
+- name: Remove a stale WinRM tunnel control socket
+  ansible.builtin.file:
+    path: "{{ windows_winrm_tunnel_socket }}"
+    state: absent
+  delegate_to: localhost
+  become: false
+  when:
+    - windows_winrm_tunnel_state | default('present') == 'present'
+    - windows_winrm_tunnel_check.rc != 0
+
+- name: Start the WinRM SSH tunnel when inactive
+  ansible.builtin.command:
+    argv:
+      - ssh
+      - -i
+      - "{{ windows_winrm_tunnel_jump_key_file }}"
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - -o
+      - ExitOnForwardFailure=yes
+      - -S
+      - "{{ windows_winrm_tunnel_socket }}"
+      - -M
+      - -fNT
+      - -L
+      - 127.0.0.1:{{ windows_winrm_tunnel_local_port }}:{{ windows_winrm_tunnel_remote_host }}:{{ windows_winrm_tunnel_remote_port }}
+      - "{{ windows_winrm_tunnel_jump_user }}@{{ windows_winrm_tunnel_jump_host }}"
+  changed_when: true
+  delegate_to: localhost
+  become: false
+  when:
+    - windows_winrm_tunnel_state | default('present') == 'present'
+    - windows_winrm_tunnel_check.rc != 0
+
+- name: Wait for the WinRM tunnel to accept connections
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ windows_winrm_tunnel_local_port }}"
+    timeout: 60
+    sleep: 2
+  delegate_to: localhost
+  become: false
+  when: windows_winrm_tunnel_state | default('present') == 'present'
+
+- name: Check whether the WinRM tunnel control socket exists before teardown
+  ansible.builtin.stat:
+    path: "{{ windows_winrm_tunnel_socket }}"
+  register: windows_winrm_tunnel_socket_stat
+  delegate_to: localhost
+  become: false
+  when: windows_winrm_tunnel_state | default('present') == 'absent'
+
+- name: Stop the WinRM SSH tunnel
+  ansible.builtin.command:
+    argv:
+      - ssh
+      - -S
+      - "{{ windows_winrm_tunnel_socket }}"
+      - -O
+      - exit
+      - "{{ windows_winrm_tunnel_jump_user }}@{{ windows_winrm_tunnel_jump_host }}"
+  changed_when: true
+  failed_when: false
+  delegate_to: localhost
+  become: false
+  when:
+    - windows_winrm_tunnel_state | default('present') == 'absent'
+    - windows_winrm_tunnel_socket_stat.stat.exists
+
+- name: Remove the WinRM tunnel control socket after teardown
+  ansible.builtin.file:
+    path: "{{ windows_winrm_tunnel_socket }}"
+    state: absent
+  delegate_to: localhost
+  become: false
+  when:
+    - windows_winrm_tunnel_state | default('present') == 'absent'
+    - windows_winrm_tunnel_socket_stat.stat.exists

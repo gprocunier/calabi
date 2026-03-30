@@ -5,9 +5,12 @@
   gather_facts: true
   vars_files:
     - ../../vars/global/execution_environment.yml
+    - ../../vars/global/pki.yml
     - ../../vars/global/host_resource_management.yml
     - ../../vars/global/rhsm.yml
     - ../../vars/guests/idm_vm.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
     - ../../vars/global/lab_switch_ports.yml
 
   roles:
@@ -31,6 +34,28 @@
           -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
           {{ hostvars[inventory_hostname].ansible_user }}@{{
           hostvars[inventory_hostname].ansible_host }} -W %h:%p"
+    - name: Require the AD server when AD-root PKI mode is selected
+      ansible.builtin.assert:
+        that:
+          - lab_build_ad_server | bool
+        fail_msg: >-
+          lab_pki_mode=ad-root-idm-intermediate requires lab_build_ad_server=true
+          so the AD DS and AD CS root CA are available before IdM installation.
+      when: lab_pki_mode == 'ad-root-idm-intermediate'
+
+    - name: Register the AD CS guest as a temporary Ansible host
+      ansible.builtin.add_host:
+        name: adcs_ca
+        groups:
+          - adcs_ca
+        ansible_host: "{{ ad_vm.network.ipv4_address }}"
+        ansible_user: "{{ ad_vm.access.admin_user }}"
+        ansible_password: "{{ ad_vm.access.admin_password }}"
+        ansible_connection: ansible.builtin.winrm
+        ansible_port: 5985
+        ansible_winrm_transport: basic
+        ansible_winrm_server_cert_validation: ignore
+      when: lab_pki_mode == 'ad-root-idm-intermediate'
 
 - name: Configure the IDM guest
   hosts: idm_guest
@@ -38,8 +63,11 @@
   gather_facts: false
   vars_files:
     - ../../vars/global/execution_environment.yml
+    - ../../vars/global/pki.yml
     - ../../vars/global/rhsm.yml
     - ../../vars/guests/idm_vm.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
     - ../../vars/global/lab_switch_ports.yml
 
   pre_tasks:
@@ -71,6 +99,7 @@
   become: true
   gather_facts: false
   vars_files:
+    - ../../vars/global/pki.yml
     - ../../vars/guests/idm_vm.yml
   roles:
     - role: libvirt_cdrom_cleanup

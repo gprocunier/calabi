@@ -1,0 +1,5 @@
+---
+ad_server_winrm_port: 5985
+ad_server_winrm_timeout: 1800
+ad_server_install_timeout: 3600
+ad_server_post_reboot_delay: 120
