@@ -29,6 +29,8 @@ var state = {
     domains: null,        // cached domain list from last slow poll
     tierTotals: null,
     domainCgroups: null,
+    cpuPools: null,       // cached pool map from last slow poll
+    cpuPoolMap: null,     // cached per-CPU pool assignments from last slow poll
     guestMemoryBytes: 0,
     guestVcpus: 0,
     fastTimer: null,
@@ -123,7 +125,7 @@ function computeDeltas(prev, curr) {
     if (dt <= 0) return null;
 
     var deltas = { dt: dt, timestamp: curr.timestamp };
-    var numCpus = curr.num_cpus || 96;
+    var numCpus = curr.num_cpus || 1;
 
     // ksmd CPU
     var ksmdPrev = prev.kernel_threads && prev.kernel_threads.ksmd;
@@ -474,7 +476,7 @@ function renderCPU(curr, deltas) {
     var container = clearEl("cpu-content");
     if (!container) return;
 
-    var numCpus = curr.num_cpus || 96;
+    var numCpus = curr.num_cpus || 1;
     var hostCpuPct = deltas ? deltas.host_cpu_pct || 0 : 0;
     var coresUsed = (hostCpuPct / 100) * numCpus;
 
@@ -695,7 +697,8 @@ function renderCPUMap(curr, deltas) {
     var cpuFreq = curr.cpu_freq || {};
 
     if (!poolMap || !topology || !topology.socket_map) {
-        container.innerHTML = '<div class="panel-placeholder">No topology data available</div>';
+        container.appendChild(el("div", { className: "panel-placeholder",
+            textContent: "No topology data available" }));
         return;
     }
 
@@ -1248,7 +1251,7 @@ function renderOverhead(curr, deltas) {
 
     var threads = ["ksmd", "kswapd0", "kswapd1", "kcompactd0", "kcompactd1"];
     var totalPct = deltas ? deltas.mm_cpu_core_pct || 0 : 0;
-    var numCpus = curr.num_cpus || 96;
+    var numCpus = curr.num_cpus || 1;
     var hostPct = totalPct / numCpus;
 
     // Summary
@@ -1324,7 +1327,7 @@ function processSample(data, isFull) {
     }
     clearError();
 
-    // Merge domain info from full polls
+    // Merge domain and pool info from full polls
     if (isFull && data.domains) {
         state.domains = data.domains;
         state.tierTotals = data.tier_totals;
@@ -1332,11 +1335,20 @@ function processSample(data, isFull) {
         state.guestMemoryBytes = data.guest_memory_bytes || 0;
         state.guestVcpus = data.guest_vcpus || 0;
     }
+    if (isFull && data.cpu_pools) {
+        state.cpuPools = data.cpu_pools;
+        state.cpuPoolMap = data.cpu_pool_map;
+    }
 
-    // Fast polls now include live domain_cgroups from cgroup discovery.
-    // Only fall back to cached data if the collector didn't return any.
+    // Fast polls: backfill cached slow-poll data the collector omits
     if (!isFull && !data.domain_cgroups && state.domainCgroups) {
         data.domain_cgroups = state.domainCgroups;
+    }
+    if (!data.cpu_pool_map && state.cpuPoolMap) {
+        data.cpu_pool_map = state.cpuPoolMap;
+    }
+    if (!data.cpu_pools && state.cpuPools) {
+        data.cpu_pools = state.cpuPools;
     }
 
     state.current = data;

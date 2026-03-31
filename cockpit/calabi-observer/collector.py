@@ -382,26 +382,132 @@ def parse_cpu_freq() -> dict[str, float]:
     return result
 
 
-# CPU pool definitions (from host_resource_management.yml)
-CPU_POOLS = {
-    "host_reserved": "0-5,24-29,48-53,72-77",
-    "host_housekeeping": "0-1,24-25,48-49,72-73",
-    "host_emulator": "2-5,26-29,50-53,74-77",
-    "guest_domain": "6-23,30-47,54-71,78-95",
-}
+# ---------------------------------------------------------------------------
+# CPU topology and pool auto-detection
+# ---------------------------------------------------------------------------
 
-# Socket topology for m5.metal: 2 sockets, 24 cores/socket, 2 SMT threads
-# Socket 0 primary: 0-23, SMT: 48-71
-# Socket 1 primary: 24-47, SMT: 72-95
-CPU_TOPOLOGY = {
-    "sockets": 2,
-    "cores_per_socket": 24,
-    "threads_per_core": 2,
-    "socket_map": {
-        "0": {"primary": "0-23", "smt": "48-71"},
-        "1": {"primary": "24-47", "smt": "72-95"},
-    },
-}
+
+def compact_cpu_range(cpus: list[int]) -> str:
+    """Convert [0,1,2,3,6,7,8] to '0-3,6-8'."""
+    if not cpus:
+        return ""
+    ranges: list[str] = []
+    start = cpus[0]
+    end = cpus[0]
+    for c in cpus[1:]:
+        if c == end + 1:
+            end = c
+        else:
+            ranges.append(f"{start}-{end}" if start != end else str(start))
+            start = end = c
+    ranges.append(f"{start}-{end}" if start != end else str(start))
+    return ",".join(ranges)
+
+
+def detect_cpu_topology() -> dict:
+    """Auto-detect CPU socket/core/thread topology from sysfs."""
+    num_cpus = os.cpu_count() or 1
+    sockets: dict[int, dict[int, list[int]]] = {}
+
+    for cpu_id in range(num_cpus):
+        pkg = read_int(
+            f"/sys/devices/system/cpu/cpu{cpu_id}/topology/physical_package_id"
+        )
+        core = read_int(
+            f"/sys/devices/system/cpu/cpu{cpu_id}/topology/core_id"
+        )
+        if pkg is None or core is None:
+            continue
+        sockets.setdefault(pkg, {}).setdefault(core, []).append(cpu_id)
+
+    num_sockets = len(sockets) or 1
+    cores_per_socket = (
+        max(len(cores) for cores in sockets.values()) if sockets else 1
+    )
+    threads_per_core = (
+        max(
+            len(cpus)
+            for cores in sockets.values()
+            for cpus in cores.values()
+        )
+        if sockets
+        else 1
+    )
+
+    socket_map: dict[str, dict[str, str]] = {}
+    for pkg_id, cores in sorted(sockets.items()):
+        primary: list[int] = []
+        smt: list[int] = []
+        for _core_id, cpus in sorted(cores.items()):
+            s = sorted(cpus)
+            primary.append(s[0])
+            smt.extend(s[1:])
+        socket_map[str(pkg_id)] = {
+            "primary": compact_cpu_range(sorted(primary)),
+            "smt": compact_cpu_range(sorted(smt)),
+        }
+
+    return {
+        "sockets": num_sockets,
+        "cores_per_socket": cores_per_socket,
+        "threads_per_core": threads_per_core,
+        "socket_map": socket_map,
+    }
+
+
+def detect_cpu_pools() -> dict:
+    """Auto-detect CPU pool assignments from running libvirt domain XML.
+
+    Reads vcpupin (→ guest_domain) and emulatorpin (→ host_emulator)
+    from the first running domain.  Derives host_reserved as the
+    complement of guest_domain, and host_housekeeping as host_reserved
+    minus host_emulator.
+    """
+    num_cpus = os.cpu_count() or 1
+    all_cpus = set(range(num_cpus))
+
+    guest_domain: set[int] = set()
+    host_emulator: set[int] = set()
+
+    proc = run("virsh", "list", "--state-running", "--name", check=False)
+    if proc.returncode == 0:
+        names = [l.strip() for l in proc.stdout.splitlines() if l.strip()]
+        for name in names:
+            xml_proc = run("virsh", "dumpxml", name, check=False)
+            if xml_proc.returncode != 0:
+                continue
+            root = ET.fromstring(xml_proc.stdout)
+            for vcpupin in root.findall(".//cputune/vcpupin"):
+                cpuset = vcpupin.get("cpuset", "")
+                if cpuset:
+                    guest_domain.update(expand_cpu_range(cpuset))
+                    break
+            emulatorpin = root.find(".//cputune/emulatorpin")
+            if emulatorpin is not None:
+                cpuset = emulatorpin.get("cpuset", "")
+                if cpuset:
+                    host_emulator.update(expand_cpu_range(cpuset))
+            if guest_domain:
+                break  # one domain is enough
+
+    if not guest_domain:
+        # No running domains — cannot determine pools
+        return {
+            "host_reserved": compact_cpu_range(sorted(all_cpus)),
+            "host_housekeeping": compact_cpu_range(sorted(all_cpus)),
+            "host_emulator": "",
+            "guest_domain": "",
+        }
+
+    host_reserved = all_cpus - guest_domain
+    host_housekeeping = host_reserved - host_emulator
+
+    return {
+        "host_reserved": compact_cpu_range(sorted(host_reserved)),
+        "host_housekeeping": compact_cpu_range(sorted(host_housekeeping)),
+        "host_emulator": compact_cpu_range(sorted(host_emulator)),
+        "guest_domain": compact_cpu_range(sorted(guest_domain)),
+    }
 
 
 def expand_cpu_range(range_str: str) -> list[int]:
@@ -416,17 +522,17 @@ def expand_cpu_range(range_str: str) -> list[int]:
     return result
 
 
-def build_cpu_pool_map() -> dict[int, str]:
+def build_cpu_pool_map(pools: dict) -> dict[int, str]:
     """Map each CPU id to its most-specific pool assignment."""
     cpu_map: dict[int, str] = {}
     # Assign in order of specificity: reserved first, then overlay more specific
-    for cpu_id in expand_cpu_range(CPU_POOLS["guest_domain"]):
+    for cpu_id in expand_cpu_range(pools.get("guest_domain", "")):
         cpu_map[cpu_id] = "guest_domain"
-    for cpu_id in expand_cpu_range(CPU_POOLS["host_reserved"]):
+    for cpu_id in expand_cpu_range(pools.get("host_reserved", "")):
         cpu_map[cpu_id] = "host_reserved"
-    for cpu_id in expand_cpu_range(CPU_POOLS["host_emulator"]):
+    for cpu_id in expand_cpu_range(pools.get("host_emulator", "")):
         cpu_map[cpu_id] = "host_emulator"
-    for cpu_id in expand_cpu_range(CPU_POOLS["host_housekeeping"]):
+    for cpu_id in expand_cpu_range(pools.get("host_housekeeping", "")):
         cpu_map[cpu_id] = "host_housekeeping"
     return cpu_map
 
@@ -624,7 +730,7 @@ def collect(fast: bool = False) -> dict:
     cpu_freq = parse_cpu_freq()
     tier_cgroups = parse_tier_cgroups()
 
-    cpu_pool_map = build_cpu_pool_map()
+    cpu_topology = detect_cpu_topology()
 
     payload: dict = {
         "timestamp": timestamp,
@@ -641,13 +747,17 @@ def collect(fast: bool = False) -> dict:
         "host_cpu": host_cpu,
         "cpu_freq": cpu_freq,
         "tier_cgroups": tier_cgroups,
-        "num_cpus": os.cpu_count() or 96,
-        "cpu_pool_map": {str(k): v for k, v in cpu_pool_map.items()},
-        "cpu_topology": CPU_TOPOLOGY,
-        "cpu_pools": CPU_POOLS,
+        "num_cpus": os.cpu_count() or 1,
+        "cpu_topology": cpu_topology,
     }
 
     if not fast:
+        # Slow poll: detect pools from virsh (requires running domains)
+        cpu_pools = detect_cpu_pools()
+        cpu_pool_map = build_cpu_pool_map(cpu_pools)
+        payload["cpu_pools"] = cpu_pools
+        payload["cpu_pool_map"] = {str(k): v for k, v in cpu_pool_map.items()}
+
         domains = parse_domains()
         tier_totals: dict = {}
         for entry in domains:
