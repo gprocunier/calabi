@@ -11,6 +11,8 @@
     - ../../vars/guests/idm_vm.yml
     - ../../vars/global/ad_server.yml
     - ../../vars/guests/ad_vm.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/global/name_resolution.yml
     - ../../vars/global/lab_switch_ports.yml
 
   roles:
@@ -68,6 +70,8 @@
     - ../../vars/guests/idm_vm.yml
     - ../../vars/global/ad_server.yml
     - ../../vars/guests/ad_vm.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/global/name_resolution.yml
     - ../../vars/global/lab_switch_ports.yml
 
   pre_tasks:
@@ -93,6 +97,7 @@
 
   roles:
     - role: idm_guest
+    - role: lab_name_resolution
 
 - name: Detach IDM cloud-init media after guest configuration
   hosts: aws_metal

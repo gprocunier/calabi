@@ -14,6 +14,7 @@
     - ../../vars/guests/idm_vm.yml
     - ../../vars/guests/mirror_registry_vm.yml
     - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/global/name_resolution.yml
     - ../../vars/cluster/openshift_agent_media.yml
     - ../../vars/guests/openshift_cluster_vm.yml
     - ../../vars/day2/openshift_breakglass_auth.yml
@@ -219,6 +220,23 @@
           One or more cross-play orchestration contracts did not render. Check
           vars_files coverage and hidden variable dependencies before running
           the requested playbook.
+
+    - name: Assert the managed bastion resolution contract renders cleanly
+      ansible.builtin.assert:
+        that:
+          - lab_name_resolution_bootstrap_hosts | length > 0
+          - lab_name_resolution_bootstrap_targets | length > 0
+          - >-
+            (
+              lab_name_resolution_bootstrap_hosts
+              | map(attribute='ipv4_address')
+              | unique
+              | list
+              | length
+            ) == (lab_name_resolution_bootstrap_hosts | length)
+        fail_msg: >-
+          The managed bastion resolution contract did not render cleanly. Check
+          vars_files coverage before relying on bootstrap host fallback entries.
 
     - name: Assert a lab default password is available when the target playbook requires it
       ansible.builtin.assert:

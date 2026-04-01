@@ -104,6 +104,9 @@ Execution model:
   are an explicit cleanup action rather than the normal replay path
 - bastion staging ensures the staged `generated/` workspace is writable by
   `cloud-user` so repeated installer renders do not fail on ownership drift
+- bastion staging also seeds a small managed `/etc/hosts` fallback for the
+  bootstrap-critical support hostnames and cluster API endpoints, then verifies
+  those names with `getent` before the long-running orchestration starts
 - the guest-build playbooks later in this phase consume the same
   `host_resource_management` data loaded during bootstrap
 

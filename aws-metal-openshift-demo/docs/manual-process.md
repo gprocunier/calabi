@@ -1176,6 +1176,12 @@ ready-to-use shell environment for `cloud-user` and current IdM `admins`
 members, including `$HOME/bin`, `$HOME/etc`, tool symlinks, and a login-time
 `KUBECONFIG` export when the cluster artifacts exist.
 
+> [!NOTE]
+> Automation reference: `playbooks/bootstrap/bastion-stage.yml`, role
+> `bastion_stage` plus the managed name-resolution role that seeds the
+> bootstrap `/etc/hosts` fallback for bastion, IdM, mirror-registry, and the
+> cluster API endpoints.
+
 The bastion staging phase also installs the execution-time Python requirements
 needed for Windows orchestration, including `pywinrm`.
 

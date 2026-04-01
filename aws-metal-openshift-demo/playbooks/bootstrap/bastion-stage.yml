@@ -10,7 +10,9 @@
       {{ lookup('env', 'HOME') }}/.local/state/calabi-manager/secrets/lab_credentials.yml
   vars_files:
     - ../../vars/guests/bastion_vm.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
     - ../../vars/global/execution_environment.yml
+    - ../../vars/global/name_resolution.yml
 
   pre_tasks:
     - name: Load optional project-local lab credentials for bastion bootstrap
@@ -110,7 +112,10 @@
     - ../../vars/guests/bastion_vm.yml
     - ../../vars/guests/idm_vm.yml
     - ../../vars/guests/mirror_registry_vm.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
     - ../../vars/global/execution_environment.yml
     - ../../vars/global/mirror_content.yml
+    - ../../vars/global/name_resolution.yml
   roles:
     - role: bastion_stage
+    - role: lab_name_resolution

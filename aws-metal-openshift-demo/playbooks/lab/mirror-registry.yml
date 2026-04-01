@@ -11,6 +11,8 @@
     - ../../vars/guests/idm_vm.yml
     - ../../vars/guests/mirror_registry_vm.yml
     - ../../vars/global/mirror_content.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/global/name_resolution.yml
     - ../../vars/global/lab_switch_ports.yml
 
   pre_tasks:
@@ -54,6 +56,8 @@
     - ../../vars/guests/idm_vm.yml
     - ../../vars/guests/mirror_registry_vm.yml
     - ../../vars/global/mirror_content.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/global/name_resolution.yml
     - ../../vars/global/lab_switch_ports.yml
 
   pre_tasks:
@@ -79,6 +83,7 @@
 
   roles:
     - role: mirror_registry_guest
+    - role: lab_name_resolution
 
 - name: Detach mirror registry cloud-init media after guest configuration
   hosts: aws_metal

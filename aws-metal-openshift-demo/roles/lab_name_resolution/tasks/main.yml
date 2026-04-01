@@ -1,0 +1,100 @@
+---
+- name: Derive the managed cluster node name-resolution entries
+  ansible.builtin.set_fact:
+    lab_name_resolution_cluster_node_entries: >-
+      {%- set entries = [] -%}
+      {%- for node in openshift_install_cluster.nodes | default([]) -%}
+      {%- set _ = entries.append({
+            'ipv4_address': node.machine_network.ipv4_address,
+            'names': [node.fqdn, node.name]
+          }) -%}
+      {%- endfor -%}
+      {{ entries }}
+
+- name: Combine bootstrap and cluster name-resolution entries
+  ansible.builtin.set_fact:
+    lab_name_resolution_managed_entries: >-
+      {{
+        lab_name_resolution_bootstrap_hosts
+        + lab_name_resolution_cluster_node_entries
+      }}
+
+- name: Derive the managed name-resolution validation targets
+  ansible.builtin.set_fact:
+    lab_name_resolution_validation_targets: >-
+      {%- set targets = [] -%}
+      {%- for entry in lab_name_resolution_managed_entries -%}
+      {%- for name in entry.names -%}
+      {%- set _ = targets.append({
+            'ipv4_address': entry.ipv4_address,
+            'name': name
+          }) -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ targets }}
+
+- name: Assert the managed name-resolution contract is populated
+  ansible.builtin.assert:
+    that:
+      - lab_name_resolution_managed_entries | length > 0
+      - lab_name_resolution_validation_targets | length > 0
+      - >
+        (
+          lab_name_resolution_managed_entries
+          | map(attribute='ipv4_address')
+          | unique
+          | list
+          | length
+        ) == (lab_name_resolution_managed_entries | length)
+      - >
+        (
+          lab_name_resolution_validation_targets
+          | map(attribute='name')
+          | unique
+          | list
+          | length
+        ) == (lab_name_resolution_validation_targets | length)
+    fail_msg: >-
+      Managed name-resolution entries did not render cleanly. Check the
+      cross-play host contract before relying on the bastion or support
+      guests to resolve lab hostnames.
+
+- name: Seed managed name-resolution entries on the host
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^{{ item.ipv4_address | regex_escape }}\s+'
+    line: >-
+      {{ item.ipv4_address }}
+      {{ item.names | join(' ') }}
+      # calabi-managed-name-resolution
+    state: present
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ lab_name_resolution_managed_entries }}"
+  loop_control:
+    label: "{{ item.ipv4_address }} -> {{ item.names | join(' ') }}"
+
+- name: Verify managed hostnames resolve on the current host
+  ansible.builtin.command:
+    argv:
+      - getent
+      - hosts
+      - "{{ item.name }}"
+  loop: "{{ lab_name_resolution_validation_targets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: lab_name_resolution_getent
+  changed_when: false
+
+- name: Assert managed hostnames resolve to the expected IPs
+  ansible.builtin.assert:
+    that:
+      - item.stdout is search('^' ~ item.item.ipv4_address ~ '\\b')
+    fail_msg: >-
+      {{ item.item.name }} did not resolve to {{ item.item.ipv4_address }}
+      from this host.
+  loop: "{{ lab_name_resolution_getent.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
