@@ -234,6 +234,7 @@
     state: latest
     update_cache: true
   register: lab_host_base_package_update
+  # noqa: package-latest
 
 - name: Install virtualization and networking packages
   ansible.builtin.package:
@@ -244,6 +245,7 @@
   ansible.builtin.reboot:
     reboot_timeout: 1800
   when: lab_host_base_package_update.changed
+  # noqa: no-handler
 
 - name: Set the hypervisor static hostname
   ansible.builtin.hostname:
@@ -348,6 +350,7 @@
       - --reload-rules
   when: lab_host_base_ebs_udev_rules.changed
   changed_when: true
+  # noqa: no-handler
 
 - name: Trigger block-device udev events when the managed EBS mapping changes
   ansible.builtin.command:
@@ -358,6 +361,7 @@
       - --action=change
   when: lab_host_base_ebs_udev_rules.changed
   changed_when: true
+  # noqa: no-handler
 
 - name: Wait for udev to settle when the managed EBS mapping changes
   ansible.builtin.command:
@@ -366,6 +370,7 @@
       - settle
   when: lab_host_base_ebs_udev_rules.changed
   changed_when: false
+  # noqa: no-handler
 
 - name: Gather available systemd units after package installation
   ansible.builtin.service_facts:

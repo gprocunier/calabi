@@ -135,6 +135,7 @@
   register: openshift_post_install_ldap_auth_existing_idps
   changed_when: false
   failed_when: false
+  when: openshift_ldap_auth.manage_identity_provider | bool
 
 - name: Detect whether the authentication operator is already healthy
   ansible.builtin.command:
@@ -150,6 +151,7 @@
   register: openshift_post_install_ldap_auth_operator_health
   changed_when: false
   failed_when: false
+  when: openshift_ldap_auth.manage_identity_provider | bool
 
 - name: Derive whether LDAP auth configuration can be reused as-is
   ansible.builtin.set_fact:
@@ -160,6 +162,12 @@
         and
         openshift_post_install_ldap_auth_operator_health.stdout == 'True,False,False'
       }}
+  when: openshift_ldap_auth.manage_identity_provider | bool
+
+- name: Default LDAP auth reuse decision when OAuth management is disabled
+  ansible.builtin.set_fact:
+    openshift_post_install_ldap_auth_reuse_existing: true
+  when: not openshift_ldap_auth.manage_identity_provider | bool
 
 - name: Configure LDAP auth resources when reuse is not possible
   when: not openshift_post_install_ldap_auth_reuse_existing
@@ -268,6 +276,7 @@
     msg: >-
       Reusing existing LDAP/OAuth configuration:
       {{ openshift_post_install_ldap_auth_reuse_existing }}
+  when: openshift_ldap_auth.manage_identity_provider | bool
 
 - name: Run an immediate LDAP group sync
   ansible.builtin.command:
@@ -276,6 +285,7 @@
   register: openshift_post_install_ldap_auth_group_sync_run
   changed_when: true
   become: true
+  when: openshift_ldap_auth.manage_group_sync | bool
 
 - name: Install recurring LDAP group sync cron job
   ansible.builtin.copy:
@@ -288,6 +298,7 @@
       {{ openshift_post_install_ldap_auth_remote_group_sync_script_path }} \
       >> /var/log/openshift-ldap-group-sync.log 2>&1
   become: true
+  when: openshift_ldap_auth.manage_group_sync | bool
 
 - name: Render cluster-admin binding for the synced openshift-admin group
   ansible.builtin.copy:
@@ -308,6 +319,7 @@
         - apiGroup: rbac.authorization.k8s.io
           kind: Group
           name: {{ openshift_ldap_auth.authorization.cluster_admin_group }}
+  when: openshift_ldap_auth.manage_group_sync | bool
 
 - name: Apply cluster-admin access for the synced openshift-admin group
   ansible.builtin.command:
@@ -325,6 +337,7 @@
     'created' in openshift_post_install_ldap_auth_cluster_admin_binding.stdout
     or 'configured' in
     openshift_post_install_ldap_auth_cluster_admin_binding.stdout
+  when: openshift_ldap_auth.manage_group_sync | bool
 
 - name: Capture the synced LDAP groups
   ansible.builtin.command:
@@ -340,13 +353,19 @@
   loop: "{{ openshift_ldap_auth.group_sync.whitelist_groups }}"
   register: openshift_post_install_ldap_auth_group_summary
   changed_when: false
+  when: openshift_ldap_auth.manage_group_sync | bool
 
 - name: Publish LDAP auth and group sync summary
   ansible.builtin.debug:
     msg:
       - >-
-        LDAP login option '{{ openshift_ldap_auth.identity_provider_name }}'
-        is configured against {{ idm_vm.name }}.{{ idm_vm.domain }}.
+        {{
+          "LDAP login option '" ~ openshift_ldap_auth.identity_provider_name ~
+          "' is configured against " ~ idm_vm.name ~ "." ~ idm_vm.domain ~ "."
+          if openshift_ldap_auth.manage_identity_provider | bool
+          else
+          "LDAP OAuth management is disabled; retaining LDAP group sync support only."
+        }}
       - >-
         Group sync ran immediately and is scheduled as
         '{{ openshift_ldap_auth.group_sync.schedule }}'.
@@ -356,6 +375,7 @@
           | map(attribute='stdout_lines')
           | list
         }}
+  when: openshift_ldap_auth.manage_group_sync | bool
 
 # ---------------------------------------------------------------------------
 # Smoke test: verify a real LDAP-authenticated login works end-to-end.
@@ -383,6 +403,9 @@
   delay: 10
   until: >-
     openshift_post_install_ldap_auth_authentication_settled.stdout == 'False'
+  when:
+    - openshift_ldap_auth.manage_identity_provider | bool
+    - openshift_ldap_auth.run_login_smoke_test | bool
 
 - name: Set LDAP auth smoke test facts
   ansible.builtin.set_fact:
@@ -398,6 +421,9 @@
     openshift_post_install_ldap_auth_api_url: >-
       https://api.{{ openshift_install_cluster.name }}.{{
       openshift_install_cluster.base_domain }}:6443
+  when:
+    - openshift_ldap_auth.manage_identity_provider | bool
+    - openshift_ldap_auth.run_login_smoke_test | bool
 
 - name: Capture the OAuth route hostname for the LDAP smoke test
   ansible.builtin.command:
@@ -414,6 +440,9 @@
     KUBECONFIG: "{{ openshift_post_install_ldap_auth_remote_kubeconfig_path }}"
   register: openshift_post_install_ldap_auth_oauth_route
   changed_when: false
+  when:
+    - openshift_ldap_auth.manage_identity_provider | bool
+    - openshift_ldap_auth.run_login_smoke_test | bool
 
 - name: Wait for the OAuth route to answer health checks before the LDAP smoke test
   ansible.builtin.command:
@@ -426,6 +455,9 @@
   retries: 18
   delay: 10
   until: openshift_post_install_ldap_auth_oauth_health.rc == 0
+  when:
+    - openshift_ldap_auth.manage_identity_provider | bool
+    - openshift_ldap_auth.run_login_smoke_test | bool
 
 - name: Obtain an LDAP token by logging in as the test user
   ansible.builtin.shell: |
@@ -444,6 +476,9 @@
   delay: 10
   until: openshift_post_install_ldap_auth_login_result.rc == 0
   no_log: true
+  when:
+    - openshift_ldap_auth.manage_identity_provider | bool
+    - openshift_ldap_auth.run_login_smoke_test | bool
 
 - name: Confirm the LDAP token resolves the correct username
   ansible.builtin.shell: |
@@ -454,6 +489,9 @@
     executable: /bin/bash
   register: openshift_post_install_ldap_auth_whoami
   changed_when: false
+  when:
+    - openshift_ldap_auth.manage_identity_provider | bool
+    - openshift_ldap_auth.run_login_smoke_test | bool
 
 - name: Assert the logged-in user matches the expected LDAP username
   ansible.builtin.assert:
@@ -465,6 +503,9 @@
       LDAP smoke test failed: expected username
       '{{ openshift_post_install_ldap_auth_test_user }}' but got
       '{{ openshift_post_install_ldap_auth_whoami.stdout | trim }}'.
+  when:
+    - openshift_ldap_auth.manage_identity_provider | bool
+    - openshift_ldap_auth.run_login_smoke_test | bool
 
 - name: Revoke the LDAP test token
   ansible.builtin.shell: |
@@ -476,11 +517,17 @@
   register: openshift_post_install_ldap_auth_logout
   changed_when: false
   ignore_errors: true
+  when:
+    - openshift_ldap_auth.manage_identity_provider | bool
+    - openshift_ldap_auth.run_login_smoke_test | bool
 
 - name: Remove the LDAP test kubeconfig
   ansible.builtin.file:
     path: "{{ openshift_post_install_ldap_auth_test_kubeconfig }}"
     state: absent
+  when:
+    - openshift_ldap_auth.manage_identity_provider | bool
+    - openshift_ldap_auth.run_login_smoke_test | bool
 
 - name: Publish LDAP smoke test result
   ansible.builtin.debug:
@@ -488,3 +535,6 @@
       LDAP smoke test passed: '{{ openshift_post_install_ldap_auth_test_user }}'
       authenticated successfully via '{{ openshift_ldap_auth.identity_provider_name }}'
       and token was revoked.
+  when:
+    - openshift_ldap_auth.manage_identity_provider | bool
+    - openshift_ldap_auth.run_login_smoke_test | bool

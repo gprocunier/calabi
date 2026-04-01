@@ -6,6 +6,7 @@
   vars_files:
     - ../../vars/global/execution_environment.yml
     - ../../vars/global/host_resource_management.yml
+    - ../../vars/global/pki.yml
     - ../../vars/global/rhsm.yml
     - ../../vars/guests/idm_vm.yml
     - ../../vars/guests/mirror_registry_vm.yml
@@ -48,6 +49,7 @@
   gather_facts: false
   vars_files:
     - ../../vars/global/execution_environment.yml
+    - ../../vars/global/pki.yml
     - ../../vars/global/rhsm.yml
     - ../../vars/guests/idm_vm.yml
     - ../../vars/guests/mirror_registry_vm.yml

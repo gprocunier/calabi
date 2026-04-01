@@ -3,11 +3,84 @@
   hosts: aws_metal
   become: false
   gather_facts: false
+  vars:
+    bastion_stage_project_lab_credentials_path: >-
+      {{ lab_execution_project_root }}/inventory/group_vars/all/lab_credentials.yml
+    bastion_stage_manager_lab_credentials_path: >-
+      {{ lookup('env', 'HOME') }}/.local/state/calabi-manager/secrets/lab_credentials.yml
   vars_files:
     - ../../vars/guests/bastion_vm.yml
     - ../../vars/global/execution_environment.yml
 
   pre_tasks:
+    - name: Load optional project-local lab credentials for bastion bootstrap
+      ansible.builtin.set_fact:
+        bastion_stage_bootstrap_project_lab_credentials: >-
+          {{
+            (
+              lookup(
+                'file',
+                bastion_stage_project_lab_credentials_path,
+                errors='ignore'
+              )
+              | default('', true)
+              | trim
+            ) | from_yaml
+          }}
+      when:
+        - >-
+          (
+            lookup(
+              'file',
+              bastion_stage_project_lab_credentials_path,
+              errors='ignore'
+            )
+            | default('', true)
+            | trim
+          ) | length > 0
+
+    - name: Load optional calabi-manager lab credentials for bastion bootstrap
+      ansible.builtin.set_fact:
+        bastion_stage_bootstrap_manager_lab_credentials: >-
+          {{
+            (
+              lookup(
+                'file',
+                bastion_stage_manager_lab_credentials_path,
+                errors='ignore'
+              )
+              | default('', true)
+              | trim
+            ) | from_yaml
+          }}
+      when:
+        - >-
+          (
+            lookup(
+              'file',
+              bastion_stage_manager_lab_credentials_path,
+              errors='ignore'
+            )
+            | default('', true)
+            | trim
+          ) | length > 0
+
+    - name: Derive the bootstrap lab default password for bastion staging
+      ansible.builtin.set_fact:
+        lab_default_password: >-
+          {{
+            lab_default_password
+            | default(
+              bastion_stage_bootstrap_project_lab_credentials.lab_default_password
+              | default(
+                bastion_stage_bootstrap_manager_lab_credentials.lab_default_password
+                | default('', true),
+                true
+              ),
+              true
+            )
+          }}
+
     - name: Register the bastion host as a temporary Ansible host
       ansible.builtin.add_host:
         name: bastion_stage_target
@@ -20,13 +93,7 @@
         ansible_ssh_common_args: >-
           -o StrictHostKeyChecking=no
           -o UserKnownHostsFile=/dev/null
-          -o ProxyCommand="ssh
-          -i {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
-          -o StrictHostKeyChecking=no
-          -o UserKnownHostsFile=/dev/null
-          {{ hostvars[inventory_hostname].ansible_user }}@{{
-          hostvars[inventory_hostname].ansible_host }}
-          -W %h:%p"
+          -o ProxyCommand="ssh -i {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{ hostvars[inventory_hostname].ansible_user }}@{{ hostvars[inventory_hostname].ansible_host }} -W %h:%p"
 
     - name: Wait for the bastion guest to accept SSH connections
       ansible.builtin.wait_for:
@@ -41,6 +108,8 @@
   gather_facts: true
   vars_files:
     - ../../vars/guests/bastion_vm.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/mirror_registry_vm.yml
     - ../../vars/global/execution_environment.yml
     - ../../vars/global/mirror_content.yml
   roles:

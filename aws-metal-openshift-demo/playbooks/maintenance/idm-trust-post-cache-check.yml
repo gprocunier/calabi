@@ -1,0 +1,104 @@
+---
+- name: Register bastion and IDM guests for post-cache trust checks
+  hosts: aws_metal
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/pki.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/ad_integration.yml
+    - ../../vars/guests/bastion_vm.yml
+    - ../../vars/guests/idm_vm.yml
+
+  tasks:
+    - name: Register the IDM guest as a temporary Ansible host
+      ansible.builtin.add_host:
+        name: "{{ idm_vm.name }}.{{ idm_vm.domain }}"
+        groups:
+          - idm_post_cache_check
+        ansible_host: "{{ idm_vm.network.ipv4_address }}"
+        ansible_user: "{{ idm_vm.access.admin_user }}"
+        ansible_ssh_private_key_file: >-
+          {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+        ansible_become: true
+        ansible_ssh_common_args: >-
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+
+    - name: Register the bastion guest as a temporary Ansible host
+      ansible.builtin.add_host:
+        name: "{{ bastion_vm.name }}.{{ bastion_vm.domain }}"
+        groups:
+          - bastion_post_cache_check
+        ansible_host: "{{ bastion_vm.network.ipv4_address }}"
+        ansible_user: "{{ bastion_vm.access.admin_user }}"
+        ansible_ssh_private_key_file: >-
+          {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+        ansible_become: true
+        ansible_ssh_common_args: >-
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+
+- name: Check trusted AD user resolution on IDM
+  hosts: idm_post_cache_check
+  become: true
+  gather_facts: false
+
+  pre_tasks:
+    - name: Wait for IDM SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+        sleep: 5
+
+  tasks:
+    - name: Check id, getent, and compat visibility for ad-ocpadmin on IDM
+      ansible.builtin.shell: |
+        set -o pipefail
+        echo '=== id ==='
+        id ad-ocpadmin@corp.lan || true
+        echo '=== getent passwd ==='
+        getent passwd ad-ocpadmin@corp.lan || true
+        echo '=== compat user entry ==='
+        ldapsearch -LLL -Y GSSAPI \
+          -b 'cn=users,cn=compat,dc=workshop,dc=lan' \
+          '(uid=ad-ocpadmin*)' \
+          dn uid cn mail uidNumber gidNumber memberOf || true
+        echo '=== compat user by uidNumber ==='
+        ldapsearch -LLL -Y GSSAPI \
+          -b 'cn=users,cn=compat,dc=workshop,dc=lan' \
+          '(|(uidNumber=1897401106)(gidNumber=1897401106)(cn=*OpenShift*Admin*)(gecos=*OpenShift*Admin*))' \
+          dn uid cn gecos mail uidNumber gidNumber memberOf || true
+      args:
+        executable: /bin/bash
+      register: idm_post_cache_result
+      changed_when: false
+
+    - name: Show IDM post-cache result
+      ansible.builtin.debug:
+        msg: "{{ idm_post_cache_result.stdout_lines }}"
+
+- name: Check trusted AD user resolution on bastion
+  hosts: bastion_post_cache_check
+  become: true
+  gather_facts: false
+
+  pre_tasks:
+    - name: Wait for bastion SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+        sleep: 5
+
+  tasks:
+    - name: Check id and getent for ad-ocpadmin on bastion
+      ansible.builtin.shell: |
+        set -o pipefail
+        echo '=== id ==='
+        id ad-ocpadmin@corp.lan || true
+        echo '=== getent passwd ==='
+        getent passwd ad-ocpadmin@corp.lan || true
+      args:
+        executable: /bin/bash
+      register: bastion_post_cache_result
+      changed_when: false
+
+    - name: Show bastion post-cache result
+      ansible.builtin.debug:
+        msg: "{{ bastion_post_cache_result.stdout_lines }}"

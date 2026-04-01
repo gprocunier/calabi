@@ -157,9 +157,13 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
    - Support VMs (`ad-01`, `idm-01`, `bastion-01`, and `mirror-registry`) now
      default to preserving their existing disks and libvirt domains on rerun
      instead of being rebuilt automatically.
-   - After a successful mirror phase, the recommended resume point for a fresh
-     cluster rebuild is:
-     `./scripts/run_remote_bastion_playbook.sh playbooks/site-lab.yml --skip-tags mirror-registry`
+   - The mirror-registry phase now records successful mirror completion for the
+     rendered content set and skips the expensive `oc-mirror` execution on
+     rerun unless a force flag is set.
+   - After a successful support-services bring-up, the preferred recovery path
+     is to replay `site-lab.yml` and let healthy support phases short-circuit.
+   - For a deliberate fresh-cluster replay that preserves support services, use
+     the cluster-only cleanup path first, then rerun `site-lab.yml`.
    - On reruns, the day-2 portion now probes the major post-install phases and
      skips ones that are already configured and healthy.
    - Destructive ODF recovery is not part of a normal rerun. It must be
@@ -330,9 +334,13 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
 19. `playbooks/day2/openshift-post-install.yml`
     - Applies day-2 configuration.
     - The current default baseline order is:
-      disconnected OperatorHub, infra conversion, IdM ingress certs, LDAP
-      auth, NMState, ODF, Virtualization, Pipelines, Web Terminal, AAP,
+      disconnected OperatorHub, infra conversion, IdM ingress certs,
+      `HTPasswd` breakglass auth, NMState, ODF, Keycloak, OIDC auth, optional
+      legacy LDAP auth, Virtualization, Pipelines, Web Terminal, AAP,
       NetObserv, then validation.
+    - The supported default auth model is:
+      breakglass `HTPasswd` plus Keycloak OIDC. Direct OpenShift LDAP auth is
+      disabled by default and retained only as an optional compatibility path.
     - Healthy major phases are skipped on rerun unless their force flag is set.
     - Example:
       - `RUN ON BASTION`
@@ -404,3 +412,11 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
   - bastion join
   - `mirror-registry`
   - OpenShift cluster install through `openshift-install wait-for install-complete`
+- the currently proven post-install/auth state on the resulting cluster is:
+  - `HTPasswd` breakglass login works
+  - `kubeadmin` is retired
+  - Keycloak is deployed from mirrored content
+  - OpenShift OAuth uses Keycloak OIDC and `groups` claim sync
+  - `openshift-admin` is bound to `cluster-admin`
+- the remaining confidence step is one uninterrupted `site-lab.yml` run on the
+  current codebase from a deliberate teardown boundary, without live fixes

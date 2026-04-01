@@ -1,0 +1,27 @@
+---
+openshift_keycloak:
+  namespace: keycloak
+  operatorgroup_name: keycloak
+  subscription_name: rhbk-operator
+  # Match the operator channel to the desired RHBK version.
+  channel: stable-v26.2
+  source: cs-redhat-operator-index-v4-20
+  source_namespace: openshift-marketplace
+  installplan_approval: Manual
+  instance_name: workshop-keycloak
+  route_name: workshop-keycloak
+  route_host: sso.apps.ocp.workshop.lan
+  tls_secret_name: workshop-keycloak-tls
+  bootstrap_admin_secret_name: workshop-keycloak-bootstrap-admin
+  bootstrap_admin_username: admin
+  bootstrap_admin_password: "{{ lab_default_password | default('') }}"
+  database_secret_name: workshop-keycloak-db
+  database_user: keycloak
+  database_password: "{{ lab_default_password | default('') }}"
+  database_name: keycloak
+  database_host: postgres-db
+  database_port: 5432
+  database_image: registry.redhat.io/rhel9/postgresql-15:latest
+  database_storage_class: ocs-storagecluster-ceph-rbd
+  database_storage_size: 5Gi
+  discovery_realm: master

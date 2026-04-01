@@ -37,6 +37,20 @@ ansible-galaxy collection install -r requirements.yml
 Current automation also assumes a modern Ansible controller environment. The
 live validation work on this repo has been using `ansible-core 2.18`.
 
+Recommended local validation tools before changing orchestration:
+
+- `yamllint`
+- `ansible-lint`
+- `shellcheck`
+
+Before pushing orchestration changes, run:
+
+```bash
+make validate
+```
+
+That validation lane is also what the repo CI runs on pull requests.
+
 ## What You Need In Public Cloud
 
 - a public-cloud account that can run an unfettered metal instance

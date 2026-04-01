@@ -1,0 +1,84 @@
+---
+- name: Register the IDM guest for SSSD trust tracing
+  hosts: aws_metal
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/pki.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/ad_integration.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+    - ../../vars/guests/idm_vm.yml
+
+  tasks:
+    - name: Register the IDM guest as a temporary Ansible host
+      ansible.builtin.add_host:
+        name: "{{ idm_vm.name }}.{{ idm_vm.domain }}"
+        groups:
+          - idm_trust_sssd_trace
+        ansible_host: "{{ idm_vm.network.ipv4_address }}"
+        ansible_user: "{{ idm_vm.access.admin_user }}"
+        ansible_ssh_private_key_file: >-
+          {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+        ansible_become: true
+        ansible_ssh_common_args: >-
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+
+- name: Capture SSSD trace for trusted-user lookups
+  hosts: idm_trust_sssd_trace
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/pki.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/ad_integration.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+    - ../../vars/guests/idm_vm.yml
+
+  pre_tasks:
+    - name: Wait for the IDM guest to accept SSH connections
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+        sleep: 5
+
+  tasks:
+    - name: Trace trusted-user resolution through SSSD
+      ansible.builtin.shell: |
+        set -o pipefail
+        rm -f /var/log/sssd/sssd_*.log
+        if command -v sssctl >/dev/null 2>&1; then
+          sssctl debug-level 9 || true
+        fi
+        systemctl restart sssd
+        sleep 5
+        echo '=== lookup user principal form ==='
+        getent passwd ad-ocpadmin@corp.lan || true
+        id ad-ocpadmin@corp.lan || true
+        echo '=== lookup netbios form ==='
+        getent passwd 'CORP\\ad-ocpadmin' || true
+        id 'CORP\\ad-ocpadmin' || true
+        echo '=== lookup another user ==='
+        getent passwd ad-dev01@corp.lan || true
+        id ad-dev01@corp.lan || true
+        echo '=== sssctl domain-status ==='
+        sssctl domain-status corp.lan || true
+        echo '=== logs sssd_nss ==='
+        tail -n 200 /var/log/sssd/sssd_nss.log || true
+        echo '=== logs sssd_workshop domain ==='
+        tail -n 300 /var/log/sssd/sssd_workshop.lan.log || true
+        echo '=== logs trusted subdomain if present ==='
+        for f in /var/log/sssd/sssd_workshop.lan*.log /var/log/sssd/sssd_corp.lan*.log; do
+          [ -f "$f" ] || continue
+          echo "--- $f ---"
+          tail -n 200 "$f" || true
+        done
+      args:
+        executable: /bin/bash
+      register: idm_trust_sssd_trace
+      changed_when: false
+
+    - name: Show SSSD trace output
+      ansible.builtin.debug:
+        msg: "{{ idm_trust_sssd_trace.stdout_lines }}"

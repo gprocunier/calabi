@@ -9,6 +9,9 @@
       idm_vm.name }}-cidata.iso
     idm_guest_external_ca_enabled: >-
       {{ idm_server.pki.mode | default('idm-root') == 'ad-root-idm-intermediate' }}
+
+- name: Derive IDM guest external CA paths
+  ansible.builtin.set_fact:
     idm_guest_external_ca_controller_workdir: >-
       {{ idm_server.pki.controller_work_root | default(lookup('env', 'HOME') + '/.local/state/calabi-pki') }}/{{ idm_guest_vm_fqdn }}
     idm_guest_external_ca_csr_local_path: >-
@@ -63,7 +66,8 @@
     update_only: true
   register: idm_guest_package_update
 
-- name: Power-cycle the IDM domain after guest updates so persistent XML changes take effect
+- name: Power-cycle the IDM domain after guest updates so persistent XML changes take effect # noqa no-handler
+  when: idm_guest_package_update.changed
   block:
     - name: Request an IDM guest poweroff after updates
       ansible.builtin.shell: |
@@ -136,9 +140,7 @@
           - "{{ idm_guest_vm_fqdn }}"
       changed_when: true
       delegate_to: "{{ idm_guest_hypervisor_host }}"
-  when: idm_guest_package_update.changed
-
-- name: Wait for the IDM guest after the optional domain restart
+- name: Wait for the IDM guest after the optional domain restart # noqa no-handler
   ansible.builtin.wait_for_connection:
     timeout: 1800
     sleep: 10

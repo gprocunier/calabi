@@ -1,0 +1,19 @@
+---
+- name: Configure OpenShift OIDC authentication through Keycloak
+  hosts: aws_metal
+  gather_facts: true
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/mirror_content.yml
+    - ../../vars/global/pki.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/ad_vm.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/day2/openshift_breakglass_auth.yml
+    - ../../vars/day2/openshift_keycloak.yml
+    - ../../vars/day2/openshift_ldap_auth.yml
+    - ../../vars/day2/openshift_oidc_auth.yml
+  roles:
+    - role: openshift_post_install_oidc_auth

@@ -17,6 +17,16 @@ and the day-2 automation around it.
 If you need the input checklist before a first build, start with
 <a href="./docs/prerequisites.md"><kbd>PREREQUISITES</kbd></a>.
 
+Before pushing orchestration changes, run:
+
+```bash
+make validate
+```
+
+That gate catches YAML/task-file parse errors, shell syntax issues, top-level
+playbook syntax errors, and the cross-play credential/variable contracts that
+the bastion runner now depends on.
+
 ## What This Repo Is
 
 - outer AWS IaaS scaffolding for `virt-01`
@@ -27,11 +37,23 @@ If you need the input checklist before a first build, start with
   - `mirror-registry`
 - disconnected OpenShift install flow
 - day-2 operator and platform configuration
+- default cluster auth baseline:
+  - `HTPasswd` breakglass
+  - Keycloak OIDC backed by IdM
+  - direct OpenShift LDAP auth disabled by default
 - teardown and media-cleanup workflows
 
 Build starts outside on the operator workstation, lands on `virt-01`, and then
 shifts to bastion for the inside-facing lab and cluster work. The fuller run
 order lives in <a href="./docs/automation-flow.md"><kbd>AUTOMATION FLOW</kbd></a>.
+
+Current validation status:
+
+- cluster build, mirrored-content consumption, and the default auth baseline
+  (`HTPasswd` breakglass plus Keycloak OIDC) are working on the current lab
+- the repo validation lane (`make validate`) is clean
+- the final zero-intervention certification run of `playbooks/site-lab.yml`
+  from a fresh teardown boundary is still pending
 
 ## Validated Baseline
 

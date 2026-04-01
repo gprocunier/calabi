@@ -1,6 +1,9 @@
 ---
 openshift_ldap_auth:
   identity_provider_name: "Red Hat Identity Management"
+  manage_identity_provider: false
+  manage_group_sync: true
+  run_login_smoke_test: false
   bind_dn: "cn=Directory Manager"
   bind_password: "{{ idm_server.ds_password }}"
   user_search_base_dn: ""

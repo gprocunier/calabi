@@ -1,0 +1,346 @@
+---
+- name: Derive post-install breakglass auth paths and OAuth payloads
+  ansible.builtin.set_fact:
+    openshift_post_install_breakglass_auth_oc_local_path: >-
+      {{ lab_execution_tools_root }}/{{ mirror_registry_ocp_release }}/bin/oc
+    openshift_post_install_breakglass_auth_kubeconfig_local_path: >-
+      {{ lab_execution_ocp_generated_root }}/auth/kubeconfig
+    openshift_post_install_breakglass_auth_remote_dir: >-
+      /var/tmp/openshift-post-install-breakglass-auth
+    openshift_post_install_breakglass_auth_remote_oc_path: >-
+      /var/tmp/openshift-post-install-breakglass-auth/oc
+    openshift_post_install_breakglass_auth_remote_kubeconfig_path: >-
+      /var/tmp/openshift-post-install-breakglass-auth/kubeconfig
+    openshift_post_install_breakglass_auth_remote_htpasswd_path: >-
+      /var/tmp/openshift-post-install-breakglass-auth/htpasswd
+    openshift_post_install_breakglass_auth_remote_test_kubeconfig_path: >-
+      /var/tmp/openshift-post-install-breakglass-auth/kubeconfig-breakglass-test
+    openshift_post_install_breakglass_auth_api_url: >-
+      https://api.{{ openshift_install_cluster.name }}.{{ openshift_install_cluster.base_domain }}:6443
+    openshift_post_install_breakglass_auth_provider: >-
+      {{
+        {
+          'name': openshift_breakglass_auth.identity_provider_name,
+          'mappingMethod': openshift_breakglass_auth.oauth.mapping_method,
+          'type': 'HTPasswd',
+          'htpasswd': {
+            'fileData': {
+              'name': openshift_breakglass_auth.secret_name
+            }
+          }
+        }
+      }}
+
+- name: Assert local breakglass auth artifacts exist
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  delegate_to: localhost
+  become: true
+  loop:
+    - "{{ openshift_post_install_breakglass_auth_oc_local_path }}"
+    - "{{ openshift_post_install_breakglass_auth_kubeconfig_local_path }}"
+  register: openshift_post_install_breakglass_auth_local_stats
+
+- name: Fail when required local breakglass auth artifacts are missing
+  ansible.builtin.assert:
+    that:
+      - >-
+        openshift_post_install_breakglass_auth_local_stats.results
+        | map(attribute='stat.exists')
+        | min
+    fail_msg: >-
+      Expected local breakglass auth artifacts were not found. Ensure generated
+      oc and kubeconfig exist first.
+
+- name: Ensure the htpasswd tooling package is installed
+  ansible.builtin.package:
+    name: "{{ openshift_breakglass_auth.htpasswd_package_name }}"
+    state: present
+  become: true
+
+- name: Create remote breakglass auth workspace
+  ansible.builtin.file:
+    path: "{{ openshift_post_install_breakglass_auth_remote_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Copy pinned oc binary to the hypervisor
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_breakglass_auth_oc_local_path }}"
+    dest: "{{ openshift_post_install_breakglass_auth_remote_oc_path }}"
+    mode: "0755"
+
+- name: Copy generated kubeconfig to the hypervisor
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_breakglass_auth_kubeconfig_local_path }}"
+    dest: "{{ openshift_post_install_breakglass_auth_remote_kubeconfig_path }}"
+    mode: "0600"
+
+- name: Generate the breakglass HTPasswd file
+  ansible.builtin.command:
+    argv:
+      - htpasswd
+      - -c
+      - -B
+      - -C
+      - "{{ openshift_breakglass_auth.htpasswd_cost | string }}"
+      - -b
+      - "{{ openshift_post_install_breakglass_auth_remote_htpasswd_path }}"
+      - "{{ openshift_breakglass_auth.username }}"
+      - "{{ openshift_breakglass_auth.password }}"
+  register: openshift_post_install_breakglass_auth_htpasswd
+  changed_when: true
+  no_log: true
+
+- name: Create the OpenShift breakglass HTPasswd secret
+  ansible.builtin.shell: >-
+    set -o pipefail &&
+    {{ openshift_post_install_breakglass_auth_remote_oc_path }}
+    create secret generic {{ openshift_breakglass_auth.secret_name }}
+    -n openshift-config
+    --from-file=htpasswd={{ openshift_post_install_breakglass_auth_remote_htpasswd_path }}
+    --dry-run=client -o yaml
+    | {{ openshift_post_install_breakglass_auth_remote_oc_path }} apply -f -
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_breakglass_auth_remote_kubeconfig_path }}"
+  register: openshift_post_install_breakglass_auth_secret
+  changed_when: >-
+    'created' in openshift_post_install_breakglass_auth_secret.stdout
+    or 'configured' in openshift_post_install_breakglass_auth_secret.stdout
+
+- name: Capture the current OAuth configuration
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_breakglass_auth_remote_oc_path }}"
+      - get
+      - oauth
+      - cluster
+      - -o
+      - json
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_breakglass_auth_remote_kubeconfig_path }}"
+  register: openshift_post_install_breakglass_auth_current_oauth
+  changed_when: false
+
+- name: Derive the merged OAuth identity provider list
+  ansible.builtin.set_fact:
+    openshift_post_install_breakglass_auth_identity_providers: >-
+      {{
+        (
+          (
+            (
+              openshift_post_install_breakglass_auth_current_oauth.stdout
+              | from_json
+            ).spec.identityProviders
+            | default([])
+          )
+          | rejectattr('name', 'equalto', openshift_breakglass_auth.identity_provider_name)
+          | list
+        )
+        + [openshift_post_install_breakglass_auth_provider]
+      }}
+
+- name: Patch the OAuth resource with the breakglass identity provider
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_breakglass_auth_remote_oc_path }}"
+      - patch
+      - oauth
+      - cluster
+      - --type=merge
+      - -p
+      - >-
+        {{
+          {
+            'spec': {
+              'identityProviders': openshift_post_install_breakglass_auth_identity_providers
+            }
+          } | to_json
+        }}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_breakglass_auth_remote_kubeconfig_path }}"
+  register: openshift_post_install_breakglass_auth_oauth_patch
+  changed_when: >-
+    'patched' in openshift_post_install_breakglass_auth_oauth_patch.stdout
+
+- name: Wait for the authentication cluster operator to be healthy
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_breakglass_auth_remote_oc_path }}"
+      - get
+      - clusteroperator
+      - authentication
+      - -o
+      - jsonpath={.status.conditions[?(@.type=="Available")].status},{.status.conditions[?(@.type=="Progressing")].status},{.status.conditions[?(@.type=="Degraded")].status}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_breakglass_auth_remote_kubeconfig_path }}"
+  register: openshift_post_install_breakglass_auth_operator_health
+  changed_when: false
+  retries: 60
+  delay: 10
+  until: >-
+    openshift_post_install_breakglass_auth_operator_health.stdout == 'True,False,False'
+
+- name: Capture the OAuth route hostname for the breakglass smoke test
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_breakglass_auth_remote_oc_path }}"
+      - get
+      - route
+      - oauth-openshift
+      - -n
+      - openshift-authentication
+      - -o
+      - jsonpath={.spec.host}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_breakglass_auth_remote_kubeconfig_path }}"
+  register: openshift_post_install_breakglass_auth_oauth_route
+  changed_when: false
+
+- name: Wait for the OAuth route to answer health checks before the breakglass smoke test
+  ansible.builtin.command:
+    argv:
+      - curl
+      - -skf
+      - https://{{ openshift_post_install_breakglass_auth_oauth_route.stdout }}/healthz
+  register: openshift_post_install_breakglass_auth_oauth_health
+  changed_when: false
+  retries: 18
+  delay: 10
+  until: openshift_post_install_breakglass_auth_oauth_health.rc == 0
+
+- name: Obtain a breakglass token by logging in as the test user
+  ansible.builtin.shell: |
+    set -o pipefail
+    {{ openshift_post_install_breakglass_auth_remote_oc_path }} login \
+      {{ openshift_post_install_breakglass_auth_api_url }} \
+      --username={{ openshift_breakglass_auth.username | quote }} \
+      --password={{ openshift_breakglass_auth.password | quote }} \
+      --insecure-skip-tls-verify \
+      --kubeconfig={{ openshift_post_install_breakglass_auth_remote_test_kubeconfig_path | quote }}
+  args:
+    executable: /bin/bash
+  register: openshift_post_install_breakglass_auth_login_result
+  changed_when: false
+  retries: 18
+  delay: 10
+  until: openshift_post_install_breakglass_auth_login_result.rc == 0
+  no_log: true
+
+- name: Confirm the breakglass token resolves the correct username
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_breakglass_auth_remote_oc_path }}"
+      - whoami
+      - --kubeconfig={{ openshift_post_install_breakglass_auth_remote_test_kubeconfig_path }}
+  register: openshift_post_install_breakglass_auth_whoami
+  changed_when: false
+
+- name: Assert the logged-in user matches the expected breakglass username
+  ansible.builtin.assert:
+    that:
+      - >-
+        openshift_post_install_breakglass_auth_whoami.stdout | trim ==
+        openshift_breakglass_auth.username
+    fail_msg: >-
+      Breakglass smoke test failed: expected username
+      '{{ openshift_breakglass_auth.username }}' but got
+      '{{ openshift_post_install_breakglass_auth_whoami.stdout | trim }}'.
+
+- name: Render the breakglass cluster-admin binding
+  ansible.builtin.copy:
+    dest: >-
+      {{ openshift_post_install_breakglass_auth_remote_dir }}/
+      {{ openshift_breakglass_auth.authorization.binding_name }}.yaml
+    mode: "0600"
+    content: |-
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: {{ openshift_breakglass_auth.authorization.binding_name }}
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: cluster-admin
+      subjects:
+        - apiGroup: rbac.authorization.k8s.io
+          kind: User
+          name: {{ openshift_breakglass_auth.username }}
+  when: openshift_breakglass_auth.authorization.grant_cluster_admin | bool
+
+- name: Apply cluster-admin access for the breakglass user
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_breakglass_auth_remote_oc_path }}"
+      - apply
+      - -f
+      - >-
+        {{ openshift_post_install_breakglass_auth_remote_dir }}/
+        {{ openshift_breakglass_auth.authorization.binding_name }}.yaml
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_breakglass_auth_remote_kubeconfig_path }}"
+  register: openshift_post_install_breakglass_auth_cluster_admin_binding
+  changed_when: >-
+    'created' in openshift_post_install_breakglass_auth_cluster_admin_binding.stdout
+    or 'configured' in openshift_post_install_breakglass_auth_cluster_admin_binding.stdout
+  when: openshift_breakglass_auth.authorization.grant_cluster_admin | bool
+
+- name: Remove the bootstrap kubeadmin secret after breakglass validation
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_breakglass_auth_remote_oc_path }}"
+      - delete
+      - secret
+      - kubeadmin
+      - -n
+      - kube-system
+      - --ignore-not-found=true
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_breakglass_auth_remote_kubeconfig_path }}"
+  register: openshift_post_install_breakglass_auth_kubeadmin_delete
+  changed_when: >-
+    'deleted' in openshift_post_install_breakglass_auth_kubeadmin_delete.stdout
+  when: openshift_breakglass_auth.validation.remove_kubeadmin_after_success | bool
+
+- name: Verify the bootstrap kubeadmin secret is absent after retirement
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_breakglass_auth_remote_oc_path }}"
+      - get
+      - secret
+      - kubeadmin
+      - -n
+      - kube-system
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_breakglass_auth_remote_kubeconfig_path }}"
+  register: openshift_post_install_breakglass_auth_kubeadmin_present
+  changed_when: false
+  failed_when: openshift_post_install_breakglass_auth_kubeadmin_present.rc == 0
+  when: openshift_breakglass_auth.validation.remove_kubeadmin_after_success | bool
+
+- name: Revoke the breakglass test token
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_breakglass_auth_remote_oc_path }}"
+      - logout
+      - --kubeconfig={{ openshift_post_install_breakglass_auth_remote_test_kubeconfig_path }}
+  register: openshift_post_install_breakglass_auth_logout
+  changed_when: false
+  ignore_errors: true
+
+- name: Remove the breakglass test kubeconfig
+  ansible.builtin.file:
+    path: "{{ openshift_post_install_breakglass_auth_remote_test_kubeconfig_path }}"
+    state: absent
+
+- name: Publish breakglass auth result
+  ansible.builtin.debug:
+    msg:
+      - >-
+        Breakglass HTPasswd login '{{ openshift_breakglass_auth.identity_provider_name }}'
+        is configured and validated for user '{{ openshift_breakglass_auth.username }}'.
+      - >-
+        kubeadmin retired:
+        {{ openshift_breakglass_auth.validation.remove_kubeadmin_after_success | bool }}

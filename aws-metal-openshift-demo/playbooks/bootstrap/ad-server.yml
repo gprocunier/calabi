@@ -64,6 +64,7 @@
       ansible.builtin.pause:
         seconds: "{{ ad_server_post_reboot_delay | default(120) }}"
       when: ad_winrm_wait is changed
+      # noqa: no-handler
 
 - name: Configure AD DS and AD CS on the Windows guest
   hosts: ad_server

@@ -2,33 +2,33 @@
 - name: Validate host memory oversubscription variables
   ansible.builtin.assert:
     that:
-      - lab_host_memory_oversubscription.enabled is boolean
-      - lab_host_memory_oversubscription.verify_state is boolean
-      - lab_host_memory_oversubscription.zram.enabled is boolean
-      - lab_host_memory_oversubscription.transparent_hugepages.enabled is boolean
-      - lab_host_memory_oversubscription.ksm.enabled is boolean
-      - lab_host_memory_oversubscription.zram.device_name | length > 0
-      - lab_host_memory_oversubscription.zram.size | length > 0
-      - lab_host_memory_oversubscription.zram.swap_priority | int >= -1
-      - lab_host_memory_oversubscription.transparent_hugepages.mode in ['always', 'madvise', 'never']
-      - lab_host_memory_oversubscription.transparent_hugepages.defrag_mode in ['always', 'defer', 'defer+madvise', 'madvise', 'never']
-      - (lab_host_memory_oversubscription.ksm.run | int) in [0, 1]
-      - (lab_host_memory_oversubscription.ksm.pages_to_scan | int) > 0
-      - (lab_host_memory_oversubscription.ksm.sleep_millisecs | int) > 0
-  when: lab_host_memory_oversubscription.enabled | bool
+      - lab_host_memory_oversubscription_settings.enabled is boolean
+      - lab_host_memory_oversubscription_settings.verify_state is boolean
+      - lab_host_memory_oversubscription_settings.zram.enabled is boolean
+      - lab_host_memory_oversubscription_settings.transparent_hugepages.enabled is boolean
+      - lab_host_memory_oversubscription_settings.ksm.enabled is boolean
+      - lab_host_memory_oversubscription_settings.zram.device_name | length > 0
+      - lab_host_memory_oversubscription_settings.zram.size | length > 0
+      - lab_host_memory_oversubscription_settings.zram.swap_priority | int >= -1
+      - lab_host_memory_oversubscription_settings.transparent_hugepages.mode in ['always', 'madvise', 'never']
+      - lab_host_memory_oversubscription_settings.transparent_hugepages.defrag_mode in ['always', 'defer', 'defer+madvise', 'madvise', 'never']
+      - (lab_host_memory_oversubscription_settings.ksm.run | int) in [0, 1]
+      - (lab_host_memory_oversubscription_settings.ksm.pages_to_scan | int) > 0
+      - (lab_host_memory_oversubscription_settings.ksm.sleep_millisecs | int) > 0
+  when: lab_host_memory_oversubscription_settings.enabled | bool
 
 - name: Check whether the zram device is already active
   ansible.builtin.shell: |
     set -euo pipefail
-    swapon --show=NAME --noheadings | awk '$1=="/dev/{{ lab_host_memory_oversubscription.zram.device_name }}"{found=1} END{exit(found?0:1)}'
+    swapon --show=NAME --noheadings | awk '$1=="/dev/{{ lab_host_memory_oversubscription_settings.zram.device_name }}"{found=1} END{exit(found?0:1)}'
   args:
     executable: /bin/bash
   register: lab_host_memory_oversubscription_zram_active
   changed_when: false
   failed_when: false
   when:
-    - lab_host_memory_oversubscription.enabled | bool
-    - lab_host_memory_oversubscription.zram.enabled | bool
+    - lab_host_memory_oversubscription_settings.enabled | bool
+    - lab_host_memory_oversubscription_settings.zram.enabled | bool
 
 - name: Check whether the policy service is already enabled
   ansible.builtin.command:
@@ -39,7 +39,7 @@
   register: lab_host_memory_oversubscription_service_enabled
   changed_when: false
   failed_when: false
-  when: lab_host_memory_oversubscription.enabled | bool
+  when: lab_host_memory_oversubscription_settings.enabled | bool
 
 - name: Check whether the policy service is already active
   ansible.builtin.command:
@@ -50,7 +50,7 @@
   register: lab_host_memory_oversubscription_service_active
   changed_when: false
   failed_when: false
-  when: lab_host_memory_oversubscription.enabled | bool
+  when: lab_host_memory_oversubscription_settings.enabled | bool
 
 - name: Ensure host memory oversubscription directories exist
   ansible.builtin.file:
@@ -61,7 +61,7 @@
     mode: "0755"
   loop:
     - /etc/systemd/system
-  when: lab_host_memory_oversubscription.enabled | bool
+  when: lab_host_memory_oversubscription_settings.enabled | bool
 
 - name: Check that zramctl is available on the host
   ansible.builtin.command:
@@ -73,8 +73,8 @@
   changed_when: false
   failed_when: false
   when:
-    - lab_host_memory_oversubscription.enabled | bool
-    - lab_host_memory_oversubscription.zram.enabled | bool
+    - lab_host_memory_oversubscription_settings.enabled | bool
+    - lab_host_memory_oversubscription_settings.zram.enabled | bool
 
 - name: Fail when zramctl is unavailable on the host
   ansible.builtin.assert:
@@ -84,8 +84,8 @@
       zramctl is not available on the host, so the explicit zram orchestration
       path cannot be applied.
   when:
-    - lab_host_memory_oversubscription.enabled | bool
-    - lab_host_memory_oversubscription.zram.enabled | bool
+    - lab_host_memory_oversubscription_settings.enabled | bool
+    - lab_host_memory_oversubscription_settings.zram.enabled | bool
 
 - name: Install the host memory oversubscription policy unit
   ansible.builtin.template:
@@ -95,7 +95,7 @@
     group: root
     mode: "0644"
   register: lab_host_memory_oversubscription_unit
-  when: lab_host_memory_oversubscription.enabled | bool
+  when: lab_host_memory_oversubscription_settings.enabled | bool
 
 - name: Reload systemd after host memory oversubscription changes
   ansible.builtin.command:
@@ -103,7 +103,7 @@
       - systemctl
       - daemon-reload
   when:
-    - lab_host_memory_oversubscription.enabled | bool
+    - lab_host_memory_oversubscription_settings.enabled | bool
     - not ansible_check_mode
     - lab_host_memory_oversubscription_unit.changed
   changed_when: true
@@ -114,7 +114,7 @@
     enabled: true
     state: started
   when:
-    - lab_host_memory_oversubscription.enabled | bool
+    - lab_host_memory_oversubscription_settings.enabled | bool
     - not ansible_check_mode
     - >-
       lab_host_memory_oversubscription_unit.changed or
@@ -123,12 +123,12 @@
 
 - name: Stop the generator-managed zram unit when the explicit service definition changed
   ansible.builtin.systemd:
-    name: "systemd-zram-setup@{{ lab_host_memory_oversubscription.zram.device_name }}.service"
+    name: "systemd-zram-setup@{{ lab_host_memory_oversubscription_settings.zram.device_name }}.service"
     state: stopped
   failed_when: false
   when:
-    - lab_host_memory_oversubscription.enabled | bool
-    - lab_host_memory_oversubscription.zram.enabled | bool
+    - lab_host_memory_oversubscription_settings.enabled | bool
+    - lab_host_memory_oversubscription_settings.zram.enabled | bool
     - not ansible_check_mode
     - lab_host_memory_oversubscription_unit.changed
 
@@ -140,8 +140,8 @@
          if lab_host_memory_oversubscription_unit.changed
          else 'started' }}
   when:
-    - lab_host_memory_oversubscription.enabled | bool
-    - lab_host_memory_oversubscription.zram.enabled | bool
+    - lab_host_memory_oversubscription_settings.enabled | bool
+    - lab_host_memory_oversubscription_settings.zram.enabled | bool
     - not ansible_check_mode
     - >-
       lab_host_memory_oversubscription_unit.changed or
@@ -155,9 +155,9 @@
   register: lab_host_memory_oversubscription_thp_enabled
   changed_when: false
   when:
-    - lab_host_memory_oversubscription.enabled | bool
-    - lab_host_memory_oversubscription.verify_state | bool
-    - lab_host_memory_oversubscription.transparent_hugepages.enabled | bool
+    - lab_host_memory_oversubscription_settings.enabled | bool
+    - lab_host_memory_oversubscription_settings.verify_state | bool
+    - lab_host_memory_oversubscription_settings.transparent_hugepages.enabled | bool
 
 - name: Read the current THP defrag mode
   ansible.builtin.command:
@@ -168,9 +168,9 @@
   changed_when: false
   failed_when: false
   when:
-    - lab_host_memory_oversubscription.enabled | bool
-    - lab_host_memory_oversubscription.verify_state | bool
-    - lab_host_memory_oversubscription.transparent_hugepages.enabled | bool
+    - lab_host_memory_oversubscription_settings.enabled | bool
+    - lab_host_memory_oversubscription_settings.verify_state | bool
+    - lab_host_memory_oversubscription_settings.transparent_hugepages.enabled | bool
 
 - name: Read the current KSM run state
   ansible.builtin.command:
@@ -180,9 +180,9 @@
   register: lab_host_memory_oversubscription_ksm_run
   changed_when: false
   when:
-    - lab_host_memory_oversubscription.enabled | bool
-    - lab_host_memory_oversubscription.verify_state | bool
-    - lab_host_memory_oversubscription.ksm.enabled | bool
+    - lab_host_memory_oversubscription_settings.enabled | bool
+    - lab_host_memory_oversubscription_settings.verify_state | bool
+    - lab_host_memory_oversubscription_settings.ksm.enabled | bool
 
 - name: Read the current KSM pages-to-scan value
   ansible.builtin.command:
@@ -192,9 +192,9 @@
   register: lab_host_memory_oversubscription_ksm_pages_to_scan
   changed_when: false
   when:
-    - lab_host_memory_oversubscription.enabled | bool
-    - lab_host_memory_oversubscription.verify_state | bool
-    - lab_host_memory_oversubscription.ksm.enabled | bool
+    - lab_host_memory_oversubscription_settings.enabled | bool
+    - lab_host_memory_oversubscription_settings.verify_state | bool
+    - lab_host_memory_oversubscription_settings.ksm.enabled | bool
 
 - name: Read the current KSM sleep interval
   ansible.builtin.command:
@@ -204,23 +204,23 @@
   register: lab_host_memory_oversubscription_ksm_sleep_millisecs
   changed_when: false
   when:
-    - lab_host_memory_oversubscription.enabled | bool
-    - lab_host_memory_oversubscription.verify_state | bool
-    - lab_host_memory_oversubscription.ksm.enabled | bool
+    - lab_host_memory_oversubscription_settings.enabled | bool
+    - lab_host_memory_oversubscription_settings.verify_state | bool
+    - lab_host_memory_oversubscription_settings.ksm.enabled | bool
 
 - name: Re-check whether the zram device is active after policy application
   ansible.builtin.shell: |
     set -euo pipefail
-    swapon --show=NAME --noheadings | awk '$1=="/dev/{{ lab_host_memory_oversubscription.zram.device_name }}"{found=1} END{exit(found?0:1)}'
+    swapon --show=NAME --noheadings | awk '$1=="/dev/{{ lab_host_memory_oversubscription_settings.zram.device_name }}"{found=1} END{exit(found?0:1)}'
   args:
     executable: /bin/bash
   register: lab_host_memory_oversubscription_zram_active_post
   changed_when: false
   failed_when: false
   when:
-    - lab_host_memory_oversubscription.enabled | bool
-    - lab_host_memory_oversubscription.verify_state | bool
-    - lab_host_memory_oversubscription.zram.enabled | bool
+    - lab_host_memory_oversubscription_settings.enabled | bool
+    - lab_host_memory_oversubscription_settings.verify_state | bool
+    - lab_host_memory_oversubscription_settings.zram.enabled | bool
 
 - name: Re-check whether the policy service is enabled after policy application
   ansible.builtin.command:
@@ -232,8 +232,8 @@
   changed_when: false
   failed_when: false
   when:
-    - lab_host_memory_oversubscription.enabled | bool
-    - lab_host_memory_oversubscription.verify_state | bool
+    - lab_host_memory_oversubscription_settings.enabled | bool
+    - lab_host_memory_oversubscription_settings.verify_state | bool
 
 - name: Re-check whether the policy service is active after policy application
   ansible.builtin.command:
@@ -245,23 +245,23 @@
   changed_when: false
   failed_when: false
   when:
-    - lab_host_memory_oversubscription.enabled | bool
-    - lab_host_memory_oversubscription.verify_state | bool
+    - lab_host_memory_oversubscription_settings.enabled | bool
+    - lab_host_memory_oversubscription_settings.verify_state | bool
 
 - name: Verify the host memory oversubscription state
   ansible.builtin.assert:
     that:
       - (lab_host_memory_oversubscription_service_enabled_post.stdout | trim) == 'enabled'
       - (lab_host_memory_oversubscription_service_active_post.stdout | trim) == 'active'
-      - not (lab_host_memory_oversubscription.zram.enabled | bool) or lab_host_memory_oversubscription_zram_active_post.rc == 0
-      - not (lab_host_memory_oversubscription.transparent_hugepages.enabled | bool) or ('[' ~ lab_host_memory_oversubscription.transparent_hugepages.mode ~ ']') in lab_host_memory_oversubscription_thp_enabled.stdout
-      - not (lab_host_memory_oversubscription.transparent_hugepages.enabled | bool) or (lab_host_memory_oversubscription_thp_defrag.rc != 0 or ('[' ~ lab_host_memory_oversubscription.transparent_hugepages.defrag_mode ~ ']') in lab_host_memory_oversubscription_thp_defrag.stdout)
-      - not (lab_host_memory_oversubscription.ksm.enabled | bool) or (lab_host_memory_oversubscription_ksm_run.stdout | trim | int) == (lab_host_memory_oversubscription.ksm.run | int)
-      - not (lab_host_memory_oversubscription.ksm.enabled | bool) or (lab_host_memory_oversubscription_ksm_pages_to_scan.stdout | trim | int) == (lab_host_memory_oversubscription.ksm.pages_to_scan | int)
-      - not (lab_host_memory_oversubscription.ksm.enabled | bool) or (lab_host_memory_oversubscription_ksm_sleep_millisecs.stdout | trim | int) == (lab_host_memory_oversubscription.ksm.sleep_millisecs | int)
+      - not (lab_host_memory_oversubscription_settings.zram.enabled | bool) or lab_host_memory_oversubscription_zram_active_post.rc == 0
+      - not (lab_host_memory_oversubscription_settings.transparent_hugepages.enabled | bool) or ('[' ~ lab_host_memory_oversubscription_settings.transparent_hugepages.mode ~ ']') in lab_host_memory_oversubscription_thp_enabled.stdout
+      - not (lab_host_memory_oversubscription_settings.transparent_hugepages.enabled | bool) or (lab_host_memory_oversubscription_thp_defrag.rc != 0 or ('[' ~ lab_host_memory_oversubscription_settings.transparent_hugepages.defrag_mode ~ ']') in lab_host_memory_oversubscription_thp_defrag.stdout)
+      - not (lab_host_memory_oversubscription_settings.ksm.enabled | bool) or (lab_host_memory_oversubscription_ksm_run.stdout | trim | int) == (lab_host_memory_oversubscription_settings.ksm.run | int)
+      - not (lab_host_memory_oversubscription_settings.ksm.enabled | bool) or (lab_host_memory_oversubscription_ksm_pages_to_scan.stdout | trim | int) == (lab_host_memory_oversubscription_settings.ksm.pages_to_scan | int)
+      - not (lab_host_memory_oversubscription_settings.ksm.enabled | bool) or (lab_host_memory_oversubscription_ksm_sleep_millisecs.stdout | trim | int) == (lab_host_memory_oversubscription_settings.ksm.sleep_millisecs | int)
     fail_msg: >-
       The host memory oversubscription policy did not converge to the expected
       zram, THP, or KSM state.
   when:
-    - lab_host_memory_oversubscription.enabled | bool
-    - lab_host_memory_oversubscription.verify_state | bool
+    - lab_host_memory_oversubscription_settings.enabled | bool
+    - lab_host_memory_oversubscription_settings.verify_state | bool

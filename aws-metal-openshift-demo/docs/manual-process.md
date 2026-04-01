@@ -9,8 +9,8 @@ Nearby docs:
 <a href="./orchestration-guide.md"><kbd>&nbsp;&nbsp;ORCHESTRATION GUIDE&nbsp;&nbsp;</kbd></a>
 <a href="./README.md"><kbd>&nbsp;&nbsp;DOCS MAP&nbsp;&nbsp;</kbd></a>
 
-Use this to walk the build by hand, teach the flow to someone else, or
-sanity-check what Ansible is really doing.
+Use this to walk the build by hand, teach the flow to someone else, or execute
+the standup without relying on the automation as the primary source of truth.
 
 If you are starting from zero, read
 <a href="./prerequisites.md"><kbd>PREREQUISITES</kbd></a> first.
@@ -20,8 +20,8 @@ Keep these pages nearby while you use this runbook:
 - <a href="./automation-flow.md"><kbd>AUTOMATION FLOW</kbd></a> for phase order and execution context
 - <a href="./host-resource-management.md"><kbd>RESOURCE MANAGEMENT</kbd></a> for CPU pools, performance domains, and host-resize guidance
 
-Do not read this as a byte-for-byte dump of every Ansible task. It is the
-manual equivalent of the current project behavior and run order.
+Do not read this as a byte-for-byte dump of every Ansible task. Read it as the
+operator runbook for the current supported build and day-2 flow.
 
 When bastion-native playbooks need to be rerun after local repository changes,
 the staged repo on bastion is refreshed in place so `generated/` output is not
@@ -33,6 +33,12 @@ thrown away between runs.
 > `ad-01` with AD DS and AD CS, build `idm-01`, join the bastion to IdM, then
 > continue with `mirror-registry`, OpenShift DNS, and cluster work. The legacy
 > section numbering is retained below so older deep links do not break.
+
+> [!NOTE]
+> This file is the step-by-step operator runbook for the intended supported
+> flow. The current cluster/day-2/auth design is working, but the final
+> zero-intervention certification run of `playbooks/site-lab.yml` from a fresh
+> teardown boundary is still a separate confidence step.
 
 The command examples use these neutral placeholders:
 
@@ -114,7 +120,7 @@ Legacy section order retained below:
 
 ### Day-2 And Follow-on Work
 
-- [24. Configure LDAP Auth, Group Sync, And Infra Roles](#24-configure-ldap-auth-group-sync-and-infra-roles)
+- [24. Configure Breakglass Auth, Keycloak OIDC, And Infra Roles](#24-configure-breakglass-auth-keycloak-oidc-and-infra-roles)
 - [25. Install Kubernetes NMState](#25-install-kubernetes-nmstate)
 - [26. Deploy ODF Declaratively](#26-deploy-odf-declaratively)
 - [27. Install OpenShift Virtualization](#27-install-openshift-virtualization)
@@ -130,7 +136,13 @@ Legacy section order retained below:
 
 ## 1. Provision The AWS IaaS Layer
 
-_This section describes the AWS IaaS steps modeled by `cloudformation/templates/tenant.yaml.j2`, `cloudformation/templates/virt-host.yaml.j2`, and the legacy `cloudformation/templates/virt-lab.yaml.j2`, rendered by `cloudformation/render-virt-lab.py`, and deployed by `cloudformation/deploy-stack.sh` or `cloudformation/deploy-virt-lab.sh`._
+_Build the AWS substrate by hand: first the shared tenant layer, then the
+`virt-01` host layer inside it._
+
+> [!NOTE]
+> Automation reference: `cloudformation/deploy-stack.sh` with
+> `cloudformation/templates/tenant.yaml.j2` and
+> `cloudformation/templates/virt-host.yaml.j2`.
 
 For a full fresh environment, create the tenant substrate first, then create
 the host substrate inside it. For a later `virt-01` rebuild inside an existing
@@ -183,7 +195,12 @@ aws cloudformation describe-stacks \
 
 ## 2. Verify First-Boot Access To `virt-01`
 
-_This section describes the first-boot cloud-init behavior modeled by the CloudFormation host templates and the follow-on host bootstrap expectations used by `playbooks/bootstrap/site.yml`._
+_Verify the new `virt-01` host is reachable, initialized correctly, and ready
+for the remaining hypervisor work._
+
+> [!NOTE]
+> Automation reference: first-boot cloud-init from the host CloudFormation
+> templates, followed by `playbooks/bootstrap/site.yml`.
 
 Verify that cloud-init completed, the operator SSH key was installed for
 `ec2-user`, and Cockpit was enabled for SOCKS-proxied browser access.
@@ -224,7 +241,11 @@ EOF
 
 ## 3. Install Deterministic `/dev/ebs` Host Naming
 
-_This section describes the inventory-driven `/dev/ebs/*` naming steps performed by `playbooks/bootstrap/site.yml`, primarily in the `lab_host_base` role._
+_Create deterministic `/dev/ebs/*` names on the hypervisor from the live AWS
+volume attachments._
+
+> [!NOTE]
+> Automation reference: `playbooks/bootstrap/site.yml`, role `lab_host_base`.
 
 Derive the active guest-disk map from the current AWS attachments by
 `GuestDisk` tag, then render the host naming layer from that live map. This
@@ -270,7 +291,10 @@ ls -1 /dev/ebs
 
 ## 4. Prepare The Hypervisor
 
-_This section describes the steps performed by `playbooks/bootstrap/site.yml`, primarily the `lab_host_base` role._
+_Prepare the hypervisor base OS, repositories, and core services for the lab._
+
+> [!NOTE]
+> Automation reference: `playbooks/bootstrap/site.yml`, role `lab_host_base`.
 
 Install the required host packages, enable the Red Hat fast-datapath repo for
 OVS, and turn on the core host services.
@@ -323,8 +347,11 @@ systemctl enable --now virtlogd.socket
 
 ### Apply The Host Resource-Management Policy
 
-_This subsection describes the steps performed by `playbooks/bootstrap/site.yml`,
-primarily the `lab_host_resource_management` role._
+_Apply the host CPU-placement and systemd slice policy used by the lab._
+
+> [!NOTE]
+> Automation reference: `playbooks/bootstrap/site.yml`, role
+> `lab_host_resource_management`.
 
 The current settled design keeps manager-level systemd `CPUAffinity` and the
 Gold/Silver/Bronze slice units, but it does not set kernel affinity boot args
@@ -390,11 +417,13 @@ Expected current state:
 
 ### Apply The Host Memory-Oversubscription Policy
 
-_This subsection describes the steps performed by `playbooks/bootstrap/site.yml`,
-primarily the `lab_host_memory_oversubscription` role. The same role can be
-re-applied independently using `playbooks/bootstrap/host-memory-oversubscription.yml`
-without re-running the full bootstrap sequence. The orchestration source of truth
-for all memory-policy defaults is `vars/global/host_memory_oversubscription.yml`._
+_Apply the host memory-oversubscription policy used by the lab. This policy is
+independent from CPU placement and can be revisited later without redoing the
+rest of the host bootstrap._
+
+> [!NOTE]
+> Automation reference: `playbooks/bootstrap/site.yml`, role
+> `lab_host_memory_oversubscription`.
 
 The memory-overcommit policy is kept separate from CPU placement. It improves
 host RAM efficiency through three independent kernel mechanisms:
@@ -577,7 +606,11 @@ efficiency while keeping Bronze workers as the primary elasticity lever.
 
 ## 5. Remove The Default Libvirt Network
 
-_This section describes the steps performed by `playbooks/bootstrap/site.yml`, primarily the `lab_libvirt` role._
+_Remove the default libvirt network so the lab only uses the explicit OVS
+design._
+
+> [!NOTE]
+> Automation reference: `playbooks/bootstrap/site.yml`, role `lab_libvirt`.
 
 Remove `virbr0` so the lab only uses the explicit OVS/libvirt design.
 
@@ -589,7 +622,11 @@ virsh net-undefine default || true
 
 ## 6. Create The Lab Switch And VLAN Interfaces
 
-_This section describes the steps performed by `playbooks/bootstrap/site.yml`, primarily the `lab_switch` role._
+_Create the OVS bridge, routed VLAN interfaces, and the host-side networking
+needed by the nested lab._
+
+> [!NOTE]
+> Automation reference: `playbooks/bootstrap/site.yml`, role `lab_switch`.
 
 Create the OVS bridge, create the routed VLAN interfaces, and bring them up.
 
@@ -642,7 +679,11 @@ systemctl enable --now aws-metal-openshift-demo-net.service
 
 ## 7. Configure Firewalld And Host Routing
 
-_This section describes the steps performed by `playbooks/bootstrap/site.yml`, primarily the `lab_firewall` role._
+_Configure firewalld and host routing so the lab networks can reach each other
+and NAT out through the hypervisor uplink._
+
+> [!NOTE]
+> Automation reference: `playbooks/bootstrap/site.yml`, role `lab_firewall`.
 
 Create the lab firewall zone, enable forwarding, and NAT the lab out of the
 host uplink.
@@ -667,7 +708,11 @@ sysctl --system
 
 ## 8. Define The Libvirt Network Over OVS
 
-_This section describes the steps performed by `playbooks/bootstrap/site.yml`, primarily the `lab_libvirt` role._
+_Define the libvirt network and portgroups that place guests onto the OVS
+bridge and the intended VLANs._
+
+> [!NOTE]
+> Automation reference: `playbooks/bootstrap/site.yml`, role `lab_libvirt`.
 
 Define the `lab-switch` libvirt network and the portgroups used by the VMs.
 
@@ -720,7 +765,12 @@ virsh net-autostart lab-switch
 
 ## 9. Stage The Guest Base Image
 
-_This section describes the guest-image staging logic performed by `playbooks/bootstrap/site.yml` after the main `virt-01` OS bootstrap work is complete. The current automation intentionally waits until RHSM registration, repo enablement, package updates, and any required reboot have finished before downloading or copying the RHEL guest QCOW2 to the hypervisor._
+_Stage the base RHEL guest image on the hypervisor. Every support VM is seeded
+from this image, so get this step right before building guests._
+
+> [!NOTE]
+> Automation reference: the guest-image staging portion of
+> `playbooks/bootstrap/site.yml`.
 
 > [!NOTE]
 > This image is the seed for every support VM. If the wrong image lands here,
@@ -746,7 +796,11 @@ curl -L '<rhel10-kvm-direct-download-url>' \
 
 ## 10. Build The IdM VM
 
-_This section describes the hypervisor-side steps performed by `playbooks/bootstrap/idm.yml`, primarily the `idm` role. In the current validated flow, it runs from `bastion-01` after bastion staging and after the optional AD build when enabled._
+_Build the `idm-01` VM shell on the hypervisor, seed its disk from the RHEL
+image, and attach the cloud-init data needed for first boot._
+
+> [!NOTE]
+> Automation reference: `playbooks/bootstrap/idm.yml`, role `idm`.
 
 Seed the `idm-01` disk from the RHEL image, create cloud-init, and build the
 VM on the management VLAN.
@@ -839,7 +893,11 @@ surviving as an empty CD-ROM through an in-guest reboot.
 
 ## 11. Configure IdM In The Guest
 
-_This section describes the guest-side steps performed by `playbooks/bootstrap/idm.yml`, primarily the `idm_guest` role. In the validated bastion-first flow, the bastion performs this work after the hypervisor-side IdM build completes._
+_Configure the IdM guest after first boot: update it, install IPA, enable the
+supporting services, and create the initial identity data the lab depends on._
+
+> [!NOTE]
+> Automation reference: `playbooks/bootstrap/idm.yml`, role `idm_guest`.
 
 Update the guest, install IdM, enable Cockpit and session recording, and create
 the core users and groups used by OpenShift.
@@ -993,7 +1051,11 @@ sssctl domain-status workshop.lan
 
 ## 12. Build The Bastion VM
 
-_This section describes the hypervisor-side steps performed by `playbooks/bootstrap/bastion.yml`, primarily the `bastion` role._
+_Build the bastion VM shell on VLAN 100. This becomes the execution host for
+all remaining in-lab work._
+
+> [!NOTE]
+> Automation reference: `playbooks/bootstrap/bastion.yml`, role `bastion`.
 
 Create the bastion on VLAN 100. This becomes the execution host for the rest of
 the lab.
@@ -1096,7 +1158,12 @@ starts the domain again.
 
 ## 13. Stage The Project To The Bastion
 
-_This section describes the steps performed by `playbooks/bootstrap/bastion-stage.yml`, primarily the `bastion_stage` role._
+_Stage the project, secrets, and operator tools onto the bastion so the rest of
+the build can run from inside the lab._
+
+> [!NOTE]
+> Automation reference: `playbooks/bootstrap/bastion-stage.yml`, role
+> `bastion_stage`.
 
 > [!IMPORTANT]
 > This is the last step that runs from the operator workstation. After staging
@@ -1173,6 +1240,9 @@ EOF
 
 ### Iterative Development With `push_and_run.sh`
 
+_This helper is not part of the manual standup path. It exists only to shorten
+developer edit-sync-rerun cycles after the bastion is already staged._
+
 After the initial staging, use the lightweight `scripts/push_and_run.sh` helper
 for iterative code changes. It rsyncs only the role/playbook/vars tree
 (excluding `inventory/`, `secrets/`, and `generated/` — all of which have
@@ -1220,7 +1290,12 @@ When using an AI assistant to develop against this codebase:
 
 ## 13A. Optionally Build AD DS And AD CS From Bastion
 
-_This section describes the manual equivalent of the validated `ad-server` path. Unlike the automation docs, this section is written as a true operator runbook: prepare media on `virt-01`, create the VM, complete the first boot, then configure AD DS and AD CS directly inside Windows._
+_This is the manual AD build path: prepare media on `virt-01`, create the VM,
+complete the first boot, then configure AD DS and AD CS directly inside
+Windows._
+
+> [!NOTE]
+> Automation reference: `playbooks/bootstrap/ad-server.yml`.
 
 > [!IMPORTANT]
 > This phase is optional and default-disabled in automation:
@@ -1723,7 +1798,12 @@ ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 'virsh domsta
 
 ## 13B. Join The Bastion To IdM
 
-_This section describes the manual equivalent of the bastion IdM-enrollment phase. At this point `bastion-01` already exists and `idm-01` is already configured. The remaining work is to trust the active IdM CA, enroll the bastion as an IPA client, and enable the authselect features used by the rest of the lab._
+_At this point `bastion-01` already exists and `idm-01` is already configured.
+The remaining work is to trust the active IdM CA, enroll the bastion as an IPA
+client, and enable the authselect features used by the rest of the lab._
+
+> [!NOTE]
+> Automation reference: `playbooks/bootstrap/bastion-join.yml`.
 
 From `bastion-01`, make sure the active IdM CA is trusted locally before the
 client install:
@@ -1791,7 +1871,12 @@ support-service phase is the mirror registry build.
 
 ## 14. Build The Mirror Registry VM
 
-_This section describes the steps performed by `playbooks/lab/mirror-registry.yml`, principally the `mirror_registry` and `mirror_registry_guest` roles._
+_Build and configure the mirror-registry VM from the bastion, join it to IdM,
+and install the Quay-based disconnected registry stack._
+
+> [!NOTE]
+> Automation reference: `playbooks/lab/mirror-registry.yml`, roles
+> `mirror_registry` and `mirror_registry_guest`.
 
 From the bastion, after the validated support-services order
 (`bastion -> bastion-stage -> optional ad-server -> idm -> bastion-join`),
@@ -1981,7 +2066,13 @@ CD-ROM cleanup is reflected in the next live QEMU process.
 
 ## 15. Mirror OpenShift And Operator Content
 
-_This section describes the mirroring portion of `playbooks/lab/mirror-registry.yml`, primarily the `mirror_registry_guest` role and the rendered `ImageSetConfiguration`._
+_Mirror the OpenShift release payloads, operator catalogs, and extra images
+into the local registry using the portable `m2d` plus `d2m` workflow._
+
+> [!NOTE]
+> Automation reference: the mirroring portion of
+> `playbooks/lab/mirror-registry.yml`, primarily role
+> `mirror_registry_guest`.
 
 The disconnected standard for this lab is now:
 
@@ -2151,7 +2242,12 @@ Observed on the live `4.20.15` run with the current operator set:
 
 ## 16. Populate OpenShift DNS In IdM
 
-_This section describes the steps performed by `playbooks/lab/openshift-dns.yml`, primarily the `idm_openshift_dns` role._
+_Populate the OpenShift forward and reverse DNS zones in IdM so the cluster and
+its routes resolve correctly before install._
+
+> [!NOTE]
+> Automation reference: `playbooks/lab/openshift-dns.yml`, role
+> `idm_openshift_dns`.
 
 Create the forward and reverse DNS zones and records in IdM for the cluster,
 nodes, and VIPs.
@@ -2214,7 +2310,12 @@ done
 
 ## 17. Download Installer Binaries
 
-_This section describes the steps performed by `playbooks/cluster/openshift-installer-binaries.yml`, primarily the `openshift_installer_binaries` role._
+_Download the exact matching OpenShift installer and client binaries onto the
+bastion._
+
+> [!NOTE]
+> Automation reference: `playbooks/cluster/openshift-installer-binaries.yml`,
+> role `openshift_installer_binaries`.
 
 Download the exact matching OpenShift installer and client tools onto the
 bastion.
@@ -2243,7 +2344,12 @@ chmod 0755 /opt/openshift/generated/tools/4.20.15/bin/kubectl
 
 ## 18. Render Install Artifacts
 
-_This section describes the steps performed by `playbooks/cluster/openshift-install-artifacts.yml`, primarily the `openshift_install_artifacts` role._
+_Render the OpenShift install-config, manifests, and cluster artifacts on the
+bastion._
+
+> [!NOTE]
+> Automation reference: `playbooks/cluster/openshift-install-artifacts.yml`,
+> role `openshift_install_artifacts`.
 
 Write the `install-config.yaml`, `agent-config.yaml`, and the IdM CA file that
 are used by the agent installer.
@@ -2355,7 +2461,11 @@ EOF
 
 ## 19. Generate The Agent ISO
 
-_This section describes the steps performed by `playbooks/cluster/openshift-agent-media.yml`, primarily the `openshift_agent_media` role._
+_Generate the agent-based installer ISO used to boot the cluster VMs._
+
+> [!NOTE]
+> Automation reference: `playbooks/cluster/openshift-agent-media.yml`, role
+> `openshift_agent_media`.
 
 Generate the agent media on the bastion, then copy the ISO to `virt-01` and
 verify its checksum before using it.
@@ -2426,7 +2536,12 @@ EOF
 
 ## 20. Create The OpenShift VM Shells
 
-_This section describes the steps performed by `playbooks/cluster/openshift-cluster.yml`, primarily the `openshift_cluster` role._
+_Create the nine OpenShift VM shells, attach the agent ISO, and boot them into
+the agent installer._
+
+> [!NOTE]
+> Automation reference: `playbooks/cluster/openshift-cluster.yml`, role
+> `openshift_cluster`.
 
 Create the 9 OpenShift VM shells on `virt-01`, attach the ISO, and set them to
 boot CD-ROM first.
@@ -2499,7 +2614,10 @@ virt-xml ocp-master-01.ocp.workshop.lan --edit --boot cdrom,hd
 
 ## 21. Wait For Installer Convergence
 
-_This section describes the steps performed by `playbooks/cluster/openshift-install-wait.yml`._
+_Wait for bootstrap and install completion from the bastion._
+
+> [!NOTE]
+> Automation reference: `playbooks/cluster/openshift-install-wait.yml`.
 
 After the VM shells are created and booted from `agent.x86_64.iso`, run the
 installer wait phase from the bastion. This is the step that turns “VMs are
@@ -2517,7 +2635,11 @@ running” into “the cluster finished bootstrap and install.”
 
 ## 22. Validate Post-install State
 
-_This section describes the steps performed by `playbooks/day2/openshift-post-install-validate.yml`, primarily the `openshift_post_install_validate` role._
+_Validate that the newly installed cluster is healthy enough for day-2 work._
+
+> [!NOTE]
+> Automation reference: `playbooks/day2/openshift-post-install-validate.yml`,
+> role `openshift_post_install_validate`.
 
 Once installer convergence is complete and `auth/kubeconfig` exists, use the
 generated kubeconfig from inside the lab and validate the cluster from
@@ -2544,7 +2666,11 @@ EOF
 
 ## 23. Detach Install Media And Normalize Boot
 
-_This section describes the steps performed by `playbooks/maintenance/detach-install-media.yml`. In the automated path, this runs immediately after `openshift-install-wait.yml` in `site-lab.yml` and again as the first task in `openshift-post-install.yml` (safety net)._
+_Detach the install media and restore disk-first boot intent before any normal
+cluster reboots occur._
+
+> [!NOTE]
+> Automation reference: `playbooks/maintenance/detach-install-media.yml`.
 
 > [!CAUTION]
 > **Do not skip this step.** If the agent ISO is still attached when a cluster
@@ -2642,96 +2768,68 @@ done
 EOF
 ```
 
-## 24. Configure LDAP Auth, Group Sync, And Infra Roles
+## 24. Configure Breakglass Auth, Keycloak OIDC, And Infra Roles
 
-_This section describes the steps performed by `playbooks/day2/openshift-post-install-ldap-auth.yml`, `playbooks/day2/openshift-post-install-infra.yml`, and the corresponding roles `openshift_post_install_ldap_auth` and `openshift_post_install_infra`._
+_This section is the manual runbook for the supported infra and authentication
+cutover: move platform workloads onto infra nodes, establish a local
+breakglass login, deploy Keycloak, federate it to IdM, and configure
+OpenShift to use OIDC._
 
-The numbered sections below are capability walkthroughs, not the strict current
-automation order. The automated `openshift-post-install.yml` sequence is:
+> [!NOTE]
+> Automation reference: the identity and infra phases inside
+> `playbooks/day2/openshift-post-install.yml`, primarily roles
+> `openshift_post_install_infra`,
+> `openshift_post_install_breakglass_auth`,
+> `openshift_post_install_keycloak`, and
+> `openshift_post_install_oidc_auth`.
+
+The supported execution order is:
 
 1. disconnected OperatorHub pivot
 2. infra conversion
 3. IdM ingress certificate rollout
-4. LDAP auth and group sync
+4. breakglass `HTPasswd` auth
 5. NMState
 6. ODF
-7. OpenShift Virtualization
-8. OpenShift Pipelines
-9. Web Terminal
-10. AAP
-11. Network Observability
-12. validation
+7. Keycloak
+8. OIDC auth
+9. optional legacy LDAP auth and group sync
+10. OpenShift Virtualization
+11. OpenShift Pipelines
+12. Web Terminal
+13. AAP
+14. Network Observability
+15. validation
 
-Create the LDAP bind secret, configure OAuth to use IdM, sync the IdM groups,
-grant cluster-admin to `openshift-admin`, label the infra nodes, and move
-platform workloads (ingress, monitoring, image registry) onto them. In the
-current orchestration, the disconnected OperatorHub pivot is part of the
-default post-install baseline and runs before the LDAP/NMState steps.
+The supported default auth model is:
 
-Note: the automation does **not** taint infra nodes — workloads are steered via
-`nodeSelector` / `nodePlacement` alone. Taints are applied later only for the
-ODF storage set (`node.ocs.openshift.io/storage`).
+1. create a local `HTPasswd` breakglass login
+2. remove `kubeadmin` after the breakglass login is proven
+3. deploy Keycloak after ODF storage is available
+4. federate Keycloak to IdM
+5. configure OpenShift OAuth for OIDC against Keycloak
+6. map the OIDC `groups` claim into OpenShift groups
+7. bind IdM group `openshift-admin` to OpenShift `cluster-admin`
+
+Direct OpenShift LDAP auth is no longer the default baseline. Keep it out of
+the cluster OAuth configuration unless you are deliberately validating that
+compatibility path.
+
+Label the infra nodes and move platform workloads onto them early in day-2 so
+the later auth and storage work settles on the intended node tier.
+
+Note: do **not** taint infra nodes for general workload placement here.
+Workloads are steered via `nodeSelector` / `nodePlacement`. Taints are applied
+later only for the ODF storage set
+(`node.ocs.openshift.io/storage`).
 
 ```bash
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
-cat <<'YAML' | /var/tmp/oc apply -f -
-apiVersion: v1
-kind: Secret
-metadata:
-  name: ldap-bind-password
-  namespace: openshift-config
-stringData:
-  bindPassword: <lab-default-password>
-YAML
 
-cat <<'YAML' | /var/tmp/oc apply -f -
-apiVersion: config.openshift.io/v1
-kind: OAuth
-metadata:
-  name: cluster
-spec:
-  identityProviders:
-    - name: Red Hat Identity Management
-      mappingMethod: claim
-      type: LDAP
-      ldap:
-        url: "ldaps://idm-01.workshop.lan/cn=users,cn=accounts,dc=workshop,dc=lan?uid?sub?(objectClass=person)"
-        bindDN: "cn=Directory Manager"
-        bindPassword:
-          name: ldap-bind-password
-        insecure: false
-        attributes:
-          id: [dn]
-          preferredUsername: [uid]
-          name: [cn]
-          email: [mail]
-YAML
-
-cat <<'YAML' >/tmp/groupsync.yaml
-kind: LDAPSyncConfig
-apiVersion: v1
-url: ldaps://idm-01.workshop.lan
-bindDN: "cn=Directory Manager"
-bindPassword:
-  file: "/tmp/ldap-bind-password"
-rfc2307:
-  groupsQuery:
-    baseDN: "cn=groups,cn=accounts,dc=workshop,dc=lan"
-    scope: sub
-    filter: "(|(cn=openshift-admin)(cn=virt-admin)(cn=developer))"
-  groupUIDAttribute: dn
-  groupNameAttributes: [cn]
-  groupMembershipAttributes: [member]
-  usersQuery:
-    baseDN: "cn=users,cn=accounts,dc=workshop,dc=lan"
-    scope: sub
-  userUIDAttribute: dn
-  userNameAttributes: [uid]
-YAML
-
-printf '<lab-default-password>\n' >/tmp/ldap-bind-password
-oc adm groups sync --sync-config=/tmp/groupsync.yaml --confirm
+/var/tmp/oc label node ocp-infra-01 node-role.kubernetes.io/infra='' --overwrite
+/var/tmp/oc label node ocp-infra-02 node-role.kubernetes.io/infra='' --overwrite
+/var/tmp/oc label node ocp-infra-03 node-role.kubernetes.io/infra='' --overwrite
 
 cat <<'YAML' | /var/tmp/oc apply -f -
 apiVersion: rbac.authorization.k8s.io/v1
@@ -2748,18 +2846,12 @@ subjects:
     name: openshift-admin
 YAML
 
-/var/tmp/oc label node ocp-infra-01 node-role.kubernetes.io/infra='' --overwrite
-/var/tmp/oc label node ocp-infra-02 node-role.kubernetes.io/infra='' --overwrite
-/var/tmp/oc label node ocp-infra-03 node-role.kubernetes.io/infra='' --overwrite
-
 # --- Move platform workloads to infra nodes ---
 
-# Move the default IngressController
 /var/tmp/oc patch ingresscontroller/default -n openshift-ingress-operator \
   --type=merge -p \
   '{"spec":{"nodePlacement":{"nodeSelector":{"matchLabels":{"node-role.kubernetes.io/infra":""}}}}}'
 
-# Move cluster monitoring (Prometheus, Alertmanager, Thanos, etc.)
 cat <<'YAML' | /var/tmp/oc apply -f -
 apiVersion: v1
 kind: ConfigMap
@@ -2791,64 +2883,98 @@ data:
         node-role.kubernetes.io/infra: ""
 YAML
 
-# Move the internal image registry
 /var/tmp/oc patch configs.imageregistry/cluster --type=merge \
   -p '{"spec":{"nodeSelector":{"node-role.kubernetes.io/infra":""}}}'
-
-# Wait for ingress pods to land on infra nodes
-/var/tmp/oc -n openshift-ingress wait pod --for=condition=Ready \
-  --selector=ingresscontroller.operator.openshift.io/deployment-ingresscontroller=default \
-  --timeout=10m
-
-# Wait for monitoring operator to settle after the ConfigMap change
-until [ "$(/var/tmp/oc get co monitoring -o jsonpath='{.status.conditions[?(@.type=="Progressing")].status}')" = "False" ]; do
-  sleep 10
-done
 EOF
 ```
 
 > [!IMPORTANT]
-> **Wait for OAuth convergence before testing LDAP login.** The authentication
-> CO can report `Available=True` while old OAuth pods are still serving. The
-> `oc login` will fail with "unknown authority" or "invalid credentials" if the
-> new IDP config has not fully rolled out. Wait for
-> `authentication Progressing=False` first.
+> **Preserve a local recovery path before changing network auth.** Create and
+> validate a breakglass `HTPasswd` user before patching OAuth to use Keycloak.
+> Only after the breakglass login works should you retire `kubeadmin`.
 
-Verify the LDAP configuration by logging in with an IdM user. The OCP API
-server TLS cert is signed by the cluster's own CA (not the IdM CA), so
-`--insecure-skip-tls-verify` is used here.
+Start by establishing the breakglass OAuth identity provider:
 
 ```bash
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
 
-# Wait for the authentication operator to finish rolling the new OAuth config
+htpasswd -BbnC 12 breakglass-admin '<lab-default-password>' >/tmp/htpasswd
+/var/tmp/oc create secret generic breakglass-htpasswd \
+  -n openshift-config \
+  --from-file=htpasswd=/tmp/htpasswd \
+  --dry-run=client -o yaml | /var/tmp/oc apply -f -
+
+cat <<'YAML' | /var/tmp/oc apply -f -
+apiVersion: config.openshift.io/v1
+kind: OAuth
+metadata:
+  name: cluster
+spec:
+  identityProviders:
+    - name: Breakglass HTPasswd
+      mappingMethod: claim
+      type: HTPasswd
+      htpasswd:
+        fileData:
+          name: breakglass-htpasswd
+YAML
+EOF
+```
+
+Deploy Keycloak after ODF so its PostgreSQL PVC can bind to the Ceph RBD
+storage class. The intended state is:
+
+- namespace `keycloak`
+- `rhbk-operator`
+- PostgreSQL backed by `ocs-storagecluster-ceph-rbd`
+- Keycloak route `sso.apps.ocp.workshop.lan`
+- realm `openshift`
+- client `openshift`
+- LDAP federation against the IdM compat tree
+- a `groups` protocol mapper so OpenShift receives group membership claims
+
+OpenShift OAuth is then patched to trust Keycloak OIDC and map the `groups`
+claim into OpenShift groups. The resulting effective authorization model is:
+
+- IdM group membership is the source of truth
+- Keycloak emits `groups`
+- OpenShift maps `claims.groups`
+- `openshift-admin` is bound to `cluster-admin`
+
+That means adding a native IdM user, or a trusted AD user that lands in the
+same IdM role group, to `openshift-admin` makes that user a cluster admin once
+they authenticate through Keycloak.
+
+Validate the end state with both a native IdM user and an AD-backed user.
+
+```bash
+ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
+export KUBECONFIG=/var/tmp/ocp-kubeconfig
+
 until [ "$(/var/tmp/oc get co authentication -o jsonpath='{.status.conditions[?(@.type=="Progressing")].status}')" = "False" ]; do
   sleep 10
 done
 
-# Smoke test: login as an IdM user, verify identity, log out
-/var/tmp/oc login https://api.ocp.workshop.lan:6443 \
-  --insecure-skip-tls-verify \
-  -u sysadmin -p '<lab-default-password>'
-/var/tmp/oc whoami   # expect: sysadmin
-/var/tmp/oc logout
-export KUBECONFIG=/var/tmp/ocp-kubeconfig
+/var/tmp/oc get oauth cluster -o jsonpath='{range .spec.identityProviders[*]}{.name} => groups={.openID.claims.groups}{"\n"}{end}'
+/var/tmp/oc get groups
+/var/tmp/oc get clusterrolebinding openshift-admin-cluster-admin
 EOF
 ```
 
-Install a recurring group sync on the bastion.
-
-```bash
-cat <<'EOF' >/etc/cron.d/openshift-ldap-groupsync
-*/30 * * * * root export KUBECONFIG=/var/tmp/ocp-kubeconfig && \
-  /var/tmp/oc adm groups sync --sync-config=/tmp/groupsync.yaml --confirm >/var/log/openshift-ldap-groupsync.log 2>&1
-EOF
-```
+If you deliberately want to validate the old direct-LDAP path, treat it as an
+optional side test after OIDC is working. Do not treat it as the default
+cluster auth model, and do not replace the breakglass plus OIDC baseline with
+it.
 
 ## 25. Install Kubernetes NMState
 
-_This section describes the steps performed by `playbooks/day2/openshift-post-install-nmstate.yml`, primarily the `openshift_post_install_nmstate` role._
+_Install Kubernetes NMState and create the VLAN policies needed by later VM and
+live-migration networking._
+
+> [!NOTE]
+> Automation reference: `playbooks/day2/openshift-post-install-nmstate.yml`,
+> role `openshift_post_install_nmstate`.
 
 Install the NMState operator and create the singleton `NMState` instance.
 
@@ -3012,7 +3138,13 @@ Design note:
 
 ## 26. Deploy ODF Declaratively
 
-_This section describes the ODF portion of `playbooks/day2/openshift-post-install.yml`, primarily the `openshift_post_install_odf` role._
+_Deploy ODF declaratively, including the host-side cleanup needed to avoid
+stale Ceph and OLM state._
+
+> [!NOTE]
+> Automation reference: the ODF phase inside
+> `playbooks/day2/openshift-post-install.yml`, primarily role
+> `openshift_post_install_odf`.
 
 > [!WARNING]
 > **ODF must run before Virtualization (27) and NetObserv (29).** CNV expects
@@ -3189,7 +3321,13 @@ EOF
 
 ## 27. Install OpenShift Virtualization
 
-_This section describes the steps performed by `playbooks/day2/openshift-post-install-virtualization.yml`, primarily the `openshift_post_install_virtualization` role._
+_Install OpenShift Virtualization and the workload-availability operators that
+support it._
+
+> [!NOTE]
+> Automation reference:
+> `playbooks/day2/openshift-post-install-virtualization.yml`, role
+> `openshift_post_install_virtualization`.
 
 Install CNV, set its default storage class, and install the workload
 availability operators.
@@ -3282,7 +3420,12 @@ EOF
 
 ## 28. Install The Web Terminal
 
-_This section describes the steps performed by `playbooks/day2/openshift-post-install-web-terminal.yml`, primarily the `openshift_post_install_web_terminal` role._
+_Install the Web Terminal operator, build the custom tooling image, and point
+the devworkspace template at that image._
+
+> [!NOTE]
+> Automation reference: `playbooks/day2/openshift-post-install-web-terminal.yml`,
+> role `openshift_post_install_web_terminal`.
 
 Install the operator, build the custom tooling image in the mirror registry, and
 patch the Web Terminal tooling template to use it.
@@ -3367,7 +3510,12 @@ EOF
 
 ## 29. Install Network Observability And Loki
 
-_This section describes the steps performed by `playbooks/day2/openshift-post-install-netobserv.yml`, primarily the `openshift_post_install_netobserv` role._
+_Install Network Observability and Loki, then create the ODF-backed
+`FlowCollector` and `LokiStack` resources._
+
+> [!NOTE]
+> Automation reference: `playbooks/day2/openshift-post-install-netobserv.yml`,
+> role `openshift_post_install_netobserv`.
 
 Install the operators, create an ODF-backed `LokiStack`, and create a tuned
 `FlowCollector`.
@@ -3521,7 +3669,12 @@ EOF
 
 ## 30. Install Ansible Automation Platform
 
-_This section describes the steps performed by `playbooks/day2/openshift-post-install-aap.yml`, primarily the `openshift_post_install_aap` role._
+_Install Ansible Automation Platform on OpenShift and configure it to
+authenticate against IdM._
+
+> [!NOTE]
+> Automation reference: `playbooks/day2/openshift-post-install-aap.yml`, role
+> `openshift_post_install_aap`.
 
 Install AAP on OpenShift and configure it to use IdM LDAP authentication.
 
@@ -3638,7 +3791,11 @@ EOF
 
 ## 31. Install OpenShift Pipelines
 
-_This section describes the steps performed by `playbooks/day2/openshift-post-install-pipelines.yml`, primarily the `openshift_post_install_pipelines` role._
+_Install OpenShift Pipelines and prepare the Windows EFI image-build lane._
+
+> [!NOTE]
+> Automation reference: `playbooks/day2/openshift-post-install-pipelines.yml`,
+> role `openshift_post_install_pipelines`.
 
 Install Tekton, make sure there is a default storage class, and install the
 Windows EFI installer pipeline.
@@ -3675,20 +3832,69 @@ EOF
 
 ## 32. Launch A Windows EFI Build
 
-_This section describes the steps performed by `playbooks/day2/openshift-windows-server-build.yml`, primarily the `openshift_windows_server_build` role._
+_Launch the Windows Server image-build PipelineRun manually after the Pipelines
+lane is in place._
 
-After setting a real Windows ISO URL in `vars/day2/windows_server_build.yml`, render
-and launch a Windows Server build PipelineRun.
+> [!NOTE]
+> Automation reference: `playbooks/day2/openshift-windows-server-build.yml`,
+> role `openshift_windows_server_build`.
+
+Set a real Windows ISO URL, then apply the `PipelineRun` directly.
 
 ```bash
-cd /opt/openshift/aws-metal-openshift-demo
-vi vars/day2/windows_server_build.yml
-ansible-playbook -i inventory/hosts.yml playbooks/day2/openshift-windows-server-build.yml
+ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
+export KUBECONFIG=/var/tmp/ocp-kubeconfig
+
+cat <<'YAML' | oc apply -f -
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: windows2k22-efi-installer-run
+  namespace: windows-image-builder
+spec:
+  pipelineRef:
+    name: windows-efi-installer
+  params:
+    - name: winImageDownloadURL
+      value: REPLACE_WITH_WINDOWS_SERVER_ISO_URL
+    - name: acceptEula
+      value: "true"
+    - name: autounattendXMLConfigMapsURL
+      value: https://raw.githubusercontent.com/rh-ecosystem-edge/windows-machine-config-bootstrapper/main/configmaps/
+    - name: instanceTypeName
+      value: u1.large
+    - name: instanceTypeKind
+      value: VirtualMachineClusterInstancetype
+    - name: preferenceName
+      value: windows.2k22.virtio
+    - name: virtualMachinePreferenceKind
+      value: VirtualMachineClusterPreference
+    - name: autounattendConfigMapName
+      value: windows2k22-autounattend
+    - name: virtioContainerDiskName
+      value: quay.io/kubevirt/virtio-container-disk:centos-stream9
+    - name: baseDvName
+      value: win2k22
+    - name: isoDVName
+      value: win2k22-install
+    - name: useBiosMode
+      value: "false"
+  taskRunTemplate:
+    serviceAccountName: pipeline
+YAML
+
+oc get pipelinerun windows2k22-efi-installer-run -n windows-image-builder
+EOF
 ```
 
 ## 33. Pivot OperatorHub To The Disconnected Catalog
 
-_This section describes the steps performed by `playbooks/day2/openshift-disconnected-operatorhub.yml`, primarily the `openshift_disconnected_operatorhub` role._
+_Pivot OperatorHub to the disconnected catalogs produced by the mirror phase._
+
+> [!NOTE]
+> Automation reference:
+> `playbooks/day2/openshift-disconnected-operatorhub.yml`, role
+> `openshift_disconnected_operatorhub`.
 
 > [!IMPORTANT]
 > In the automated path this runs **before** any operator subscriptions
@@ -3724,7 +3930,12 @@ EOF
 
 ## 34. Roll Out An IdM Ingress Certificate
 
-_This section describes the steps performed by `playbooks/day2/openshift-post-install-idm-certs.yml`, primarily the `openshift_post_install_idm_certs` role._
+_Roll out the IdM-issued wildcard ingress certificate early in day-2 so later
+work lands on the final TLS state._
+
+> [!NOTE]
+> Automation reference: `playbooks/day2/openshift-post-install-idm-certs.yml`,
+> role `openshift_post_install_idm_certs`.
 
 > [!WARNING]
 > **Ordering matters.** In the automated path, the IdM ingress cert pivot runs
@@ -3918,13 +4129,28 @@ EOF
 
 ## 35. Cleanup
 
-_This section describes the steps performed by `playbooks/maintenance/cleanup.yml` and the cleanup roles it aggregates._
+_Use cleanup intentionally: either destroy the full lab or, more commonly,
+destroy only the OpenShift cluster and preserve the healthy support services._
+
+> [!NOTE]
+> Automation reference: `playbooks/maintenance/cleanup.yml` and the cleanup
+> roles it aggregates.
 
 > [!CAUTION]
 > **This is destructive and not reversible.** It destroys VMs and wipes disks.
 > The mirror-registry archive and all OpenShift cluster state will be gone. If
-> you only want to rebuild the cluster, use `openshift_cluster_cleanup` instead
-> of the full cleanup.
+> you only want to rebuild the cluster, preserve support services and use the
+> cluster-only cleanup path instead of the full cleanup.
+
+Automation shortcut for the preferred fresh-cluster rebuild:
+
+```bash
+ansible-playbook -i inventory/hosts.yml playbooks/maintenance/cleanup.yml \
+  -e cleanup_destroy_openshift_cluster=true
+
+./scripts/run_remote_bastion_playbook.sh playbooks/site-lab.yml \
+  -e lab_default_password='<lab-default-password>'
+```
 
 Destroy the OpenShift cluster shells, optionally wipe the disks, and clean up
 the support VM and lab-switch state.

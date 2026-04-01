@@ -1,0 +1,17 @@
+---
+lab_configure_ad_trust: false
+
+idm_ad_trust:
+  enabled: "{{ lab_configure_ad_trust | bool }}"
+  disable_dnssec_validation: true
+  ad_domain: "{{ ad_server.domain_name }}"
+  ad_realm: "{{ ad_server.domain_name | upper }}"
+  ad_server: "{{ ad_vm.name }}.{{ ad_vm.domain }}"
+  ad_admin_user: "{{ ad_vm.access.admin_user }}"
+  ad_admin_password: "{{ ad_vm.access.admin_password }}"
+  ad_server_ip: "{{ ad_vm.network.ipv4_address }}"
+  ad_dns_probe_fqdn: "{{ ad_vm.name }}.{{ ad_vm.domain }}"
+  idm_netbios_name: "{{ idm_server.realm.split('.')[0] }}"
+  range_type: ipa-ad-trust
+  enable_compat: true
+  sample_user: "ad-ocpadmin@{{ ad_server.domain_name }}"

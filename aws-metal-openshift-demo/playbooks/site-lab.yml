@@ -1,49 +1,66 @@
 ---
-- import_playbook: bootstrap/ad-server.yml
+- name: Bootstrap the optional AD support VM
+  import_playbook: bootstrap/ad-server.yml
   tags:
     - ad-server
     - support-vms
-- import_playbook: bootstrap/idm.yml
+- name: Build or reuse the IdM support VM
+  import_playbook: bootstrap/idm.yml
   tags:
     - idm
     - support-vms
-- import_playbook: bootstrap/bastion-join.yml
+- name: Configure IdM to AD trust integration
+  import_playbook: bootstrap/idm-ad-trust.yml
+  tags:
+    - idm-ad-trust
+    - support-vms
+- name: Join and prepare the bastion
+  import_playbook: bootstrap/bastion-join.yml
   tags:
     - bastion-join
     - support-vms
-- import_playbook: lab/mirror-registry.yml
+- name: Build or refresh the disconnected mirror registry
+  import_playbook: lab/mirror-registry.yml
   tags:
     - mirror-registry
     - support-vms
-- import_playbook: lab/openshift-dns.yml
+- name: Publish OpenShift DNS records in IdM
+  import_playbook: lab/openshift-dns.yml
   tags:
     - openshift-dns
     - cluster-prep
-- import_playbook: cluster/openshift-installer-binaries.yml
+- name: Render the pinned OpenShift installer binaries
+  import_playbook: cluster/openshift-installer-binaries.yml
   tags:
     - installer-binaries
     - cluster-prep
-- import_playbook: cluster/openshift-install-artifacts.yml
+- name: Generate the OpenShift install artifacts
+  import_playbook: cluster/openshift-install-artifacts.yml
   tags:
     - install-artifacts
     - cluster-prep
-- import_playbook: cluster/openshift-agent-media.yml
+- name: Build the OpenShift agent boot media
+  import_playbook: cluster/openshift-agent-media.yml
   tags:
     - agent-media
     - cluster-prep
-- import_playbook: cluster/openshift-cluster.yml
+- name: Provision the OpenShift cluster virtual machines
+  import_playbook: cluster/openshift-cluster.yml
   tags:
     - cluster-vms
     - cluster-build
-- import_playbook: cluster/openshift-install-wait.yml
+- name: Wait for the OpenShift install to complete
+  import_playbook: cluster/openshift-install-wait.yml
   tags:
     - install-wait
     - cluster-build
-- import_playbook: day2/openshift-post-install-validate.yml
+- name: Validate the post-install prerequisites
+  import_playbook: day2/openshift-post-install-validate.yml
   tags:
     - day2-validate
     - day2
-- import_playbook: day2/openshift-post-install.yml
+- name: Apply the OpenShift day-2 configuration
+  import_playbook: day2/openshift-post-install.yml
   tags:
     - day2-post-install
     - day2

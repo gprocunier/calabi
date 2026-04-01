@@ -14,6 +14,42 @@ It is more operational than <a href="./issues.md"><kbd>ISSUES LEDGER</kbd></a>: 
 that already landed, while this file keeps the observations, experiments, and
 unanswered questions.
 
+## Open Investigation: Final Golden-Path Certification Run
+
+Status:
+
+- open
+- cluster build, mirrored-content use, and the default auth/day-2 path are
+  working on the current environment
+- the final bar is still one uninterrupted `playbooks/site-lab.yml` run from a
+  deliberate teardown boundary, without live code repair during the attempt
+
+### What is already proven
+
+- support services can be brought up and reused across retries
+- the cluster can install successfully on the current codebase
+- mirrored Keycloak content deploys and runs
+- OpenShift OAuth converges on:
+  - `HTPasswd` breakglass
+  - Keycloak OIDC
+  - group-based RBAC through `openshift-admin`
+- the repo validation lane is clean:
+  - `make validate`
+  - `ansible-lint -p`
+
+### What remains to prove
+
+- a fresh cluster rebuild with support services preserved
+- then a fully destructive stack rebuild if the install guide is meant to
+  certify the whole environment from zero
+
+### Planned confidence sequence
+
+1. Tear down only the OpenShift cluster and generated OCP artifacts.
+2. Rerun `playbooks/site-lab.yml` end to end without intervention.
+3. If that succeeds, perform one full-stack destructive rebuild and rerun the
+   documented orchestration from zero.
+
 ## Closed Investigation: ODF NooBaa / CNPG initialization stall
 
 Status:

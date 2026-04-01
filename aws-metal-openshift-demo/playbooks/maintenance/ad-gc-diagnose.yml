@@ -1,0 +1,112 @@
+---
+- name: Register IDM and AD guests for GC diagnostics
+  hosts: aws_metal
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/pki.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/ad_integration.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+    - ../../vars/guests/idm_vm.yml
+
+  tasks:
+    - name: Register the IDM guest as a temporary Ansible host
+      ansible.builtin.add_host:
+        name: "{{ idm_vm.name }}.{{ idm_vm.domain }}"
+        groups:
+          - idm_gc_diag
+        ansible_host: "{{ idm_vm.network.ipv4_address }}"
+        ansible_user: "{{ idm_vm.access.admin_user }}"
+        ansible_ssh_private_key_file: >-
+          {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+        ansible_become: true
+        ansible_ssh_common_args: >-
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+
+    - name: Register the AD guest as a temporary WinRM host
+      ansible.builtin.add_host:
+        name: ad_gc_diag
+        groups:
+          - ad_gc_diag
+        ansible_host: "{{ ad_vm.network.ipv4_address }}"
+        ansible_user: "{{ ad_vm.access.admin_user }}"
+        ansible_password: "{{ ad_vm.access.admin_password }}"
+        ansible_connection: ansible.builtin.winrm
+        ansible_port: 5985
+        ansible_winrm_transport: basic
+        ansible_winrm_server_cert_validation: ignore
+
+- name: Check AD global catalog state from Windows
+  hosts: ad_gc_diag
+  gather_facts: false
+
+  pre_tasks:
+    - name: Wait for authenticated WinRM connectivity to the AD guest
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+        sleep: 10
+
+  tasks:
+    - name: Check AD GC and port listeners on Windows
+      ansible.windows.win_powershell:
+        script: |
+          $dc = Get-ADDomainController -Identity $env:COMPUTERNAME
+          Write-Output "IsGlobalCatalog=$($dc.IsGlobalCatalog)"
+          foreach ($port in 3268,3269,389,636) {
+            $listener = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+            if ($listener) {
+              Write-Output "ListenPort=$port"
+            } else {
+              Write-Output "MissingPort=$port"
+            }
+          }
+          Get-NetFirewallRule -Enabled True -Direction Inbound -Action Allow |
+            Get-NetFirewallPortFilter |
+            Where-Object { $_.LocalPort -in 3268,3269,389,636 } |
+            ForEach-Object { Write-Output \"FirewallPort=$($_.LocalPort)\" }
+      register: ad_gc_state
+      changed_when: false
+
+    - name: Show AD GC state
+      ansible.builtin.debug:
+        msg: "{{ ad_gc_state.output }}"
+
+- name: Check GC reachability from the IDM guest
+  hosts: idm_gc_diag
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/pki.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/ad_integration.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+    - ../../vars/guests/idm_vm.yml
+
+  pre_tasks:
+    - name: Wait for the IDM guest to accept SSH connections
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+        sleep: 5
+
+  tasks:
+    - name: Check TCP reachability from IDM to AD LDAP and GC ports
+      ansible.builtin.shell: |
+        set -o pipefail
+        for port in 389 636 3268 3269; do
+          if timeout 5 bash -lc "</dev/tcp/{{ ad_vm.network.ipv4_address }}/${port}" 2>/dev/null; then
+            echo "ReachablePort=${port}"
+          else
+            echo "BlockedPort=${port}"
+          fi
+        done
+      args:
+        executable: /bin/bash
+      register: idm_gc_reachability
+      changed_when: false
+
+    - name: Show IDM to AD reachability
+      ansible.builtin.debug:
+        msg: "{{ idm_gc_reachability.stdout_lines }}"

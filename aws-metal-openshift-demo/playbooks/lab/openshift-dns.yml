@@ -5,6 +5,7 @@
   gather_facts: true
   vars_files:
     - ../../vars/global/execution_environment.yml
+    - ../../vars/global/pki.yml
     - ../../vars/guests/idm_vm.yml
     - ../../vars/global/lab_switch_ports.yml
     - ../../vars/cluster/openshift_install_cluster.yml
@@ -34,6 +35,7 @@
   gather_facts: false
   vars_files:
     - ../../vars/global/execution_environment.yml
+    - ../../vars/global/pki.yml
     - ../../vars/guests/idm_vm.yml
     - ../../vars/global/lab_switch_ports.yml
     - ../../vars/cluster/openshift_install_cluster.yml

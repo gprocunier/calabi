@@ -1,0 +1,11 @@
+---
+- name: Configure OpenShift breakglass HTPasswd authentication
+  hosts: aws_metal
+  gather_facts: true
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/mirror_content.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/day2/openshift_breakglass_auth.yml
+  roles:
+    - role: openshift_post_install_breakglass_auth

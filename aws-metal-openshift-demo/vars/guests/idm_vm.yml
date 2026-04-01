@@ -33,7 +33,7 @@ idm_vm:
       - 8.8.8.8
   access:
     admin_user: cloud-user
-    admin_password: "{{ lab_default_password }}"
+    admin_password: "{{ lab_default_password | default('') }}"
     ssh_private_key_file: >-
       {{ lab_execution_ssh_private_key_file |
       default(lookup('env', 'HOME') + '/.ssh/id_ed25519') }}
@@ -55,8 +55,8 @@ idm_vm:
 
 idm_server:
   realm: WORKSHOP.LAN
-  ds_password: "{{ lab_default_password }}"
-  admin_password: "{{ lab_default_password }}"
+  ds_password: "{{ lab_default_password | default('') }}"
+  admin_password: "{{ lab_default_password | default('') }}"
   pki:
     mode: "{{ lab_pki_mode }}"
     external_ca_type: ms-cs
@@ -160,7 +160,7 @@ idm_server:
       first_name: Sysop
       last_name: User
       shell: /bin/bash
-      password: "{{ lab_default_password }}"
+      password: "{{ lab_default_password | default('') }}"
       groups:
         - admins
         - openshift-admin
@@ -168,14 +168,14 @@ idm_server:
       first_name: Virt
       last_name: Admin
       shell: /bin/bash
-      password: "{{ lab_default_password }}"
+      password: "{{ lab_default_password | default('') }}"
       groups:
         - virt-admin
     - name: dev
       first_name: Dev
       last_name: User
       shell: /bin/bash
-      password: "{{ lab_default_password }}"
+      password: "{{ lab_default_password | default('') }}"
       groups:
         - developer
   sudo_policy:

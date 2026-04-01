@@ -48,8 +48,11 @@
     state: latest
     update_cache: true
   register: bastion_guest_package_update
+  # noqa: package-latest
 
 - name: Power-cycle the bastion domain after guest updates so persistent XML changes take effect
+  when: bastion_guest_package_update.changed
+  # noqa: no-handler
   block:
     - name: Request a bastion guest poweroff after updates
       ansible.builtin.shell: |
@@ -122,13 +125,13 @@
           - "{{ bastion_guest_vm_fqdn }}"
       changed_when: true
       delegate_to: "{{ bastion_guest_hypervisor_host }}"
-  when: bastion_guest_package_update.changed
 
 - name: Wait for the bastion guest after the optional domain restart
   ansible.builtin.wait_for_connection:
     timeout: 1800
     sleep: 10
   when: bastion_guest_package_update.changed
+  # noqa: no-handler
 
 - name: Refresh facts after the optional bastion power-cycle
   ansible.builtin.setup:
@@ -193,6 +196,7 @@
     - "{{ bastion_client.tools_root }}"
 
 - name: Enroll the bastion guest into IdM when requested
+  when: bastion_guest_join_idm_enabled | bool
   block:
     - name: Check whether the bastion guest is already enrolled in IdM
       ansible.builtin.stat:
@@ -247,21 +251,6 @@
             or bastion_guest_ipa_host_show.rc != 0
           }}
 
-    - name: Prepare FreeIPA client role variables for bastion enrollment
-      ansible.builtin.set_fact:
-        ipaclient_install_packages: false
-        ipaclient_force_join: true
-        ipaclient_domain: "{{ idm_vm.domain }}"
-        ipaclient_realm: "{{ idm_server.realm }}"
-        ipaclient_servers:
-          - "{{ idm_vm.name }}.{{ idm_vm.domain }}"
-        ipaclient_hostname: "{{ bastion_vm.name }}.{{ bastion_vm.domain }}"
-        ipaclient_no_dns_lookup: true
-        ipasssd_enable_dns_updates: true
-        ipaadmin_principal: "{{ bastion_client.admin_principal }}"
-        ipaadmin_password: "{{ idm_server.admin_password }}"
-      when: bastion_guest_ipa_rejoin_required
-
     - name: Uninstall the stale bastion IPA client before rejoining
       ansible.builtin.command:
         argv:
@@ -278,6 +267,17 @@
         name: freeipa.ansible_freeipa.ipaclient
       vars:
         state: present
+        ipaclient_install_packages: false
+        ipaclient_force_join: true
+        ipaclient_domain: "{{ idm_vm.domain }}"
+        ipaclient_realm: "{{ idm_server.realm }}"
+        ipaclient_servers:
+          - "{{ idm_vm.name }}.{{ idm_vm.domain }}"
+        ipaclient_hostname: "{{ bastion_vm.name }}.{{ bastion_vm.domain }}"
+        ipaclient_no_dns_lookup: true
+        ipasssd_enable_dns_updates: true
+        ipaadmin_principal: "{{ bastion_client.admin_principal }}"
+        ipaadmin_password: "{{ idm_server.admin_password }}"
       no_log: true
       when: bastion_guest_ipa_rejoin_required
 
@@ -285,6 +285,7 @@
       ansible.builtin.wait_for_connection:
         timeout: 300
       when: bastion_guest_ipa_rejoin_required
+      # noqa: no-handler
 
     - name: Reacquire an IPA admin ticket after the optional bastion rejoin
       ansible.builtin.command:
@@ -307,7 +308,6 @@
       retries: 20
       delay: 15
       when: bastion_guest_ipa_rejoin_required
-  when: bastion_guest_join_idm_enabled | bool
 
 - name: Check the current authselect profile on the bastion guest
   ansible.builtin.command:

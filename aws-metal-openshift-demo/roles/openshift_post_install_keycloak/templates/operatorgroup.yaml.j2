@@ -1,0 +1,8 @@
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: {{ openshift_keycloak.operatorgroup_name }}
+  namespace: {{ openshift_keycloak.namespace }}
+spec:
+  targetNamespaces:
+    - {{ openshift_keycloak.namespace }}

@@ -8,13 +8,13 @@ openshift_aap:
   source_namespace: openshift-marketplace
   instance_name: workshop-aap
   admin_username: admin
-  admin_password: "{{ lab_default_password }}"
+  admin_password: "{{ lab_default_password | default('') }}"
   admin_password_secret_name: workshop-aap-admin-password
   idm_ca_secret_name: workshop-aap-idm-ca
   route_host: aap.apps.ocp.workshop.lan
   bundle_cacert_secret: workshop-aap-idm-ca
   validation_username: sysop
-  validation_password: "{{ lab_default_password }}"
+  validation_password: "{{ lab_default_password | default('') }}"
   database:
     postgres_storage_class: ocs-storagecluster-ceph-rbd
     storage: 20Gi

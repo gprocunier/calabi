@@ -69,6 +69,12 @@
         if mirror_registry_execute_mirror_requested is defined
         else mirror_registry_content.execute_mirror | bool
       }}
+    mirror_registry_guest_execute_mirror_force: >-
+      {{
+        mirror_registry_execute_mirror_force_requested | bool
+        if mirror_registry_execute_mirror_force_requested is defined
+        else false
+      }}
     mirror_registry_guest_reset_storage: >-
       {{
         mirror_registry_reset_storage_requested | bool
@@ -155,7 +161,8 @@
     update_only: true
   register: mirror_registry_guest_package_update
 
-- name: Power-cycle the mirror registry domain after guest updates so persistent XML changes take effect
+- name: Power-cycle the mirror registry domain after guest updates so persistent XML changes take effect # noqa no-handler
+  when: mirror_registry_guest_package_update.changed
   block:
     - name: Request a mirror registry guest poweroff after updates
       ansible.builtin.shell: |
@@ -234,9 +241,7 @@
           - "{{ mirror_registry_guest_vm_fqdn }}"
       changed_when: true
       delegate_to: "{{ mirror_registry_guest_hypervisor_host }}"
-  when: mirror_registry_guest_package_update.changed
-
-- name: Wait for the mirror registry guest after the optional domain restart
+- name: Wait for the mirror registry guest after the optional domain restart # noqa no-handler
   ansible.builtin.wait_for_connection:
     timeout: 1800
     sleep: 10
@@ -471,6 +476,7 @@
     - "{{ mirror_registry_content.workspace.results_dir }}"
     - "{{ mirror_registry_content.archive.root }}"
     - "{{ mirror_registry_guest_install_cert_dir }}"
+    - "{{ mirror_registry_service.mirror_state_dir }}"
 
 - name: Ensure certmonger is enabled when using IdM-issued registry certificates
   ansible.builtin.systemd_service:
@@ -1405,6 +1411,58 @@
       /var/log/oc-mirror-{{ mirror_registry_guest_effective_workflow }}.log
   when: mirror_registry_content.enabled | bool
 
+- name: Stat the rendered ImageSetConfiguration for mirror cache reuse
+  ansible.builtin.stat:
+    path: "{{ mirror_registry_content.workspace.config_file }}"
+    checksum_algorithm: sha1
+  register: mirror_registry_guest_imageset_config_stat
+  when: mirror_registry_content.enabled | bool
+
+- name: Derive the mirror execution completion marker path
+  ansible.builtin.set_fact:
+    mirror_registry_guest_mirror_completion_marker: >-
+      {{
+        mirror_registry_service.mirror_state_dir
+        ~ '/'
+        ~ mirror_registry_guest_effective_workflow
+        ~ '-'
+        ~ mirror_registry_guest_imageset_config_stat.stat.checksum
+        ~ '.done'
+      }}
+  when: mirror_registry_content.enabled | bool
+
+- name: Check whether the requested mirror workflow already completed successfully
+  ansible.builtin.stat:
+    path: "{{ mirror_registry_guest_mirror_completion_marker }}"
+  register: mirror_registry_guest_mirror_completion_marker_stat
+  when:
+    - mirror_registry_content.enabled | bool
+    - mirror_registry_guest_execute_mirror | bool
+    - not mirror_registry_guest_execute_mirror_force | bool
+
+- name: Skip the expensive mirror execution when a matching success marker already exists
+  ansible.builtin.set_fact:
+    mirror_registry_guest_execute_mirror: false
+  when:
+    - mirror_registry_content.enabled | bool
+    - mirror_registry_guest_execute_mirror | bool
+    - not mirror_registry_guest_execute_mirror_force | bool
+    - mirror_registry_guest_mirror_completion_marker_stat.stat.exists | default(false)
+
+- name: Record whether the mirror workflow will be executed during this run
+  ansible.builtin.debug:
+    msg:
+      workflow: "{{ mirror_registry_guest_effective_workflow }}"
+      execute_mirror: "{{ mirror_registry_guest_execute_mirror }}"
+      force_mirror: "{{ mirror_registry_guest_execute_mirror_force }}"
+      completion_marker: "{{ mirror_registry_guest_mirror_completion_marker }}"
+      marker_exists: >-
+        {{
+          mirror_registry_guest_mirror_completion_marker_stat.stat.exists
+          | default(false)
+        }}
+  when: mirror_registry_content.enabled | bool
+
 - name: Validate the ImageSetConfiguration with oc-mirror dry run
   ansible.builtin.shell: |
     set -o pipefail
@@ -1491,3 +1549,12 @@
     - mirror_registry_content.mirror_mode == 'portable'
   register: mirror_registry_guest_oc_mirror_d2m_run
   changed_when: true
+
+- name: Mark the mirror workflow as completed successfully
+  ansible.builtin.file:
+    path: "{{ mirror_registry_guest_mirror_completion_marker }}"
+    state: touch
+    mode: "0644"
+  when:
+    - mirror_registry_content.enabled | bool
+    - mirror_registry_guest_execute_mirror | bool

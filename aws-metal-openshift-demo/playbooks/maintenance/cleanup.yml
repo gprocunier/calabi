@@ -99,7 +99,12 @@
           cleanup_destroy_lab_networking | default(false) | bool
         )
       }}
-    openshift_cluster_cleanup_wipe_block_devices: false
+    openshift_cluster_cleanup_wipe_block_devices: >-
+      {{
+        cleanup_wipe_openshift_cluster_block_devices
+        | default(true)
+        | bool
+      }}
 
   roles:
     - role: openshift_cluster_cleanup
@@ -125,6 +130,25 @@
           cleanup_destroy_lab_networking | default(false) | bool
         )
       }}
+    cleanup_bastion_local_ssh_key: >-
+      {{
+        (bastion_client.secrets_root ~ '/id_ed25519')
+        if lookup('env', 'USER') == bastion_vm.access.admin_user
+        else bastion_client.controller_ssh_private_key_file
+      }}
+    cleanup_bastion_proxy_command: >-
+      {{
+        ''
+        if lookup('env', 'USER') == bastion_vm.access.admin_user
+        else
+        '-o ProxyCommand="ssh -i '
+        ~ hostvars[inventory_hostname].ansible_ssh_private_key_file
+        ~ ' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null '
+        ~ hostvars[inventory_hostname].ansible_user
+        ~ '@'
+        ~ hostvars[inventory_hostname].ansible_host
+        ~ ' -W %h:%p"'
+      }}
   tasks:
     - name: Check whether the bastion libvirt domain exists
       ansible.builtin.command:
@@ -144,12 +168,12 @@
       ansible.builtin.shell: |
         set -euo pipefail
         ssh \
-          -i {{ bastion_client.controller_ssh_private_key_file | quote }} \
+          -i {{ cleanup_bastion_local_ssh_key | quote }} \
           -o BatchMode=yes \
           -o IdentitiesOnly=yes \
           -o StrictHostKeyChecking=no \
           -o UserKnownHostsFile=/dev/null \
-          -o ProxyCommand="ssh -i {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{ hostvars[inventory_hostname].ansible_user }}@{{ hostvars[inventory_hostname].ansible_host }} -W %h:%p" \
+          {{ cleanup_bastion_proxy_command }} \
           {{ bastion_vm.access.admin_user }}@{{ bastion_vm.network.ipv4_address }} \
           "sudo bash -lc 'if [ -d /var/tmp/bastion-playbooks ]; then find /var/tmp/bastion-playbooks -maxdepth 1 -type f \\( -name \"*.pid\" -o -name \"*.rc\" -o -name \"*.log\" -o -name \"*.runner.sh\" \\) -delete; fi'"
       args:
@@ -167,12 +191,12 @@
       ansible.builtin.shell: |
         set -euo pipefail
         ssh \
-          -i {{ bastion_client.controller_ssh_private_key_file | quote }} \
+          -i {{ cleanup_bastion_local_ssh_key | quote }} \
           -o BatchMode=yes \
           -o IdentitiesOnly=yes \
           -o StrictHostKeyChecking=no \
           -o UserKnownHostsFile=/dev/null \
-          -o ProxyCommand="ssh -i {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{ hostvars[inventory_hostname].ansible_user }}@{{ hostvars[inventory_hostname].ansible_host }} -W %h:%p" \
+          {{ cleanup_bastion_proxy_command }} \
           {{ bastion_vm.access.admin_user }}@{{ bastion_vm.network.ipv4_address }} \
           "sudo rm -rf {{ bastion_client.cluster_artifact_root | quote }}"
       args:
@@ -186,12 +210,12 @@
       ansible.builtin.shell: |
         set -euo pipefail
         ssh \
-          -i {{ bastion_client.controller_ssh_private_key_file | quote }} \
+          -i {{ cleanup_bastion_local_ssh_key | quote }} \
           -o BatchMode=yes \
           -o IdentitiesOnly=yes \
           -o StrictHostKeyChecking=no \
           -o UserKnownHostsFile=/dev/null \
-          -o ProxyCommand="ssh -i {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{ hostvars[inventory_hostname].ansible_user }}@{{ hostvars[inventory_hostname].ansible_host }} -W %h:%p" \
+          {{ cleanup_bastion_proxy_command }} \
           {{ bastion_vm.access.admin_user }}@{{ bastion_vm.network.ipv4_address }} \
           "sudo install -d -o {{ bastion_vm.access.admin_user }} -g {{ bastion_vm.access.admin_user }} -m 0755 {{ bastion_client.cluster_artifact_root | quote }} {{ (bastion_client.cluster_artifact_root ~ '/auth') | quote }}"
       args:

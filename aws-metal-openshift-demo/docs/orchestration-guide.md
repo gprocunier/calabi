@@ -97,9 +97,11 @@ Execution model:
     `/var/tmp/bastion-playbooks/`
 - support VMs (`ad-01`, `idm-01`, `bastion-01`, and `mirror-registry`) default to
   preserving existing disks and libvirt domains on rerun
-- after a successful mirror phase, the preferred resume point for a fresh
-  cluster rebuild is:
-  - `./scripts/run_remote_bastion_playbook.sh playbooks/site-lab.yml --skip-tags mirror-registry`
+- the mirror-registry phase now caches successful mirror completion for the
+  rendered content set and skips the expensive `oc-mirror` work on rerun unless
+  forced
+- the cluster VMs now default to reuse on rerun; destructive cluster rebuilds
+  are an explicit cleanup action rather than the normal replay path
 - bastion staging ensures the staged `generated/` workspace is writable by
   `cloud-user` so repeated installer renders do not fail on ownership drift
 - the guest-build playbooks later in this phase consume the same
@@ -286,9 +288,12 @@ Day-2 rerun behavior:
   - disconnected OperatorHub
   - infra conversion
   - IdM ingress certs
-  - LDAP auth and group sync
+  - breakglass auth
   - NMState
   - ODF
+  - Keycloak
+  - OIDC auth
+  - optional LDAP auth and group sync
   - OpenShift Virtualization
   - Pipelines
   - Web Terminal
@@ -384,6 +389,8 @@ Important behavior:
 - default disconnected mode is portable:
   - `m2d` archive build
   - followed automatically by `d2m` import into Quay
+- writes a success marker tied to the rendered image-set checksum so reruns can
+  skip the expensive mirror step when the content has not changed
 
 ### `playbooks/lab/openshift-dns.yml`
 
@@ -471,15 +478,19 @@ Execution model:
 
 Purpose:
 
-- remove the IDM VM
-- remove the mirror-registry VM
-- tear down the OVS/libvirt lab networking
+- aggregate destructive cleanup workflows
+- support cluster-only cleanup without destroying healthy support services
+- optionally remove support guests, IdM ingress cert state, and lab networking
 
 Execution model:
 
 - one play runs `idm_cleanup`
 - one play runs `mirror_registry_cleanup`
+- one play runs `bastion_cleanup`
 - one play runs `openshift_cluster_cleanup`
+- one play removes stale bastion-side tracked state and generated cluster
+  artifacts when the cluster is being rebuilt
+- one play runs `openshift_post_install_idm_certs_cleanup`
 - one play runs `lab_cleanup`
 
 ### `playbooks/day2/openshift-post-install-idm-certs.yml`
@@ -515,7 +526,7 @@ Execution model:
   - disconnected OperatorHub pivot
   - infra node conversion
   - IdM ingress certificate integration
-  - LDAP/IdM authentication
+  - `HTPasswd` breakglass authentication
   - Kubernetes NMState deployment
   - ODF declarative deployment
     - destructive recovery is skipped on a healthy rerun unless explicitly
@@ -528,6 +539,9 @@ Execution model:
       subscription to avoid OLM `MultipleOperatorGroupsFound` blocks
     - defaults to the pod network in this nested lab
     - does not assume ODF public-network Multus/macvlan is viable by default
+  - Keycloak deployment after ODF storage is available
+  - OpenShift OIDC auth through Keycloak while preserving breakglass access
+  - optional legacy LDAP auth and group sync, disabled by default
   - OpenShift Virtualization deployment
   - OpenShift Pipelines and Windows image-build lane setup
   - Web Terminal installation
@@ -1306,8 +1320,17 @@ The project has been routinely checked with:
 - `ansible-lint`
 - `yamllint`
 - `shellcheck` where appropriate
+- `make validate` / `scripts/validate-orchestration.sh`
 
 The host prep, IdM build, mirror-registry build, and OpenShift DNS populate/cleanup workflows have all been exercised on a real AWS metal host.
+
+The current cluster/auth proof points are stronger than the original docs used
+to claim:
+
+- the default cluster auth baseline is now `HTPasswd` breakglass plus Keycloak
+  OIDC, not direct OpenShift LDAP
+- the post-install replay path has completed cleanly on the current cluster
+- repo-wide `ansible-lint -p` is clean
 
 ## Known Gaps
 
@@ -1316,4 +1339,6 @@ The host prep, IdM build, mirror-registry build, and OpenShift DNS populate/clea
 > so contributors know where the automation stops and manual decisions begin.
 
 - In-place migration of an already-running self-signed registry to IdM-issued certs is only partially automated. Clean installs that start on the IdM-cert path are not the gap.
-- The project is still run as a sequence of focused playbooks. A top-level master scaffolding orchestrator that runs phases in order and gates on validation checkpoints is still a planned improvement.
+- The final certification bar is still outstanding: one uninterrupted
+  `playbooks/site-lab.yml` run from a deliberate teardown boundary on the
+  current codebase, without live repair work during the attempt.

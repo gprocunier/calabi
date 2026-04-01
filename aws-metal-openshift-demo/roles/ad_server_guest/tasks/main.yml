@@ -17,21 +17,21 @@
       }
 
       throw "virtio driver media was not found in the guest"
-  register: ad_guest_virtio_media
+  register: ad_server_guest_virtio_media
   when: ad_server_install_profile | default('full') == 'full'
 
 - name: Remember the virtio driver media drive letter
   ansible.builtin.set_fact:
-    ad_guest_virtio_media_drive: >-
-      {{ ((ad_guest_virtio_media.output | first) | from_json).drive }}
+    ad_server_guest_virtio_media_drive: >-
+      {{ ((ad_server_guest_virtio_media.output | first) | from_json).drive }}
   when: ad_server_install_profile | default('full') == 'full'
 
 - name: Locate the virtio guest tools installer on the media
   ansible.windows.win_powershell:
     script: |
       $paths = @(
-        "{{ ad_guest_virtio_media_drive }}\virtio-win-gt-x64.msi",
-        "{{ ad_guest_virtio_media_drive }}\virtio-win-guest-tools.exe"
+        "{{ ad_server_guest_virtio_media_drive }}\virtio-win-gt-x64.msi",
+        "{{ ad_server_guest_virtio_media_drive }}\virtio-win-guest-tools.exe"
       )
       foreach ($path in $paths) {
         if (Test-Path $path) {
@@ -40,23 +40,23 @@
         }
       }
       throw "virtio guest tools installer was not found on the virtio media"
-  register: ad_guest_virtio_tools_installer
+  register: ad_server_guest_virtio_tools_installer
   when: ad_server_install_profile | default('full') == 'full'
 
 - name: Remember the virtio guest tools installer path
   ansible.builtin.set_fact:
-    ad_guest_virtio_tools_installer_path: >-
-      {{ ((ad_guest_virtio_tools_installer.output | first) | from_json).path }}
+    ad_server_guest_virtio_tools_installer_path: >-
+      {{ ((ad_server_guest_virtio_tools_installer.output | first) | from_json).path }}
   when: ad_server_install_profile | default('full') == 'full'
 
 - name: Install the virtio guest tools bundle before AD role configuration
   ansible.windows.win_package:
-    path: "{{ ad_guest_virtio_tools_installer_path }}"
+    path: "{{ ad_server_guest_virtio_tools_installer_path }}"
     state: present
     arguments:
       - /qn
       - /norestart
-  register: ad_guest_virtio_tools
+  register: ad_server_guest_virtio_tools
   ignore_unreachable: true
   when: ad_server_install_profile | default('full') == 'full'
 
@@ -74,15 +74,15 @@
     post_reboot_delay: 30
   when:
     - ad_server_install_profile | default('full') == 'full'
-    - ad_guest_virtio_tools is not unreachable
-    - ad_guest_virtio_tools.reboot_required | default(false) | bool
+    - ad_server_guest_virtio_tools is not unreachable
+    - ad_server_guest_virtio_tools.reboot_required | default(false) | bool
 
 - name: Install the remaining virtio drivers after Windows setup
   ansible.windows.win_powershell:
     script: |
       $driverPaths = @(
       {% for driver in ad_vm.virtio_driver_components | default(['NetKVM', 'Balloon', 'qemufwcfg', 'vioserial', 'viorng']) %}
-        '{{ ad_guest_virtio_media_drive }}\{{ driver }}\{{ ad_vm.driver_os_id | default("2k22") }}\amd64\*.inf'{{ ',' if not loop.last else '' }}
+        '{{ ad_server_guest_virtio_media_drive }}\{{ driver }}\{{ ad_vm.driver_os_id | default("2k22") }}\amd64\*.inf'{{ ',' if not loop.last else '' }}
       {% endfor %}
       )
       $changed = $false
@@ -97,13 +97,13 @@
         }
       }
       if ($changed) { 'CHANGED' } else { 'OK' }
-  register: ad_guest_virtio_drivers
-  changed_when: "'CHANGED' in (ad_guest_virtio_drivers.output | join(' '))"
+  register: ad_server_guest_virtio_drivers
+  changed_when: "'CHANGED' in (ad_server_guest_virtio_drivers.output | join(' '))"
   when: ad_server_install_profile | default('full') == 'full'
 
 - name: Install the QEMU guest agent package from the virtio media
   ansible.windows.win_package:
-    path: "{{ ad_guest_virtio_media_drive }}\\guest-agent\\qemu-ga-x86_64.msi"
+    path: "{{ ad_server_guest_virtio_media_drive }}\\guest-agent\\qemu-ga-x86_64.msi"
     state: present
     arguments:
       - /qn
@@ -135,13 +135,14 @@
       - DNS
     include_management_tools: true
     state: present
-  register: ad_guest_features
+  register: ad_server_guest_features
 
 - name: Reboot after installing the AD DS and DNS Windows features
   ansible.windows.win_reboot:
     reboot_timeout: 1800
     post_reboot_delay: 30
-  when: ad_guest_features.changed | default(false) | bool
+  when: ad_server_guest_features.changed | default(false) | bool
+  # noqa: no-handler
 
 - name: Detect whether the guest is already a domain controller
   ansible.windows.win_powershell:
@@ -152,14 +153,14 @@
         is_domain_controller = ([int]$system.DomainRole -ge 4)
         part_of_domain = [bool]$system.PartOfDomain
       } | ConvertTo-Json -Compress
-  register: ad_guest_domain_role
+  register: ad_server_guest_domain_role
 
 - name: Remember the current AD domain-controller state
   ansible.builtin.set_fact:
-    ad_guest_is_domain_controller: >-
-      {{ ((ad_guest_domain_role.output | first) | from_json).is_domain_controller }}
-    ad_guest_part_of_domain: >-
-      {{ ((ad_guest_domain_role.output | first) | from_json).part_of_domain }}
+    ad_server_guest_is_domain_controller: >-
+      {{ ((ad_server_guest_domain_role.output | first) | from_json).is_domain_controller }}
+    ad_server_guest_part_of_domain: >-
+      {{ ((ad_server_guest_domain_role.output | first) | from_json).part_of_domain }}
 
 - name: Remove AD CS features when a previous partial run installed them before promotion
   ansible.windows.win_feature:
@@ -169,7 +170,7 @@
       - ADCS-Web-Enrollment
     include_management_tools: true
     state: absent
-  when: not ad_guest_is_domain_controller | bool
+  when: not ad_server_guest_is_domain_controller | bool
 
 - name: Promote to domain controller and create the AD forest
   ansible.windows.win_shell: |
@@ -182,8 +183,8 @@
       Force                         = $true
     }
     Install-ADDSForest @params
-  register: ad_guest_promote
-  when: not ad_guest_is_domain_controller | bool
+  register: ad_server_guest_promote
+  when: not ad_server_guest_is_domain_controller | bool
   ignore_unreachable: true
 
 - name: Wait for the AD server to reboot after domain promotion
@@ -194,14 +195,16 @@
     sleep: 15
   delegate_to: localhost
   become: false
-  when: ad_guest_promote is changed
+  when: ad_server_guest_promote is changed
+  # noqa: no-handler
 
 - name: Wait for authenticated WinRM after domain promotion
   ansible.builtin.wait_for_connection:
     timeout: 900
     sleep: 15
     delay: 30
-  when: ad_guest_promote is changed
+  when: ad_server_guest_promote is changed
+  # noqa: no-handler
 
 - name: Wait for AD DS services to initialize after reboot
   ansible.windows.win_shell: |
@@ -218,7 +221,7 @@
     }
     Write-Error "AD DS did not become ready within $timeout seconds"
     exit 1
-  when: ad_guest_is_domain_controller | bool or ad_guest_promote is changed
+  when: ad_server_guest_is_domain_controller | bool or ad_server_guest_promote is changed
 
 - name: Configure DNS conditional forwarder for workshop.lan
   ansible.windows.win_shell: |
@@ -236,9 +239,9 @@
     } else {
       Write-Output "OK"
     }
-  register: ad_guest_dns_forwarder
-  changed_when: "'CHANGED' in ad_guest_dns_forwarder.stdout"
-  when: ad_guest_is_domain_controller | bool or ad_guest_promote is changed
+  register: ad_server_guest_dns_forwarder
+  changed_when: "'CHANGED' in ad_server_guest_dns_forwarder.stdout"
+  when: ad_server_guest_is_domain_controller | bool or ad_server_guest_promote is changed
 
 - name: Install the AD Certificate Services feature
   ansible.windows.win_feature:
@@ -248,8 +251,8 @@
       - ADCS-Web-Enrollment
     include_management_tools: true
     state: present
-  register: ad_guest_adcs_feature
-  when: ad_guest_is_domain_controller | bool or ad_guest_promote is changed
+  register: ad_server_guest_adcs_feature
+  when: ad_server_guest_is_domain_controller | bool or ad_server_guest_promote is changed
 
 - name: Configure the Enterprise Root CA
   ansible.windows.win_shell: |
@@ -268,9 +271,9 @@
         -Force
       Write-Output "CHANGED"
     }
-  register: ad_guest_adcs_config
-  changed_when: "'CHANGED' in ad_guest_adcs_config.stdout"
-  when: ad_guest_is_domain_controller | bool or ad_guest_promote is changed
+  register: ad_server_guest_adcs_config
+  changed_when: "'CHANGED' in ad_server_guest_adcs_config.stdout"
+  when: ad_server_guest_is_domain_controller | bool or ad_server_guest_promote is changed
 
 - name: Install the ADCS Web Enrollment service
   ansible.windows.win_shell: |
@@ -280,9 +283,9 @@
     } catch [Microsoft.CertificateServices.Deployment.Common.CertificateServicesBaseSetupException] {
       Write-Output "OK"
     }
-  register: ad_guest_web_enroll
-  changed_when: "'CHANGED' in ad_guest_web_enroll.stdout"
-  when: ad_guest_is_domain_controller | bool or ad_guest_promote is changed
+  register: ad_server_guest_web_enroll
+  changed_when: "'CHANGED' in ad_server_guest_web_enroll.stdout"
+  when: ad_server_guest_is_domain_controller | bool or ad_server_guest_promote is changed
 
 - name: Create AD security groups
   ansible.windows.win_shell: |
@@ -297,9 +300,9 @@
       Write-Output "OK"
     }
   loop: "{{ ad_server.identity_groups }}"
-  register: ad_guest_groups
+  register: ad_server_guest_groups
   changed_when: false
-  when: ad_guest_is_domain_controller | bool or ad_guest_promote is changed
+  when: ad_server_guest_is_domain_controller | bool or ad_server_guest_promote is changed
 
 - name: Create AD demo users
   ansible.windows.win_shell: |
@@ -322,10 +325,10 @@
       Write-Output "OK"
     }
   loop: "{{ ad_server.identity_users }}"
-  register: ad_guest_users
+  register: ad_server_guest_users
   changed_when: false
   no_log: true
-  when: ad_guest_is_domain_controller | bool or ad_guest_promote is changed
+  when: ad_server_guest_is_domain_controller | bool or ad_server_guest_promote is changed
 
 - name: Add AD demo users to their groups
   ansible.windows.win_shell: |
@@ -340,9 +343,9 @@
     {% endfor %}
     if ($changed) { Write-Output "CHANGED" } else { Write-Output "OK" }
   loop: "{{ ad_server.identity_users }}"
-  register: ad_guest_group_membership
+  register: ad_server_guest_group_membership
   changed_when: false
-  when: ad_guest_is_domain_controller | bool or ad_guest_promote is changed
+  when: ad_server_guest_is_domain_controller | bool or ad_server_guest_promote is changed
 
 - name: Ensure Windows Firewall allows required AD services
   ansible.windows.win_shell: |
@@ -363,9 +366,9 @@
       }
     }
     if ($changed) { Write-Output "CHANGED" } else { Write-Output "OK" }
-  register: ad_guest_firewall_rules
-  changed_when: "'CHANGED' in ad_guest_firewall_rules.stdout"
-  when: ad_guest_is_domain_controller | bool or ad_guest_promote is changed
+  register: ad_server_guest_firewall_rules
+  changed_when: "'CHANGED' in ad_server_guest_firewall_rules.stdout"
+  when: ad_server_guest_is_domain_controller | bool or ad_server_guest_promote is changed
 
 - name: Validate AD DS is operational
   ansible.windows.win_shell: |
@@ -375,7 +378,7 @@
     Write-Output "Forest: $($domain.Forest)"
     Write-Output "DC: $($dc.HostName)"
     Write-Output "Site: $($dc.Site)"
-  when: ad_guest_is_domain_controller | bool or ad_guest_promote is changed
+  when: ad_server_guest_is_domain_controller | bool or ad_server_guest_promote is changed
 
 - name: Validate the QEMU guest agent service is installed and starts automatically
   ansible.windows.win_shell: |
@@ -406,7 +409,7 @@
       Write-Error "CA is not responding"
       exit 1
     }
-  when: ad_guest_is_domain_controller | bool or ad_guest_promote is changed
+  when: ad_server_guest_is_domain_controller | bool or ad_server_guest_promote is changed
 
 - name: Export the ADCS root CA certificate for trust establishment
   ansible.windows.win_shell: |
@@ -417,6 +420,6 @@
     } else {
       Write-Output "OK"
     }
-  register: ad_guest_ca_export
-  changed_when: "'CHANGED' in ad_guest_ca_export.stdout"
-  when: ad_guest_is_domain_controller | bool or ad_guest_promote is changed
+  register: ad_server_guest_ca_export
+  changed_when: "'CHANGED' in ad_server_guest_ca_export.stdout"
+  when: ad_server_guest_is_domain_controller | bool or ad_server_guest_promote is changed

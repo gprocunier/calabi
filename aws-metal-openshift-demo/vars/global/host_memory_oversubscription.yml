@@ -1,5 +1,5 @@
 ---
-lab_host_memory_oversubscription:
+lab_host_memory_oversubscription_settings:
   enabled: true
   verify_state: true
   zram:
