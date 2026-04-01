@@ -80,7 +80,15 @@
       - bs=1M
       - count=16
       - conv=fsync
-  loop: "{{ openshift_cluster_cleanup_nodes | subelements('disks.additional', skip_missing=True) }}"
+  loop: >-
+    {{
+      query(
+        'subelements',
+        openshift_cluster_cleanup_nodes | default([]),
+        'disks.additional',
+        {'skip_missing': True}
+      )
+    }}
   loop_control:
     label: "{{ item.0.name }}:{{ item.1.name | default(item.1.path) }}"
   when: openshift_cluster_cleanup_wipe_block_devices | bool

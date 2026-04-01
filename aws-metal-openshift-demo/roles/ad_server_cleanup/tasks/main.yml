@@ -1,0 +1,55 @@
+---
+- name: Derive AD cleanup facts
+  ansible.builtin.set_fact:
+    ad_server_cleanup_vm_fqdn: "{{ ad_vm.name }}.{{ ad_vm.domain }}"
+    ad_server_cleanup_runtime_dir: >-
+      {{ ad_server_cleanup_runtime_root }}/{{ ad_vm.name }}
+
+- name: Check whether the AD libvirt domain exists
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - dominfo
+      - "{{ ad_server_cleanup_vm_fqdn }}"
+  register: ad_server_cleanup_domain_info
+  changed_when: false
+  failed_when: false
+
+- name: Stop the AD VM when it exists
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - destroy
+      - "{{ ad_server_cleanup_vm_fqdn }}"
+  when: ad_server_cleanup_domain_info.rc == 0
+  changed_when: true
+  failed_when: false
+
+- name: Undefine the AD VM when it exists
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - undefine
+      - "{{ ad_server_cleanup_vm_fqdn }}"
+      - --nvram
+  when: ad_server_cleanup_domain_info.rc == 0
+  changed_when: true
+  failed_when: false
+
+- name: Remove the AD runtime directory
+  ansible.builtin.file:
+    path: "{{ ad_server_cleanup_runtime_dir }}"
+    state: absent
+  when: ad_server_cleanup_remove_runtime_dir | bool
+
+- name: Clear the beginning of the AD block device when requested
+  ansible.builtin.command:
+    argv:
+      - dd
+      - if=/dev/zero
+      - of={{ ad_vm.disk_path }}
+      - bs=1M
+      - count=16
+      - conv=fsync
+  when: ad_server_cleanup_wipe_block_device | bool
+  changed_when: true

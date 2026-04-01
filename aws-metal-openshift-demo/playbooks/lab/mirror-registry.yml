@@ -9,6 +9,7 @@
     - ../../vars/global/pki.yml
     - ../../vars/global/rhsm.yml
     - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/bastion_vm.yml
     - ../../vars/guests/mirror_registry_vm.yml
     - ../../vars/global/mirror_content.yml
     - ../../vars/cluster/openshift_install_cluster.yml
@@ -54,6 +55,7 @@
     - ../../vars/global/pki.yml
     - ../../vars/global/rhsm.yml
     - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/bastion_vm.yml
     - ../../vars/guests/mirror_registry_vm.yml
     - ../../vars/global/mirror_content.yml
     - ../../vars/cluster/openshift_install_cluster.yml

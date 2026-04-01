@@ -9,6 +9,7 @@
     cleanup_scope_all: >-
       {{
         not (
+          cleanup_destroy_ad_server | default(false) | bool or
           cleanup_destroy_idm | default(false) | bool or
           cleanup_destroy_mirror_registry | default(false) | bool or
           cleanup_destroy_bastion | default(false) | bool or
@@ -26,6 +27,35 @@
       tags:
         - idm_cleanup
 
+- name: Clean up the AD virtual machine
+  hosts: aws_metal
+  become: true
+  gather_facts: "{{ cleanup_scope_all or (cleanup_destroy_ad_server | default(false) | bool) }}"
+  vars_files:
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+  vars:
+    cleanup_scope_all: >-
+      {{
+        not (
+          cleanup_destroy_ad_server | default(false) | bool or
+          cleanup_destroy_idm | default(false) | bool or
+          cleanup_destroy_mirror_registry | default(false) | bool or
+          cleanup_destroy_bastion | default(false) | bool or
+          cleanup_destroy_openshift_cluster | default(false) | bool or
+          cleanup_destroy_idm_certs | default(false) | bool or
+          cleanup_destroy_lab_networking | default(false) | bool
+        )
+      }}
+    ad_server_cleanup_remove_runtime_dir: true
+    ad_server_cleanup_wipe_block_device: false
+
+  roles:
+    - role: ad_server_cleanup
+      when: cleanup_scope_all or (cleanup_destroy_ad_server | default(false) | bool)
+      tags:
+        - ad_server_cleanup
+
 - name: Clean up the mirror registry virtual machine
   hosts: aws_metal
   become: true
@@ -36,6 +66,7 @@
     cleanup_scope_all: >-
       {{
         not (
+          cleanup_destroy_ad_server | default(false) | bool or
           cleanup_destroy_idm | default(false) | bool or
           cleanup_destroy_mirror_registry | default(false) | bool or
           cleanup_destroy_bastion | default(false) | bool or
@@ -63,6 +94,7 @@
     cleanup_scope_all: >-
       {{
         not (
+          cleanup_destroy_ad_server | default(false) | bool or
           cleanup_destroy_idm | default(false) | bool or
           cleanup_destroy_mirror_registry | default(false) | bool or
           cleanup_destroy_bastion | default(false) | bool or
@@ -91,6 +123,7 @@
     cleanup_scope_all: >-
       {{
         not (
+          cleanup_destroy_ad_server | default(false) | bool or
           cleanup_destroy_idm | default(false) | bool or
           cleanup_destroy_mirror_registry | default(false) | bool or
           cleanup_destroy_bastion | default(false) | bool or
@@ -122,6 +155,7 @@
     cleanup_scope_all: >-
       {{
         not (
+          cleanup_destroy_ad_server | default(false) | bool or
           cleanup_destroy_idm | default(false) | bool or
           cleanup_destroy_mirror_registry | default(false) | bool or
           cleanup_destroy_bastion | default(false) | bool or
@@ -185,7 +219,7 @@
       delay: 5
       until: cleanup_bastion_tracked_state_cleanup.rc == 0
       when:
-        - cleanup_bastion_domain_info.rc == 0
+        - (cleanup_bastion_domain_info.rc | default(1)) == 0
 
     - name: Remove the generated OpenShift cluster artifact root from the bastion
       ansible.builtin.shell: |
@@ -204,7 +238,7 @@
       delegate_to: localhost
       changed_when: true
       when:
-        - cleanup_bastion_domain_info.rc == 0
+        - (cleanup_bastion_domain_info.rc | default(1)) == 0
 
     - name: Recreate the clean OpenShift cluster artifact directories on the bastion
       ansible.builtin.shell: |
@@ -223,7 +257,7 @@
       delegate_to: localhost
       changed_when: true
       when:
-        - cleanup_bastion_domain_info.rc == 0
+        - (cleanup_bastion_domain_info.rc | default(1)) == 0
 
 - name: Remove OpenShift IdM certificate configuration
   hosts: aws_metal
@@ -239,6 +273,7 @@
     cleanup_scope_all: >-
       {{
         not (
+          cleanup_destroy_ad_server | default(false) | bool or
           cleanup_destroy_idm | default(false) | bool or
           cleanup_destroy_mirror_registry | default(false) | bool or
           cleanup_destroy_bastion | default(false) | bool or
@@ -250,7 +285,9 @@
 
   roles:
     - role: openshift_post_install_idm_certs_cleanup
-      when: cleanup_scope_all or (cleanup_destroy_idm_certs | default(false) | bool)
+      when:
+        - cleanup_scope_all or (cleanup_destroy_idm_certs | default(false) | bool)
+        - not (cleanup_destroy_bastion | default(false) | bool)
       tags:
         - openshift_post_install_idm_certs_cleanup
 
@@ -264,6 +301,7 @@
     cleanup_scope_all: >-
       {{
         not (
+          cleanup_destroy_ad_server | default(false) | bool or
           cleanup_destroy_idm | default(false) | bool or
           cleanup_destroy_mirror_registry | default(false) | bool or
           cleanup_destroy_bastion | default(false) | bool or

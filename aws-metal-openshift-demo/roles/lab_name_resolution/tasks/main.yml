@@ -80,7 +80,7 @@
   ansible.builtin.command:
     argv:
       - getent
-      - hosts
+      - ahostsv4
       - "{{ item.name }}"
   loop: "{{ lab_name_resolution_validation_targets }}"
   loop_control:
