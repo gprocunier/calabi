@@ -228,6 +228,77 @@
       {{ openshift_disconnected_operatorhub_remote_catalog_pull_secret_path }}
     mode: "0600"
 
+- name: Derive the mirror registry host used for DNS validation
+  ansible.builtin.set_fact:
+    openshift_disconnected_operatorhub_registry_dns_host: >-
+      {{ openshift_disconnected_operatorhub_registry_host.split(':')[0] }}
+
+- name: Derive the current cluster nodes for mirror-registry DNS validation
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_disconnected_operatorhub_remote_oc_path }}"
+      - get
+      - nodes
+      - -o
+      - name
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_disconnected_operatorhub_remote_kubeconfig_path }}
+  register: openshift_disconnected_operatorhub_cluster_nodes
+  changed_when: false
+
+- name: Normalize the cluster node list for DNS validation
+  ansible.builtin.set_fact:
+    openshift_disconnected_operatorhub_dns_validation_nodes: >-
+      {{
+        openshift_disconnected_operatorhub_cluster_nodes.stdout_lines
+        | map('regex_replace', '^node/', '')
+        | reject('equalto', '')
+        | list
+      }}
+
+- name: Assert every cluster node can resolve the mirror-registry hostname
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_disconnected_operatorhub_remote_oc_path }}"
+      - debug
+      - "node/{{ item }}"
+      - --quiet
+      - --
+      - chroot
+      - /host
+      - getent
+      - ahostsv4
+      - "{{ openshift_disconnected_operatorhub_registry_dns_host }}"
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_disconnected_operatorhub_remote_kubeconfig_path }}
+  loop: "{{ openshift_disconnected_operatorhub_dns_validation_nodes }}"
+  loop_control:
+    label: "{{ item }}"
+  register: openshift_disconnected_operatorhub_dns_validation
+  changed_when: false
+
+- name: Assert cluster nodes resolve the mirror-registry hostname to the expected IP
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          item.stdout_lines
+          | map('trim')
+          | reject('equalto', '')
+          | list
+        ) | select('match', '^' ~ mirror_registry_vm.network.ipv4_address ~ '\\b')
+        | list
+        | length > 0
+    fail_msg: >-
+      Cluster node {{ item.item }} could not resolve
+      {{ openshift_disconnected_operatorhub_registry_dns_host }}
+      to {{ mirror_registry_vm.network.ipv4_address }}.
+  loop: "{{ openshift_disconnected_operatorhub_dns_validation.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
 - name: Update the cluster global pull secret with mirror-registry auth
   ansible.builtin.command:
     argv:

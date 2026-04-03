@@ -463,6 +463,52 @@
   loop_control:
     label: "{{ item.label | default(item.name) }}"
 
+- name: Build authoritative DNS validation targets for static infrastructure A records
+  ansible.builtin.set_fact:
+    idm_guest_static_dns_authoritative_targets: >-
+      {%- set targets = [] -%}
+      {%- for record in idm_server.static_dns_records | default([]) -%}
+      {%- if record.record_type == 'A' -%}
+      {%- set _ = targets.append({
+            'fqdn': record.name ~ '.' ~ record.zone_name ~ '.',
+            'expected_ipv4': record.record_value,
+            'label': record.label | default(record.name ~ '.' ~ record.zone_name)
+          }) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ targets }}
+
+- name: Query authoritative IdM DNS for static infrastructure A records
+  ansible.builtin.command:
+    argv:
+      - dig
+      - +short
+      - "@{{ idm_vm.network.ipv4_address }}"
+      - "{{ item.fqdn }}"
+      - A
+  loop: "{{ idm_guest_static_dns_authoritative_targets }}"
+  loop_control:
+    label: "{{ item.label }}"
+  register: idm_guest_static_dns_authoritative_responses
+  changed_when: false
+
+- name: Assert authoritative IdM DNS matches static infrastructure A records
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          item.stdout_lines
+          | map('trim')
+          | reject('equalto', '')
+          | list
+        ) == [item.item.expected_ipv4]
+    fail_msg: >-
+      Authoritative IdM DNS did not resolve {{ item.item.fqdn }}
+      to {{ item.item.expected_ipv4 }}.
+  loop: "{{ idm_guest_static_dns_authoritative_responses.results }}"
+  loop_control:
+    label: "{{ item.item.label }}"
+
 - name: Ensure the requested IPA groups exist
   freeipa.ansible_freeipa.ipagroup:
     ipaadmin_password: "{{ idm_server.admin_password }}"

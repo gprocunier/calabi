@@ -433,14 +433,11 @@
       ad_vm.provisioning.rebuild_disk | bool
     )
 
-- name: Repeatedly confirm boot from the Windows DVD prompt
+- name: Confirm boot from the Windows DVD prompt once
   ansible.builtin.shell: |
     set -euo pipefail
     sleep 2
-    for attempt in $(seq 1 {{ ad_vm.boot.install_media_boot_keypress_attempts | default(12) }}); do
-      virsh qemu-monitor-command "{{ ad_server_role_vm_fqdn }}" --hmp "sendkey ret" || true
-      sleep {{ ad_vm.boot.install_media_boot_keypress_interval_seconds | default(1) }}
-    done
+    virsh qemu-monitor-command "{{ ad_server_role_vm_fqdn }}" --hmp "sendkey ret" || true
   args:
     executable: /bin/bash
   changed_when: true

@@ -6,6 +6,9 @@ the part of the project you actually need.
 <a href="./prerequisites.md"><kbd>&nbsp;&nbsp;PREREQUISITES&nbsp;&nbsp;</kbd></a>
 <a href="./redhat-developer-subscription.md"><kbd>&nbsp;&nbsp;DEVELOPER SUBSCRIPTION&nbsp;&nbsp;</kbd></a>
 <a href="./automation-flow.md"><kbd>&nbsp;&nbsp;BUILD / REBUILD&nbsp;&nbsp;</kbd></a>
+<a href="./orchestration-plumbing.md"><kbd>&nbsp;&nbsp;ORCHESTRATION PLUMBING&nbsp;&nbsp;</kbd></a>
+<a href="./authentication-model.md"><kbd>&nbsp;&nbsp;AUTH MODEL&nbsp;&nbsp;</kbd></a>
+<a href="./ad-idm-policy-model.md"><kbd>&nbsp;&nbsp;AD / IDM POLICY MODEL&nbsp;&nbsp;</kbd></a>
 <a href="./manual-process.md"><kbd>&nbsp;&nbsp;MANUAL FLOW&nbsp;&nbsp;</kbd></a>
 <a href="./iaas-resource-model.md"><kbd>&nbsp;&nbsp;IAAS MODEL&nbsp;&nbsp;</kbd></a>
 <a href="./host-resource-management.md"><kbd>&nbsp;&nbsp;RESOURCE DESIGN&nbsp;&nbsp;</kbd></a>
@@ -30,6 +33,9 @@ The root `README.md` explains what the project is. This page answers:
 <a href="./prerequisites.md"><kbd>&nbsp;&nbsp;PREREQUISITES&nbsp;&nbsp;</kbd></a>
 <a href="./redhat-developer-subscription.md"><kbd>&nbsp;&nbsp;DEVELOPER SUBSCRIPTION&nbsp;&nbsp;</kbd></a>
 <a href="./automation-flow.md"><kbd>&nbsp;&nbsp;AUTOMATION FLOW&nbsp;&nbsp;</kbd></a>
+<a href="./orchestration-plumbing.md"><kbd>&nbsp;&nbsp;ORCHESTRATION PLUMBING&nbsp;&nbsp;</kbd></a>
+<a href="./authentication-model.md"><kbd>&nbsp;&nbsp;AUTH MODEL&nbsp;&nbsp;</kbd></a>
+<a href="./ad-idm-policy-model.md"><kbd>&nbsp;&nbsp;AD / IDM POLICY MODEL&nbsp;&nbsp;</kbd></a>
 <a href="./manual-process.md"><kbd>&nbsp;&nbsp;MANUAL PROCESS&nbsp;&nbsp;</kbd></a>
 <a href="./iaas-resource-model.md"><kbd>&nbsp;&nbsp;AWS IAAS MODEL&nbsp;&nbsp;</kbd></a>
 
@@ -38,6 +44,9 @@ Pick these when you need:
 - the input checklist before the first build
 - Red Hat Developer Subscription setup for content access
 - the operator run order
+- the internal execution and runner-state model
+- the current supported authentication and authorization architecture
+- the future AD-to-IdM authorization model
 - the manual analog of the automation
 - the outer AWS substrate model
 
@@ -104,15 +113,21 @@ Pick these when you need:
 1. <a href="../README.md"><kbd>TOP README</kbd></a>
 2. <a href="./prerequisites.md"><kbd>PREREQUISITES</kbd></a>
 3. <a href="./automation-flow.md"><kbd>AUTOMATION FLOW</kbd></a>
-4. <a href="./host-resource-management.md"><kbd>RESOURCE MANAGEMENT</kbd></a>
-5. <a href="./network-topology.md"><kbd>NETWORK TOPOLOGY</kbd></a>
-6. <a href="./orchestration-guide.md"><kbd>ORCHESTRATION GUIDE</kbd></a>
-7. <a href="./manual-process.md"><kbd>MANUAL PROCESS</kbd></a>
+4. <a href="./orchestration-plumbing.md"><kbd>ORCHESTRATION PLUMBING</kbd></a>
+5. <a href="./authentication-model.md"><kbd>AUTH MODEL</kbd></a>
+6. <a href="./ad-idm-policy-model.md"><kbd>AD / IDM POLICY MODEL</kbd></a>
+7. <a href="./host-resource-management.md"><kbd>RESOURCE MANAGEMENT</kbd></a>
+8. <a href="./network-topology.md"><kbd>NETWORK TOPOLOGY</kbd></a>
+9. <a href="./orchestration-guide.md"><kbd>ORCHESTRATION GUIDE</kbd></a>
+10. <a href="./manual-process.md"><kbd>MANUAL PROCESS</kbd></a>
 
 ## Recommended Reading Order For Operators
 
 1. <a href="../README.md"><kbd>TOP README</kbd></a>
 2. <a href="./prerequisites.md"><kbd>PREREQUISITES</kbd></a>
 3. <a href="./automation-flow.md"><kbd>AUTOMATION FLOW</kbd></a>
-4. <a href="./manual-process.md"><kbd>MANUAL PROCESS</kbd></a>
-5. <a href="./investigating.md"><kbd>INVESTIGATING</kbd></a> when things drift from the happy path
+4. <a href="./orchestration-plumbing.md"><kbd>ORCHESTRATION PLUMBING</kbd></a>
+5. <a href="./authentication-model.md"><kbd>AUTH MODEL</kbd></a>
+6. <a href="./manual-process.md"><kbd>MANUAL PROCESS</kbd></a>
+7. <a href="./ad-idm-policy-model.md"><kbd>AD / IDM POLICY MODEL</kbd></a> for the planned future authorization model
+8. <a href="./investigating.md"><kbd>INVESTIGATING</kbd></a> when things drift from the happy path

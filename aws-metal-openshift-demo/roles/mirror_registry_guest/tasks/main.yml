@@ -47,6 +47,17 @@
       /var/lib/mirror-registry/install-certs/ssl.cert
     mirror_registry_guest_install_key_path: >-
       /var/lib/mirror-registry/install-certs/ssl.key
+    mirror_registry_guest_ipv4_address: >-
+      {{ mirror_registry_vm.network.ipv4_address | regex_replace('/.*$', '') }}
+    mirror_registry_guest_reverse_zone: >-
+      {{
+        (mirror_registry_vm.network.ipv4_address | regex_replace('/.*$', '')).split('.')[2]
+        ~ '.'
+        ~ (mirror_registry_vm.network.ipv4_address | regex_replace('/.*$', '')).split('.')[1]
+        ~ '.'
+        ~ (mirror_registry_vm.network.ipv4_address | regex_replace('/.*$', '')).split('.')[0]
+        ~ '.in-addr.arpa'
+      }}
 
 - name: Derive the effective mirror workflow from the requested mirror mode
   ansible.builtin.set_fact:
@@ -402,7 +413,6 @@
       - --password={{ mirror_registry_guest_ipa_admin_password }}
       - --force-join
       - --mkhomedir
-      - --enable-dns-updates
   when: mirror_registry_guest_ipa_rejoin_required
   changed_when: true
 
@@ -432,6 +442,90 @@
   until: mirror_registry_guest_ipa_host_show_after_join.rc == 0
   retries: 20
   delay: 15
+
+- name: Reassert the mirror registry A record in authoritative IdM DNS
+  ansible.builtin.shell: |
+    set -euo pipefail
+    add_output="$(
+      ipa dnsrecord-add "{{ mirror_registry_vm.domain }}" "{{ mirror_registry_vm.name }}" \
+        --a-rec="{{ mirror_registry_guest_ipv4_address }}" 2>&1
+    )" || add_rc=$?
+    add_rc="${add_rc:-0}"
+    if [ "${add_rc}" -eq 0 ]; then
+      printf '%s\n' "${add_output}"
+      exit 0
+    fi
+
+    mod_output="$(
+      ipa dnsrecord-mod "{{ mirror_registry_vm.domain }}" "{{ mirror_registry_vm.name }}" \
+        --a-rec="{{ mirror_registry_guest_ipv4_address }}" 2>&1
+    )" || mod_rc=$?
+    mod_rc="${mod_rc:-0}"
+    if [ "${mod_rc}" -eq 0 ] || grep -q 'no modifications to be performed' <<<"${mod_output}"; then
+      printf '%s\n' "${mod_output}"
+      exit 0
+    fi
+
+    printf '%s\n' "${add_output}" >&2
+    printf '%s\n' "${mod_output}" >&2
+    exit 1
+  args:
+    executable: /bin/bash
+  register: mirror_registry_guest_dns_a_record
+  changed_when: >-
+    'Added DNS resource record' in (mirror_registry_guest_dns_a_record.stdout | default(''))
+    or 'Modified DNS resource record' in (mirror_registry_guest_dns_a_record.stdout | default(''))
+
+- name: Reassert the mirror registry PTR record in authoritative IdM DNS
+  ansible.builtin.shell: |
+    set -euo pipefail
+    add_output="$(
+      ipa dnsrecord-add "{{ mirror_registry_guest_reverse_zone }}" "{{ mirror_registry_guest_ipv4_address.split('.')[-1] }}" \
+        --ptr-rec="{{ mirror_registry_guest_vm_fqdn }}." 2>&1
+    )" || add_rc=$?
+    add_rc="${add_rc:-0}"
+    if [ "${add_rc}" -eq 0 ]; then
+      printf '%s\n' "${add_output}"
+      exit 0
+    fi
+
+    mod_output="$(
+      ipa dnsrecord-mod "{{ mirror_registry_guest_reverse_zone }}" "{{ mirror_registry_guest_ipv4_address.split('.')[-1] }}" \
+        --ptr-rec="{{ mirror_registry_guest_vm_fqdn }}." 2>&1
+    )" || mod_rc=$?
+    mod_rc="${mod_rc:-0}"
+    if [ "${mod_rc}" -eq 0 ] || grep -q 'no modifications to be performed' <<<"${mod_output}"; then
+      printf '%s\n' "${mod_output}"
+      exit 0
+    fi
+
+    printf '%s\n' "${add_output}" >&2
+    printf '%s\n' "${mod_output}" >&2
+    exit 1
+  args:
+    executable: /bin/bash
+  register: mirror_registry_guest_dns_ptr_record
+  changed_when: >-
+    'Added DNS resource record' in (mirror_registry_guest_dns_ptr_record.stdout | default(''))
+    or 'Modified DNS resource record' in (mirror_registry_guest_dns_ptr_record.stdout | default(''))
+
+- name: Assert authoritative IdM DNS resolves the mirror registry host
+  ansible.builtin.command:
+    argv:
+      - dig
+      - +short
+      - "@{{ idm_vm.network.ipv4_address }}"
+      - "{{ mirror_registry_guest_registry_host }}"
+      - A
+  register: mirror_registry_guest_authoritative_dns
+  changed_when: false
+  failed_when: >-
+    (
+      mirror_registry_guest_authoritative_dns.stdout_lines
+      | map('trim')
+      | reject('equalto', '')
+      | list
+    ) != [mirror_registry_guest_ipv4_address]
 
 - name: Check the current authselect profile on the mirror registry guest
   ansible.builtin.command:

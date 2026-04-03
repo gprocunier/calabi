@@ -26,7 +26,7 @@ ad_vm:
     tpm_enabled: false
     install_media_boot_key: ret
     install_media_boot_keypress_delay_seconds: 0
-    install_media_boot_keypress_attempts: 12
+    install_media_boot_keypress_attempts: 3
     install_media_boot_keypress_interval_seconds: 1
   resources:
     memory_mb: 8192

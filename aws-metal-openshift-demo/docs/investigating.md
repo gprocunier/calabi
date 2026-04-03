@@ -19,14 +19,17 @@ unanswered questions.
 Status:
 
 - open
-- cluster build, mirrored-content use, and the default auth/day-2 path are
-  working on the current environment
-- the final bar is still one uninterrupted `playbooks/site-lab.yml` run from a
-  deliberate teardown boundary, without live code repair during the attempt
+- zero-VM teardown and `playbooks/site-bootstrap.yml` have now been re-proven
+- cluster build, mirrored-content use, and the default auth/day-2 path have
+  already succeeded from preserved support-service boundaries
+- the final bar is now one uninterrupted zero-VM `playbooks/site-lab.yml` run
+  on the current codebase, without live code repair during the attempt
 
 ### What is already proven
 
 - support services can be brought up and reused across retries
+- a zero-VM rebuild through `playbooks/site-bootstrap.yml` completes on the
+  current codebase
 - the cluster can install successfully on the current codebase
 - mirrored Keycloak content deploys and runs
 - OpenShift OAuth converges on:
@@ -36,19 +39,47 @@ Status:
 - the repo validation lane is clean:
   - `make validate`
   - `ansible-lint -p`
+- the runner split and workstation-to-bastion handoff are now documented in
+  <a href="./orchestration-plumbing.md"><kbd>ORCHESTRATION PLUMBING</kbd></a>
+- the current live auth model and the planned AD-source-of-truth policy model
+  now have dedicated architecture pages:
+  - <a href="./authentication-model.md"><kbd>AUTH MODEL</kbd></a>
+  - <a href="./ad-idm-policy-model.md"><kbd>AD / IDM POLICY MODEL</kbd></a>
 
 ### What remains to prove
 
-- a fresh cluster rebuild with support services preserved
-- then a fully destructive stack rebuild if the install guide is meant to
-  certify the whole environment from zero
+- one uninterrupted zero-VM `playbooks/site-lab.yml` run after
+  `playbooks/site-bootstrap.yml` completes
+- no live code repair during that attempt
 
-### Planned confidence sequence
+### Current confidence gate
 
-1. Tear down only the OpenShift cluster and generated OCP artifacts.
-2. Rerun `playbooks/site-lab.yml` end to end without intervention.
-3. If that succeeds, perform one full-stack destructive rebuild and rerun the
-   documented orchestration from zero.
+1. Tear down to zero VMs and reset lab networking.
+2. Run `playbooks/site-bootstrap.yml`.
+3. Run `playbooks/site-lab.yml` end to end without intervention.
+
+## Planned Work: AD Source-Of-Truth Policy Model
+
+Status:
+
+- planned
+- not implemented in the live orchestration yet
+
+The future target is:
+
+- AD as the source of truth for users and source-side group membership
+- IdM local groups as the policy and authorization boundary
+- RHEL sudo, Keycloak group emission, and OpenShift RBAC all consuming the
+  local IdM groups rather than raw AD group names
+
+Saved implementation artifacts:
+
+- <a href="./ad-idm-policy-model.md"><kbd>AD / IDM POLICY MODEL</kbd></a>
+- <a href="../vars/global/ad_group_policy.yml"><kbd>vars/global/ad_group_policy.yml</kbd></a>
+
+This is intentionally scaffold only for now. It should not be treated as the
+current live behavior until the IdM trust policy objects and validation steps
+are implemented.
 
 ## Closed Investigation: ODF NooBaa / CNPG initialization stall
 

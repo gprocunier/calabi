@@ -66,44 +66,113 @@ idm_server:
   dns_forwarders:
     - 8.8.8.8
     - 1.1.1.1
-  static_dns_records:
-    - zone_name: "{{ idm_vm.domain }}"
-      name: virt-01
-      record_type: A
-      record_value: >-
-        {{ lab_switch_ports.vlan100.gateway_cidr | regex_replace('/.*$', '') }}
-      label: "virt-01.{{ idm_vm.domain }}"
-    - zone_name: >-
-        {{
-          (
-            lab_switch_ports.vlan100.cidr
-            | regex_replace('/.*$', '')
-          ).split('.')[2]
-        }}.{{
-          (
-            lab_switch_ports.vlan100.cidr
-            | regex_replace('/.*$', '')
-          ).split('.')[1]
-        }}.{{
-          (
-            lab_switch_ports.vlan100.cidr
-            | regex_replace('/.*$', '')
-          ).split('.')[0]
-        }}.in-addr.arpa
-      name: >-
-        {{
-          (
-            lab_switch_ports.vlan100.gateway_cidr
-            | regex_replace('/.*$', '')
-          ).split('.')[-1]
-        }}
-      record_type: PTR
-      record_value: "virt-01.{{ idm_vm.domain }}."
-      label: >-
-        {{
-          lab_switch_ports.vlan100.gateway_cidr
+  static_dns_records: >-
+    {%- set records = [
+          {
+            'zone_name': idm_vm.domain,
+            'name': 'virt-01',
+            'record_type': 'A',
+            'record_value': (
+              lab_switch_ports.vlan100.gateway_cidr
+              | regex_replace('/.*$', '')
+            ),
+            'label': 'virt-01.' ~ idm_vm.domain
+          },
+          {
+            'zone_name': (
+              (
+                lab_switch_ports.vlan100.cidr
+                | regex_replace('/.*$', '')
+              ).split('.')[2]
+              ~ '.'
+              ~ (
+                lab_switch_ports.vlan100.cidr
+                | regex_replace('/.*$', '')
+              ).split('.')[1]
+              ~ '.'
+              ~ (
+                lab_switch_ports.vlan100.cidr
+                | regex_replace('/.*$', '')
+              ).split('.')[0]
+              ~ '.in-addr.arpa'
+            ),
+            'name': (
+              lab_switch_ports.vlan100.gateway_cidr
+              | regex_replace('/.*$', '')
+            ).split('.')[-1],
+            'record_type': 'PTR',
+            'record_value': 'virt-01.' ~ idm_vm.domain ~ '.',
+            'label': (
+              lab_switch_ports.vlan100.gateway_cidr
+              | regex_replace('/.*$', '')
+            )
+          }
+        ] -%}
+    {%- if bastion_vm is defined and bastion_vm.network is defined -%}
+    {%- set bastion_ipv4 = (
+          bastion_vm.network.ipv4_address
           | regex_replace('/.*$', '')
-        }}
+        ) -%}
+    {%- set bastion_reverse_zone = (
+          bastion_ipv4.split('.')[2]
+          ~ '.'
+          ~ bastion_ipv4.split('.')[1]
+          ~ '.'
+          ~ bastion_ipv4.split('.')[0]
+          ~ '.in-addr.arpa'
+        ) -%}
+    {%- set _ = records.extend([
+          {
+            'zone_name': bastion_vm.domain,
+            'name': bastion_vm.name,
+            'record_type': 'A',
+            'record_value': bastion_ipv4,
+            'label': bastion_vm.name ~ '.' ~ bastion_vm.domain
+          },
+          {
+            'zone_name': bastion_reverse_zone,
+            'name': bastion_ipv4.split('.')[-1],
+            'record_type': 'PTR',
+            'record_value': (
+              bastion_vm.name ~ '.' ~ bastion_vm.domain ~ '.'
+            ),
+            'label': bastion_ipv4
+          }
+        ]) -%}
+    {%- endif -%}
+    {%- if mirror_registry_vm is defined and mirror_registry_vm.network is defined -%}
+    {%- set mirror_registry_ipv4 = (
+          mirror_registry_vm.network.ipv4_address
+          | regex_replace('/.*$', '')
+        ) -%}
+    {%- set mirror_registry_reverse_zone = (
+          mirror_registry_ipv4.split('.')[2]
+          ~ '.'
+          ~ mirror_registry_ipv4.split('.')[1]
+          ~ '.'
+          ~ mirror_registry_ipv4.split('.')[0]
+          ~ '.in-addr.arpa'
+        ) -%}
+    {%- set _ = records.extend([
+          {
+            'zone_name': mirror_registry_vm.domain,
+            'name': mirror_registry_vm.name,
+            'record_type': 'A',
+            'record_value': mirror_registry_ipv4,
+            'label': mirror_registry_vm.name ~ '.' ~ mirror_registry_vm.domain
+          },
+          {
+            'zone_name': mirror_registry_reverse_zone,
+            'name': mirror_registry_ipv4.split('.')[-1],
+            'record_type': 'PTR',
+            'record_value': (
+              mirror_registry_vm.name ~ '.' ~ mirror_registry_vm.domain ~ '.'
+            ),
+            'label': mirror_registry_ipv4
+          }
+        ]) -%}
+    {%- endif -%}
+    {{ records }}
   trusted_networks: >-
     {{
       lab_switch_ports

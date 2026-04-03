@@ -18,6 +18,13 @@ STAGE_PLAYBOOK="${PROJECT_ROOT}/playbooks/bootstrap/bastion-stage.yml"
 BASTION_RUNNER="/opt/openshift/aws-metal-openshift-demo/scripts/run_bastion_playbook.sh"
 BASTION_HOST="${BASTION_HOST:-172.16.0.30}"
 VALIDATION_SCRIPT="${PROJECT_ROOT}/scripts/validate-orchestration.sh"
+LOCAL_STATE_DIR="${XDG_STATE_HOME:-${HOME}/.local/state}/calabi-playbooks"
+PLAYBOOK_BASENAME="$(basename "${PLAYBOOK_PATH}")"
+PLAYBOOK_STEM="${PLAYBOOK_BASENAME%.yml}"
+LOCAL_LOG_PATH="${LOCAL_STATE_DIR}/${PLAYBOOK_STEM}.log"
+LOCAL_PID_PATH="${LOCAL_STATE_DIR}/${PLAYBOOK_STEM}.pid"
+LOCAL_RC_PATH="${LOCAL_STATE_DIR}/${PLAYBOOK_STEM}.rc"
+LOCAL_REMOTE_ENV_PATH="${LOCAL_STATE_DIR}/${PLAYBOOK_STEM}.remote.env"
 
 if ! command -v ansible-inventory >/dev/null 2>&1; then
   echo "ansible-inventory is required" >&2
@@ -37,6 +44,48 @@ HYPERVISOR_HOST="$(printf '%s' "${METAL_JSON}" | jq -r '.ansible_host')"
 HYPERVISOR_USER="$(printf '%s' "${METAL_JSON}" | jq -r '.ansible_user')"
 HYPERVISOR_KEY="$(printf '%s' "${METAL_JSON}" | jq -r '.ansible_ssh_private_key_file')"
 cd "${PROJECT_ROOT}"
+
+mkdir -p "${LOCAL_STATE_DIR}"
+rm -f "${LOCAL_PID_PATH}" "${LOCAL_RC_PATH}" "${LOCAL_LOG_PATH}" "${LOCAL_REMOTE_ENV_PATH}"
+printf '%s\n' "$$" > "${LOCAL_PID_PATH}"
+
+log_local() {
+  printf '[%(%Y-%m-%d %H:%M:%S)T] %s\n' -1 "$*" | tee -a "${LOCAL_LOG_PATH}"
+}
+
+record_remote_handoff() {
+  local output="$1"
+  local remote_pid_file=""
+  local remote_rc_file=""
+  local remote_log_file=""
+
+  remote_pid_file="$(printf '%s\n' "${output}" | awk -F= '/^pid_file=/{print $2}' | tail -n 1)"
+  remote_rc_file="$(printf '%s\n' "${output}" | awk -F= '/^rc_file=/{print $2}' | tail -n 1)"
+  remote_log_file="$(printf '%s\n' "${output}" | awk -F= '/^log_file=/{print $2}' | tail -n 1)"
+
+  if [[ -n "${remote_pid_file}" && -n "${remote_rc_file}" && -n "${remote_log_file}" ]]; then
+    cat > "${LOCAL_REMOTE_ENV_PATH}" <<EOF
+BASTION_HOST=${BASTION_HOST}
+BASTION_USER=cloud-user
+HYPERVISOR_HOST=${HYPERVISOR_HOST}
+HYPERVISOR_USER=${HYPERVISOR_USER}
+HYPERVISOR_KEY=${HYPERVISOR_KEY}
+REMOTE_PID_PATH=${remote_pid_file}
+REMOTE_RC_PATH=${remote_rc_file}
+REMOTE_LOG_PATH=${remote_log_file}
+EOF
+    log_local "Remote runner handed off on bastion."
+    log_local "Remote log: ${remote_log_file}"
+  fi
+}
+
+finish_local() {
+  local rc="${1:-0}"
+  printf '%s\n' "${rc}" > "${LOCAL_RC_PATH}"
+  rm -f "${LOCAL_PID_PATH}"
+}
+
+trap 'finish_local "$?"' EXIT
 
 while [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; do
   case "${EXTRA_ARGS[0]}" in
@@ -73,14 +122,21 @@ case "${PLAYBOOK_PATH}" in
     ;;
 esac
 
-"${VALIDATION_SCRIPT}" --playbook "${PLAYBOOK_PATH}" "${ORIGINAL_ARGS[@]}"
+log_local "Validating ${PLAYBOOK_PATH}"
+"${VALIDATION_SCRIPT}" --playbook "${PLAYBOOK_PATH}" "${ORIGINAL_ARGS[@]}" 2>&1 | tee -a "${LOCAL_LOG_PATH}"
 
-ansible-playbook -i "${INVENTORY_PATH}" "${STAGE_PLAYBOOK}" "${STAGE_ARGS[@]}"
+log_local "Refreshing bastion staging"
+ansible-playbook -i "${INVENTORY_PATH}" "${STAGE_PLAYBOOK}" "${STAGE_ARGS[@]}" 2>&1 | tee -a "${LOCAL_LOG_PATH}"
 
-exec ssh \
+log_local "Handing off ${PLAYBOOK_PATH} to bastion ${BASTION_HOST}"
+SSH_OUTPUT="$(
+ssh \
   -i "${HYPERVISOR_KEY}" \
   -o StrictHostKeyChecking=no \
   -o UserKnownHostsFile=/dev/null \
   -o ProxyCommand="ssh -i ${HYPERVISOR_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${HYPERVISOR_USER}@${HYPERVISOR_HOST} -W %h:%p" \
   "cloud-user@${BASTION_HOST}" \
-  "${BASTION_RUNNER}" "${PLAYBOOK_PATH}" "$@"
+  "${BASTION_RUNNER}" "${PLAYBOOK_PATH}" "$@" 2>&1
+)"
+printf '%s\n' "${SSH_OUTPUT}" | tee -a "${LOCAL_LOG_PATH}"
+record_remote_handoff "${SSH_OUTPUT}"

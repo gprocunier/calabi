@@ -4,6 +4,9 @@ Nearby docs:
 
 <a href="./prerequisites.md"><kbd>&nbsp;&nbsp;PREREQUISITES&nbsp;&nbsp;</kbd></a>
 <a href="./automation-flow.md"><kbd>&nbsp;&nbsp;AUTOMATION FLOW&nbsp;&nbsp;</kbd></a>
+<a href="./orchestration-plumbing.md"><kbd>&nbsp;&nbsp;ORCHESTRATION PLUMBING&nbsp;&nbsp;</kbd></a>
+<a href="./authentication-model.md"><kbd>&nbsp;&nbsp;AUTH MODEL&nbsp;&nbsp;</kbd></a>
+<a href="./ad-idm-policy-model.md"><kbd>&nbsp;&nbsp;AD / IDM POLICY MODEL&nbsp;&nbsp;</kbd></a>
 <a href="./manual-process.md"><kbd>&nbsp;&nbsp;MANUAL PROCESS&nbsp;&nbsp;</kbd></a>
 <a href="./investigating.md"><kbd>&nbsp;&nbsp;INVESTIGATING&nbsp;&nbsp;</kbd></a>
 <a href="./secrets-and-sanitization.md"><kbd>&nbsp;&nbsp;SECRETS&nbsp;&nbsp;</kbd></a>
@@ -22,6 +25,9 @@ preparation.
 Keep these nearby while you use this page:
 
 - <a href="./automation-flow.md"><kbd>AUTOMATION FLOW</kbd></a> for run order and lifecycle
+- <a href="./orchestration-plumbing.md"><kbd>ORCHESTRATION PLUMBING</kbd></a> for workstation-to-bastion handoff, runner files, and dashboard telemetry
+- <a href="./authentication-model.md"><kbd>AUTH MODEL</kbd></a> for the formal current-state identity and authorization architecture
+- <a href="./ad-idm-policy-model.md"><kbd>AD / IDM POLICY MODEL</kbd></a> for the planned future AD-source-of-truth authorization model
 - <a href="./iaas-resource-model.md"><kbd>IAAS MODEL</kbd></a> for AWS and cloud-init design
 - <a href="./host-resource-management.md"><kbd>RESOURCE MANAGEMENT</kbd></a> for guest tiers and CPU pools
 - <a href="./openshift-cluster-matrix.md"><kbd>CLUSTER MATRIX</kbd></a> for per-node identities and sizing
@@ -275,12 +281,25 @@ Execution model:
 
 Operator helper:
 
+- `scripts/run_local_playbook.sh`
+  - launches workstation-side playbooks with tracked PID, log, and exit-code
+    state under `~/.local/state/calabi-playbooks/`
+  - this is the preferred way to track `site-bootstrap.yml` from the operator
+    workstation
 - `scripts/run_remote_bastion_playbook.sh`
   - refreshes bastion staging by running `playbooks/bootstrap/bastion-stage.yml`
-  - then invokes the staged `scripts/run_bastion_playbook.sh` helper on the
-    bastion
+  - records the workstation-side validation and bastion-staging phase under
+    `~/.local/state/calabi-playbooks/`, then invokes the staged
+    `scripts/run_bastion_playbook.sh` helper on the bastion
   - this is the preferred way to rerun bastion-native playbooks after local
     repository changes
+- `scripts/lab-dashboard.sh`
+  - runs on either the operator workstation or bastion
+  - on the workstation, it reads local tracked state first and then switches to
+    bastion-side runner state after handoff metadata appears
+  - if `site-lab.yml` is still in local validation or `bastion-stage.yml`, the
+    bastion dashboard will correctly show nothing yet because the bastion-side
+    runner does not exist until after handoff
 
 Day-2 rerun behavior:
 
@@ -389,6 +408,10 @@ Important behavior:
 
 - applies the Bronze guest policy described in
   <a href="./host-resource-management.md"><kbd>RESOURCE MANAGEMENT</kbd></a>
+- joins IdM without relying on client-driven dynamic DNS updates for the
+  guest's static address
+- reasserts the mirror-registry A/PTR records in authoritative IdM DNS after
+  enrollment and validates that `dig @idm-01` returns the expected address
 - default disconnected mode is portable:
   - `m2d` archive build
   - followed automatically by `d2m` import into Quay
@@ -405,6 +428,8 @@ Execution model:
 - first play registers `idm-01` dynamically from the hypervisor side
 - the bastion reaches `idm-01` directly on VLAN 100 for DNS management tasks
 - second play connects to the IdM guest and applies `idm_openshift_dns`
+- the publish step now validates authoritative IdM resolution for the newly
+  added OpenShift A and PTR records before the play exits
 
 ### `playbooks/lab/openshift-dns-cleanup.yml`
 
@@ -476,6 +501,29 @@ Execution model:
   - `generated/ocp/openshift_cluster_attachment_plan.yml`
 - the resulting overlay is loaded automatically by `playbooks/cluster/openshift-cluster.yml`
   when present
+
+### `playbooks/cluster/openshift-install-wait.yml`
+
+Purpose:
+
+- wait for the agent-based OpenShift install to complete
+- recover fresh-install control-plane nodes that stay attached to the agent ISO
+  instead of pivoting to disk
+
+Execution model:
+
+- runs locally on the current execution host, typically bastion
+- uses the rendered installer directory and pinned `openshift-install` binary
+- polls assisted-service from the rendezvous host during bootstrap
+- detects control-plane nodes stuck in `installing-pending-user-action`
+- on those nodes it:
+  - ejects the agent ISO from libvirt
+  - restores disk-first boot order
+  - power-cycles the affected domains
+- waits for `bootstrap-complete`
+- then probes the control-plane nodes again and recovers any node still stuck in
+  `agent.service` without `kubelet.service`
+- only after those checks does it wait for `install-complete`
 
 ### `playbooks/maintenance/cleanup.yml`
 
@@ -551,6 +599,9 @@ Execution model:
   - AAP deployment and LDAP integration
   - Network Observability and Loki deployment
   - validation
+- the disconnected OperatorHub phase also checks that every cluster node can
+  resolve `mirror-registry.workshop.lan` before the mirrored CatalogSource pods
+  are applied, so registry DNS failures surface before the pull attempt
 
 ### `playbooks/day2/openshift-post-install-pipelines.yml`
 
@@ -1325,7 +1376,19 @@ The project has been routinely checked with:
 - `shellcheck` where appropriate
 - `make validate` / `scripts/validate-orchestration.sh`
 
+The validation lane now also includes scoped play-contract checks so
+cross-play variable leaks are caught before runtime, especially in the
+workstation-to-bastion handoff and support-service phases.
+
 The host prep, IdM build, mirror-registry build, and OpenShift DNS populate/cleanup workflows have all been exercised on a real AWS metal host.
+
+The recent orchestration hardening also moved several late failures forward:
+
+- support-service DNS publication is now validated authoritatively from IdM
+- disconnected OperatorHub checks node-side resolution of
+  `mirror-registry.workshop.lan` before mirrored catalogs are applied
+- fresh-install control-plane bootstrap recovery is codified in
+  `playbooks/cluster/openshift-install-wait.yml`
 
 The current cluster/auth proof points are stronger than the original docs used
 to claim:

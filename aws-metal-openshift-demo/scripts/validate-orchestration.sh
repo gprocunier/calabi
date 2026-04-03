@@ -4,6 +4,7 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INVENTORY_PATH="${PROJECT_ROOT}/inventory/hosts.yml"
 PRECHECK_PLAYBOOK="${PROJECT_ROOT}/playbooks/validate/orchestration-preflight.yml"
+SCOPED_CONTRACTS_PLAYBOOK="${PROJECT_ROOT}/playbooks/validate/scoped-var-contracts.yml"
 TARGET_PLAYBOOK=""
 EXTRA_ARGS=()
 TOP_LEVEL_PLAYBOOKS=()
@@ -114,6 +115,13 @@ echo "==> Running orchestration preflight"
 ansible-playbook \
   -i "${INVENTORY_PATH}" \
   "${PRECHECK_PLAYBOOK}" \
+  -e "validate_target_playbook=${TARGET_PLAYBOOK}" \
+  "${EXTRA_ARGS[@]}"
+
+echo "==> Running scoped play contract checks"
+ansible-playbook \
+  -i "${INVENTORY_PATH}" \
+  "${SCOPED_CONTRACTS_PLAYBOOK}" \
   -e "validate_target_playbook=${TARGET_PLAYBOOK}" \
   "${EXTRA_ARGS[@]}"
 

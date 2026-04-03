@@ -7,10 +7,36 @@
   vars_files:
     - ../../vars/global/execution_environment.yml
     - ../../vars/global/mirror_content.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/cluster/openshift_agent_media.yml
   vars:
     openshift_install_wait_install_dir: "{{ lab_execution_ocp_generated_root }}"
     openshift_install_wait_binary: >-
       {{ lab_execution_tools_root }}/{{ mirror_registry_ocp_release }}/bin/openshift-install
+    openshift_install_wait_node_zero_ip: >-
+      {{
+        (
+          openshift_install_cluster.nodes
+          | selectattr('role', 'equalto', 'control-plane')
+          | map(attribute='machine_network.ipv4_address')
+          | first
+        )
+      }}
+    openshift_install_wait_cluster_domain: >-
+      {{ openshift_install_cluster.full_domain }}
+    openshift_install_wait_control_plane_nodes: >-
+      {{
+        openshift_install_cluster.nodes
+        | selectattr('role', 'equalto', 'control-plane')
+        | list
+      }}
+    openshift_install_wait_hypervisor_host: "{{ hostvars['metal-01'].ansible_host }}"
+    openshift_install_wait_hypervisor_user: "{{ hostvars['metal-01'].ansible_user }}"
+    openshift_install_wait_hypervisor_key: "{{ hostvars['metal-01'].ansible_ssh_private_key_file }}"
+    openshift_install_wait_hypervisor_ssh_args: >-
+      -o BatchMode=yes
+      -o StrictHostKeyChecking=no
+      -o UserKnownHostsFile=/dev/null
   tasks:
     - name: Validate the rendered install directory exists
       ansible.builtin.stat:
@@ -33,6 +59,139 @@
           {{ openshift_install_wait_binary }} before waiting for bootstrap and
           install completion.
 
+    - name: Poll assisted-service for agent host status during bootstrap
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ssh -i {{ lab_execution_ssh_private_key_file }} \
+          -o BatchMode=yes \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          core@{{ openshift_install_wait_node_zero_ip }} '
+            set -euo pipefail
+            source /etc/assisted/rendezvous-host.env
+            clusters="$(curl -sk -H "Authorization: ${USER_AUTH_TOKEN}" "${SERVICE_BASE_URL}api/assisted-install/v2/clusters")"
+            cluster_id="$(printf "%s" "$clusters" | python3 -c "import json,sys; print(json.load(sys.stdin)[0][\"id\"])" )"
+            curl -sk -H "Authorization: ${USER_AUTH_TOKEN}" "${SERVICE_BASE_URL}api/assisted-install/v2/clusters/${cluster_id}/hosts"
+          '
+      args:
+        executable: /bin/bash
+      register: openshift_install_wait_assisted_hosts
+      changed_when: false
+      retries: 30
+      delay: 20
+      until:
+        - openshift_install_wait_assisted_hosts.rc == 0
+        - openshift_install_wait_assisted_hosts.stdout | trim | length > 0
+
+    - name: Derive control-plane hosts that are waiting for a disk reboot
+      ansible.builtin.set_fact:
+        openshift_install_wait_pending_control_plane_count: >-
+          {{
+            (
+              openshift_install_wait_assisted_hosts.stdout
+              | from_json
+            )
+            | selectattr('role', 'equalto', 'master')
+            | selectattr('status', 'equalto', 'installing-pending-user-action')
+            | list
+            | length
+          }}
+        openshift_install_wait_recovery_control_plane_nodes: >-
+          {{
+            openshift_install_wait_control_plane_nodes
+            | rejectattr(
+                'machine_network.ipv4_address',
+                'equalto',
+                openshift_install_wait_node_zero_ip
+              )
+            | list
+          }}
+
+    - name: Report pending control-plane hosts before bootstrap wait
+      ansible.builtin.debug:
+        msg: >-
+          Assisted install reported {{ openshift_install_wait_pending_control_plane_count }}
+          control-plane host(s) waiting to reboot from disk. Recovering:
+          {{
+            openshift_install_wait_recovery_control_plane_nodes
+            | map(attribute='name')
+            | list
+          }}
+      when: openshift_install_wait_pending_control_plane_count | int > 0
+
+    - name: Detect attached agent CD-ROM targets on pending control-plane domains
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ssh -i {{ openshift_install_wait_hypervisor_key }} \
+          {{ openshift_install_wait_hypervisor_ssh_args }} \
+          {{ openshift_install_wait_hypervisor_user }}@{{ openshift_install_wait_hypervisor_host }} \
+          'sudo virsh domblklist "{{ item.fqdn | default(item.name ~ "." ~ openshift_install_wait_cluster_domain) }}" --details | awk -v media="{{ openshift_agent_media.hypervisor_boot_media_path }}" '"'"'$2 == "cdrom" && ($4 == media || $4 == "-") {print $3}'"'"''
+      args:
+        executable: /bin/bash
+      loop: "{{ openshift_install_wait_recovery_control_plane_nodes }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: openshift_install_wait_pending_cdrom_targets
+      changed_when: false
+      when: openshift_install_wait_pending_control_plane_count | int > 0
+
+    - name: Eject agent media from pending control-plane domains
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ssh -i {{ openshift_install_wait_hypervisor_key }} \
+          {{ openshift_install_wait_hypervisor_ssh_args }} \
+          {{ openshift_install_wait_hypervisor_user }}@{{ openshift_install_wait_hypervisor_host }} \
+          'sudo virsh change-media "{{ item.0.item.fqdn | default(item.0.item.name ~ "." ~ openshift_install_wait_cluster_domain) }}" "{{ item.1 }}" --eject --config --live'
+      args:
+        executable: /bin/bash
+      loop: >-
+        {{
+          openshift_install_wait_pending_cdrom_targets.results
+          | default([])
+          | subelements('stdout_lines', skip_missing=True)
+        }}
+      loop_control:
+        label: "{{ item.0.item.name }}:{{ item.1 }}"
+      changed_when: true
+      failed_when: false
+      when: openshift_install_wait_pending_control_plane_count | int > 0
+
+    - name: Reset pending control-plane domains to disk-first boot
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ssh -i {{ openshift_install_wait_hypervisor_key }} \
+          {{ openshift_install_wait_hypervisor_ssh_args }} \
+          {{ openshift_install_wait_hypervisor_user }}@{{ openshift_install_wait_hypervisor_host }} \
+          'sudo virt-xml "{{ item.fqdn | default(item.name ~ "." ~ openshift_install_wait_cluster_domain) }}" --edit --boot hd'
+      args:
+        executable: /bin/bash
+      loop: "{{ openshift_install_wait_recovery_control_plane_nodes }}"
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: true
+      when: openshift_install_wait_pending_control_plane_count | int > 0
+
+    - name: Power-cycle pending control-plane domains onto disk
+      ansible.builtin.shell: |
+        set -euo pipefail
+        domain="{{ item.fqdn | default(item.name ~ '.' ~ openshift_install_wait_cluster_domain) }}"
+        ssh -i {{ openshift_install_wait_hypervisor_key }} \
+          {{ openshift_install_wait_hypervisor_ssh_args }} \
+          {{ openshift_install_wait_hypervisor_user }}@{{ openshift_install_wait_hypervisor_host }} \
+          "sudo virsh destroy \"$domain\" >/dev/null 2>&1 || true; sudo virsh start \"$domain\""
+      args:
+        executable: /bin/bash
+      loop: "{{ openshift_install_wait_recovery_control_plane_nodes }}"
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: true
+      when: openshift_install_wait_pending_control_plane_count | int > 0
+
+    - name: Pause briefly after rebooting pending control-plane domains
+      ansible.builtin.pause:
+        seconds: 60
+      when: openshift_install_wait_pending_control_plane_count | int > 0
+
     - name: Wait for bootstrap completion
       ansible.builtin.command:
         argv:
@@ -42,6 +201,125 @@
           - bootstrap-complete
           - --log-level=debug
       changed_when: false
+
+    - name: Probe control-plane service state after bootstrap completion
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ssh -i {{ lab_execution_ssh_private_key_file }} \
+          -o BatchMode=yes \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          core@{{ item.machine_network.ipv4_address }} \
+          'printf "agent=%s kubelet=%s bootkube=%s\n" \
+            "$(systemctl is-active agent.service || true)" \
+            "$(systemctl is-active kubelet.service || true)" \
+            "$(systemctl is-active bootkube.service || true)"'
+      args:
+        executable: /bin/bash
+      loop: "{{ openshift_install_wait_control_plane_nodes }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: openshift_install_wait_control_plane_service_state
+      changed_when: false
+      failed_when: false
+
+    - name: Derive post-bootstrap control-plane nodes that are still stuck in agent mode
+      ansible.builtin.set_fact:
+        openshift_install_wait_post_bootstrap_recovery_nodes: >-
+          {{
+            openshift_install_wait_control_plane_service_state.results
+            | default([])
+            | selectattr('rc', 'equalto', 0)
+            | selectattr('stdout', 'search', 'agent=active')
+            | rejectattr('stdout', 'search', 'kubelet=active')
+            | map(attribute='item')
+            | list
+          }}
+
+    - name: Report control-plane nodes that need post-bootstrap recovery
+      ansible.builtin.debug:
+        msg: >-
+          Control-plane node(s) still in agent mode after bootstrap completion.
+          Recovering:
+          {{
+            openshift_install_wait_post_bootstrap_recovery_nodes
+            | map(attribute='name')
+            | list
+          }}
+      when: (openshift_install_wait_post_bootstrap_recovery_nodes | default([])) | length > 0
+
+    - name: Detect attached agent CD-ROM targets on post-bootstrap recovery control-plane domains
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ssh -i {{ openshift_install_wait_hypervisor_key }} \
+          {{ openshift_install_wait_hypervisor_ssh_args }} \
+          {{ openshift_install_wait_hypervisor_user }}@{{ openshift_install_wait_hypervisor_host }} \
+          'sudo virsh domblklist "{{ item.fqdn | default(item.name ~ "." ~ openshift_install_wait_cluster_domain) }}" --details | awk -v media="{{ openshift_agent_media.hypervisor_boot_media_path }}" '"'"'$2 == "cdrom" && ($4 == media || $4 == "-") {print $3}'"'"''
+      args:
+        executable: /bin/bash
+      loop: "{{ openshift_install_wait_post_bootstrap_recovery_nodes | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: openshift_install_wait_post_bootstrap_cdrom_targets
+      changed_when: false
+      when: (openshift_install_wait_post_bootstrap_recovery_nodes | default([])) | length > 0
+
+    - name: Eject agent media from post-bootstrap recovery control-plane domains
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ssh -i {{ openshift_install_wait_hypervisor_key }} \
+          {{ openshift_install_wait_hypervisor_ssh_args }} \
+          {{ openshift_install_wait_hypervisor_user }}@{{ openshift_install_wait_hypervisor_host }} \
+          'sudo virsh change-media "{{ item.0.item.fqdn | default(item.0.item.name ~ "." ~ openshift_install_wait_cluster_domain) }}" "{{ item.1 }}" --eject --config --live'
+      args:
+        executable: /bin/bash
+      loop: >-
+        {{
+          openshift_install_wait_post_bootstrap_cdrom_targets.results
+          | default([])
+          | subelements('stdout_lines', skip_missing=True)
+        }}
+      loop_control:
+        label: "{{ item.0.item.name }}:{{ item.1 }}"
+      changed_when: true
+      failed_when: false
+      when: (openshift_install_wait_post_bootstrap_recovery_nodes | default([])) | length > 0
+
+    - name: Reset post-bootstrap recovery control-plane domains to disk-first boot
+      ansible.builtin.shell: |
+        set -euo pipefail
+        ssh -i {{ openshift_install_wait_hypervisor_key }} \
+          {{ openshift_install_wait_hypervisor_ssh_args }} \
+          {{ openshift_install_wait_hypervisor_user }}@{{ openshift_install_wait_hypervisor_host }} \
+          'sudo virt-xml "{{ item.fqdn | default(item.name ~ "." ~ openshift_install_wait_cluster_domain) }}" --edit --boot hd'
+      args:
+        executable: /bin/bash
+      loop: "{{ openshift_install_wait_post_bootstrap_recovery_nodes | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: true
+      when: (openshift_install_wait_post_bootstrap_recovery_nodes | default([])) | length > 0
+
+    - name: Power-cycle post-bootstrap recovery control-plane domains onto disk
+      ansible.builtin.shell: |
+        set -euo pipefail
+        domain="{{ item.fqdn | default(item.name ~ '.' ~ openshift_install_wait_cluster_domain) }}"
+        ssh -i {{ openshift_install_wait_hypervisor_key }} \
+          {{ openshift_install_wait_hypervisor_ssh_args }} \
+          {{ openshift_install_wait_hypervisor_user }}@{{ openshift_install_wait_hypervisor_host }} \
+          "sudo virsh destroy \"$domain\" >/dev/null 2>&1 || true; sudo virsh start \"$domain\""
+      args:
+        executable: /bin/bash
+      loop: "{{ openshift_install_wait_post_bootstrap_recovery_nodes | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: true
+      when: (openshift_install_wait_post_bootstrap_recovery_nodes | default([])) | length > 0
+
+    - name: Pause briefly after post-bootstrap control-plane recovery
+      ansible.builtin.pause:
+        seconds: 60
+      when: (openshift_install_wait_post_bootstrap_recovery_nodes | default([])) | length > 0
 
     - name: Wait for install completion
       ansible.builtin.command:

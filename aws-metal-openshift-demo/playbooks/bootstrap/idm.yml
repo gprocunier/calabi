@@ -10,6 +10,7 @@
     - ../../vars/global/rhsm.yml
     - ../../vars/guests/idm_vm.yml
     - ../../vars/guests/bastion_vm.yml
+    - ../../vars/guests/mirror_registry_vm.yml
     - ../../vars/global/ad_server.yml
     - ../../vars/guests/ad_vm.yml
     - ../../vars/cluster/openshift_install_cluster.yml
@@ -70,6 +71,7 @@
     - ../../vars/global/rhsm.yml
     - ../../vars/guests/idm_vm.yml
     - ../../vars/guests/bastion_vm.yml
+    - ../../vars/guests/mirror_registry_vm.yml
     - ../../vars/global/ad_server.yml
     - ../../vars/guests/ad_vm.yml
     - ../../vars/cluster/openshift_install_cluster.yml

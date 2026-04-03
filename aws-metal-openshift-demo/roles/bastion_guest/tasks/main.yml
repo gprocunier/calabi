@@ -15,6 +15,17 @@
         else bastion_client.admin_principal ~ '@' ~ idm_server.realm
       }}
     bastion_guest_idm_ca_path: /etc/ipa/ca.crt
+    bastion_guest_ipv4_address: >-
+      {{ bastion_vm.network.ipv4_address | regex_replace('/.*$', '') }}
+    bastion_guest_reverse_zone: >-
+      {{
+        (bastion_vm.network.ipv4_address | regex_replace('/.*$', '')).split('.')[2]
+        ~ '.'
+        ~ (bastion_vm.network.ipv4_address | regex_replace('/.*$', '')).split('.')[1]
+        ~ '.'
+        ~ (bastion_vm.network.ipv4_address | regex_replace('/.*$', '')).split('.')[0]
+        ~ '.in-addr.arpa'
+      }}
 
 - name: Derive whether IdM enrollment work is enabled for the bastion guest
   ansible.builtin.set_fact:
@@ -275,7 +286,7 @@
           - "{{ idm_vm.name }}.{{ idm_vm.domain }}"
         ipaclient_hostname: "{{ bastion_vm.name }}.{{ bastion_vm.domain }}"
         ipaclient_no_dns_lookup: true
-        ipasssd_enable_dns_updates: true
+        ipasssd_enable_dns_updates: false
         ipaadmin_principal: "{{ bastion_client.admin_principal }}"
         ipaadmin_password: "{{ idm_server.admin_password }}"
       no_log: true
@@ -308,6 +319,90 @@
       retries: 20
       delay: 15
       when: bastion_guest_ipa_rejoin_required
+
+    - name: Reassert the bastion A record in authoritative IdM DNS
+      ansible.builtin.shell: |
+        set -euo pipefail
+        add_output="$(
+          ipa dnsrecord-add "{{ bastion_vm.domain }}" "{{ bastion_vm.name }}" \
+            --a-rec="{{ bastion_guest_ipv4_address }}" 2>&1
+        )" || add_rc=$?
+        add_rc="${add_rc:-0}"
+        if [ "${add_rc}" -eq 0 ]; then
+          printf '%s\n' "${add_output}"
+          exit 0
+        fi
+
+        mod_output="$(
+          ipa dnsrecord-mod "{{ bastion_vm.domain }}" "{{ bastion_vm.name }}" \
+            --a-rec="{{ bastion_guest_ipv4_address }}" 2>&1
+        )" || mod_rc=$?
+        mod_rc="${mod_rc:-0}"
+        if [ "${mod_rc}" -eq 0 ] || grep -q 'no modifications to be performed' <<<"${mod_output}"; then
+          printf '%s\n' "${mod_output}"
+          exit 0
+        fi
+
+        printf '%s\n' "${add_output}" >&2
+        printf '%s\n' "${mod_output}" >&2
+        exit 1
+      args:
+        executable: /bin/bash
+      register: bastion_guest_dns_a_record
+      changed_when: >-
+        'Added DNS resource record' in (bastion_guest_dns_a_record.stdout | default(''))
+        or 'Modified DNS resource record' in (bastion_guest_dns_a_record.stdout | default(''))
+
+    - name: Reassert the bastion PTR record in authoritative IdM DNS
+      ansible.builtin.shell: |
+        set -euo pipefail
+        add_output="$(
+          ipa dnsrecord-add "{{ bastion_guest_reverse_zone }}" "{{ bastion_guest_ipv4_address.split('.')[-1] }}" \
+            --ptr-rec="{{ bastion_guest_vm_fqdn }}." 2>&1
+        )" || add_rc=$?
+        add_rc="${add_rc:-0}"
+        if [ "${add_rc}" -eq 0 ]; then
+          printf '%s\n' "${add_output}"
+          exit 0
+        fi
+
+        mod_output="$(
+          ipa dnsrecord-mod "{{ bastion_guest_reverse_zone }}" "{{ bastion_guest_ipv4_address.split('.')[-1] }}" \
+            --ptr-rec="{{ bastion_guest_vm_fqdn }}." 2>&1
+        )" || mod_rc=$?
+        mod_rc="${mod_rc:-0}"
+        if [ "${mod_rc}" -eq 0 ] || grep -q 'no modifications to be performed' <<<"${mod_output}"; then
+          printf '%s\n' "${mod_output}"
+          exit 0
+        fi
+
+        printf '%s\n' "${add_output}" >&2
+        printf '%s\n' "${mod_output}" >&2
+        exit 1
+      args:
+        executable: /bin/bash
+      register: bastion_guest_dns_ptr_record
+      changed_when: >-
+        'Added DNS resource record' in (bastion_guest_dns_ptr_record.stdout | default(''))
+        or 'Modified DNS resource record' in (bastion_guest_dns_ptr_record.stdout | default(''))
+
+    - name: Assert authoritative IdM DNS resolves the bastion host
+      ansible.builtin.command:
+        argv:
+          - dig
+          - +short
+          - "@{{ idm_vm.network.ipv4_address }}"
+          - "{{ bastion_guest_vm_fqdn }}"
+          - A
+      register: bastion_guest_authoritative_dns
+      changed_when: false
+      failed_when: >-
+        (
+          bastion_guest_authoritative_dns.stdout_lines
+          | map('trim')
+          | reject('equalto', '')
+          | list
+        ) != [bastion_guest_ipv4_address]
 
 - name: Check the current authselect profile on the bastion guest
   ansible.builtin.command:

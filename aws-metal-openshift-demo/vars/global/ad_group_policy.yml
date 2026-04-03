@@ -1,0 +1,67 @@
+---
+# Future-state scaffold for AD-as-SoT with IdM-local authorization.
+#
+# This file is intentionally not wired into the live orchestration yet.
+# It exists to capture the target contract before implementation starts.
+
+ad_group_policy:
+  enabled: false
+  source_of_truth: active_directory
+  authorization_hub: idm
+  notes:
+    - >-
+      AD remains the source of truth for users and source-side group
+      membership.
+    - >-
+      IdM local groups remain the policy and authorization boundary consumed by
+      RHEL, Keycloak, and OpenShift.
+    - >-
+      Trusted AD groups should be nested into IdM external groups, which are
+      then nested into local IdM POSIX groups.
+  mappings:
+    - name: openshift_admins
+      ad_group: OpenShift-Admins
+      idm_external_group: ad-openshift-admins
+      idm_local_group: openshift-admin
+      openshift_access:
+        cluster_role: cluster-admin
+      rhel_access: {}
+      consumers:
+        - keycloak_oidc_groups
+        - optional_ldap_group_sync
+    - name: linux_admins
+      ad_group: Linux-Admins
+      idm_external_group: ad-linux-admins
+      idm_local_group: admins
+      openshift_access: {}
+      rhel_access:
+        sudo_rule: admins-nopasswd-all
+      consumers:
+        - sssd
+        - ipa_sudo
+    - name: virtualization_admins
+      ad_group: OpenShift-Virt-Admins
+      idm_external_group: ad-openshift-virt-admins
+      idm_local_group: virt-admin
+      openshift_access: {}
+      rhel_access: {}
+      consumers:
+        - keycloak_oidc_groups
+        - optional_ldap_group_sync
+    - name: developers
+      ad_group: Developers
+      idm_external_group: ad-developers
+      idm_local_group: developer
+      openshift_access: {}
+      rhel_access: {}
+      consumers:
+        - keycloak_oidc_groups
+        - optional_ldap_group_sync
+    - name: aap_admins
+      ad_group: Ansible-Automation-Admins
+      idm_external_group: ad-aap-admins
+      idm_local_group: aap-admin
+      openshift_access: {}
+      rhel_access: {}
+      consumers:
+        - aap_ldap_authenticator

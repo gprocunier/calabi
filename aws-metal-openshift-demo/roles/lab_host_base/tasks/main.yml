@@ -128,6 +128,18 @@
   changed_when: "'manage_repos = 1' in lab_host_base_manage_repos.stdout"
   when: lab_rhsm.enabled | default(false) | bool
 
+- name: Disable RHSM package profile reporting during bootstrap
+  ansible.builtin.command:
+    argv:
+      - subscription-manager
+      - config
+      - --rhsm.report_package_profile=0
+  register: lab_host_base_disable_package_profile_reporting
+  changed_when: >-
+    'report_package_profile = 0'
+    in lab_host_base_disable_package_profile_reporting.stdout
+  when: lab_rhsm.enabled | default(false) | bool
+
 - name: Disable RHUI-managed repositories when present
   ansible.builtin.shell: |
     python3 - <<'PY'

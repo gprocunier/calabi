@@ -1842,8 +1842,25 @@ sudo ipa-client-install -U \
   --password='<lab-default-password>' \
   --force-join \
   --mkhomedir \
-  --enable-dns-updates \
   --no-ntp
+```
+
+Because `bastion-01` uses a static address, do not rely on client-side dynamic
+DNS updates for its authoritative IdM records. Reassert and validate the A/PTR
+records explicitly:
+
+```bash
+kinit admin <<< '<lab-default-password>'
+
+ipa dnsrecord-add workshop.lan bastion-01 --a-rec=172.16.0.30 \
+  || ipa dnsrecord-mod workshop.lan bastion-01 --a-rec=172.16.0.30
+ipa dnsrecord-add 0.16.172.in-addr.arpa 30 \
+  --ptr-rec=bastion-01.workshop.lan. \
+  || ipa dnsrecord-mod 0.16.172.in-addr.arpa 30 \
+    --ptr-rec=bastion-01.workshop.lan.
+
+dig +short @172.16.0.10 bastion-01.workshop.lan A
+dig +short @172.16.0.10 -x 172.16.0.30
 ```
 
 Enable the same client-side login behavior the automation expects:
@@ -2008,14 +2025,31 @@ ipa-client-install -U \
   --principal=admin \
   --password='<lab-default-password>' \
   --force-join \
-  --mkhomedir \
-  --enable-dns-updates
+  --mkhomedir
 
 mkdir -p /usr/local/libexec/mirror-registry /opt/quay-install /root/bin /opt/openshift
 curl -L -o /tmp/mirror-registry-amd64.tar.gz \
   https://mirror.openshift.com/pub/cgw/mirror-registry/latest/mirror-registry-amd64.tar.gz
 tar -C /usr/local/libexec/mirror-registry -xzf /tmp/mirror-registry-amd64.tar.gz
 install -m 0755 /usr/local/libexec/mirror-registry/mirror-registry /usr/local/bin/mirror-registry
+```
+
+As with the bastion, the mirror-registry guest has a static address. Reassert
+and validate its authoritative IdM records explicitly instead of relying on
+client-driven dynamic DNS updates:
+
+```bash
+kinit admin <<< '<lab-default-password>'
+
+ipa dnsrecord-add workshop.lan mirror-registry --a-rec=172.16.0.20 \
+  || ipa dnsrecord-mod workshop.lan mirror-registry --a-rec=172.16.0.20
+ipa dnsrecord-add 0.16.172.in-addr.arpa 20 \
+  --ptr-rec=mirror-registry.workshop.lan. \
+  || ipa dnsrecord-mod 0.16.172.in-addr.arpa 20 \
+    --ptr-rec=mirror-registry.workshop.lan.
+
+dig +short @172.16.0.10 mirror-registry.workshop.lan A
+dig +short @172.16.0.10 -x 172.16.0.20
 ```
 
 Request an IdM-issued certificate for the registry and install the registry with
@@ -2788,6 +2822,12 @@ OpenShift to use OIDC._
 > `openshift_post_install_breakglass_auth`,
 > `openshift_post_install_keycloak`, and
 > `openshift_post_install_oidc_auth`.
+>
+> Architecture reference:
+> <a href="./authentication-model.md"><kbd>AUTH MODEL</kbd></a>
+> for the current supported auth boundary, and
+> <a href="./ad-idm-policy-model.md"><kbd>AD / IDM POLICY MODEL</kbd></a>
+> for the planned future AD-source-of-truth model.
 
 The supported execution order is:
 

@@ -1,23 +1,45 @@
 ---
-lab_name_resolution_bootstrap_hosts:
-  - ipv4_address: "{{ bastion_vm.network.ipv4_address }}"
-    names:
-      - "{{ bastion_vm.name }}.{{ bastion_vm.domain }}"
-      - "{{ bastion_vm.name }}"
-  - ipv4_address: "{{ idm_vm.network.ipv4_address }}"
-    names:
-      - "{{ idm_vm.name }}.{{ idm_vm.domain }}"
-      - "{{ idm_vm.name }}"
-  - ipv4_address: "{{ mirror_registry_vm.network.ipv4_address }}"
-    names:
-      - "{{ mirror_registry_vm.name }}.{{ mirror_registry_vm.domain }}"
-      - "{{ mirror_registry_vm.name }}"
-  - ipv4_address: "{{ openshift_install_cluster.network.api_vip }}"
-    names:
-      - "{{ openshift_install_cluster.dns.api_fqdn }}"
-      - "{{ openshift_install_cluster.dns.api_int_fqdn }}"
-      - api
-      - api-int
+lab_name_resolution_bootstrap_hosts: >-
+  {%- set entries = [] -%}
+  {%- if bastion_vm is defined and bastion_vm.network is defined -%}
+  {%- set _ = entries.append({
+        'ipv4_address': bastion_vm.network.ipv4_address,
+        'names': [
+          bastion_vm.name ~ '.' ~ bastion_vm.domain,
+          bastion_vm.name
+        ]
+      }) -%}
+  {%- endif -%}
+  {%- if idm_vm is defined and idm_vm.network is defined -%}
+  {%- set _ = entries.append({
+        'ipv4_address': idm_vm.network.ipv4_address,
+        'names': [
+          idm_vm.name ~ '.' ~ idm_vm.domain,
+          idm_vm.name
+        ]
+      }) -%}
+  {%- endif -%}
+  {%- if mirror_registry_vm is defined and mirror_registry_vm.network is defined -%}
+  {%- set _ = entries.append({
+        'ipv4_address': mirror_registry_vm.network.ipv4_address,
+        'names': [
+          mirror_registry_vm.name ~ '.' ~ mirror_registry_vm.domain,
+          mirror_registry_vm.name
+        ]
+      }) -%}
+  {%- endif -%}
+  {%- if openshift_install_cluster is defined and openshift_install_cluster.network is defined and openshift_install_cluster.dns is defined -%}
+  {%- set _ = entries.append({
+        'ipv4_address': openshift_install_cluster.network.api_vip,
+        'names': [
+          openshift_install_cluster.dns.api_fqdn,
+          openshift_install_cluster.dns.api_int_fqdn,
+          'api',
+          'api-int'
+        ]
+      }) -%}
+  {%- endif -%}
+  {{ entries }}
 
 lab_name_resolution_bootstrap_targets: >-
   {{
