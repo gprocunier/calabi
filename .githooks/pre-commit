@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+deny_paths=(
+  "aws-metal-openshift-demo/inventory/group_vars/all/lab_credentials.yml"
+)
+
+staged_paths="$(git diff --cached --name-only --diff-filter=ACMRTUXB)"
+
+for deny in "${deny_paths[@]}"; do
+  if printf '%s\n' "${staged_paths}" | grep -Fxq "${deny}"; then
+    echo "ERROR: Refusing to commit tracked secret file: ${deny}" >&2
+    echo "Use the example file and keep the real one untracked." >&2
+    exit 1
+  fi
+done
+
+scan_file() {
+  local path="$1"
+
+  # Pull staged content (not working tree) so the hook matches what will commit.
+  local content
+  if ! content="$(git show ":${path}" 2>/dev/null)"; then
+    return 0
+  fi
+
+  # Hard secret patterns.
+  if printf '%s' "${content}" | grep -Eq '-----BEGIN[[:space:]].*PRIVATE KEY-----'; then
+    echo "ERROR: Private key material detected in staged file: ${path}" >&2
+    exit 1
+  fi
+  if printf '%s' "${content}" | grep -Eq '\b(AKIA|ASIA)[0-9A-Z]{16}\b'; then
+    echo "ERROR: AWS access key id pattern detected in staged file: ${path}" >&2
+    exit 1
+  fi
+  if printf '%s' "${content}" | grep -Eq '\baws_secret_access_key\b|\baws_access_key_id\b'; then
+    echo "ERROR: AWS credential key names detected in staged file: ${path}" >&2
+    exit 1
+  fi
+  if printf '%s' "${content}" | grep -Eq '\b(auths|credsStore|credHelpers)\b' && printf '%s' "${content}" | grep -Eq '"auth"[[:space:]]*:'; then
+    echo "ERROR: Docker auth config pattern detected in staged file: ${path}" >&2
+    exit 1
+  fi
+
+  # Lab credentials should be vaulted (except the tracked example).
+  if [[ "${path}" != *"lab_credentials.yml.example" ]]; then
+    if printf '%s' "${content}" | grep -Eq '^\$ANSIBLE_VAULT;'; then
+      return 0
+    fi
+    if printf '%s' "${content}" | grep -Eq '^\s*(lab_default_password|lab_rhsm_activation_key|lab_rhsm_organization_id|lab_rhsm_password)\s*:'; then
+      echo "ERROR: Plaintext lab credential keys detected in staged file: ${path}" >&2
+      echo "Encrypt local lab credentials with ansible-vault and keep them untracked." >&2
+      exit 1
+    fi
+  fi
+}
+
+while IFS= read -r path; do
+  [[ -z "${path}" ]] && continue
+
+  # Skip deletes.
+  if git diff --cached --name-status -- "${path}" | grep -q '^D'; then
+    continue
+  fi
+
+  scan_file "${path}"
+done <<< "${staged_paths}"
+

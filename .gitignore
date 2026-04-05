@@ -1,0 +1,6 @@
+# Local secrets (intentionally untracked)
+aws-metal-openshift-demo/inventory/group_vars/all/lab_credentials.yml
+
+# Common Ansible artifacts
+*.retry
+

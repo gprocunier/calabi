@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# pre-push stdin lines:
+#   <local ref> <local sha1> <remote ref> <remote sha1>
+
+scan_commit_range() {
+  local local_sha="$1"
+  local remote_sha="$2"
+
+  # New branch: remote sha is all zeros.
+  if [[ "${remote_sha}" == "0000000000000000000000000000000000000000" ]]; then
+    remote_sha=""
+  fi
+
+  local range
+  if [[ -n "${remote_sha}" ]]; then
+    range="${remote_sha}..${local_sha}"
+  else
+    range="${local_sha}"
+  fi
+
+  # Reuse the pre-commit hook logic on each commit’s tree diff.
+  local paths
+  paths="$(git diff --name-only --diff-filter=ACMRTUXB "${range}")"
+
+  if printf '%s\n' "${paths}" | grep -Fxq "aws-metal-openshift-demo/inventory/group_vars/all/lab_credentials.yml"; then
+    echo "ERROR: Refusing to push tracked secret file: aws-metal-openshift-demo/inventory/group_vars/all/lab_credentials.yml" >&2
+    exit 1
+  fi
+
+  while IFS= read -r path; do
+    [[ -z "${path}" ]] && continue
+    # Skip binary-ish files by checking for NUL bytes in the blob.
+    if git show "${local_sha}:${path}" 2>/dev/null | grep -q $'\x00'; then
+      continue
+    fi
+    if git show "${local_sha}:${path}" 2>/dev/null | grep -Eq '-----BEGIN[[:space:]].*PRIVATE KEY-----'; then
+      echo "ERROR: Private key material detected in pushed content: ${path}" >&2
+      exit 1
+    fi
+    if git show "${local_sha}:${path}" 2>/dev/null | grep -Eq '\b(AKIA|ASIA)[0-9A-Z]{16}\b'; then
+      echo "ERROR: AWS access key id pattern detected in pushed content: ${path}" >&2
+      exit 1
+    fi
+  done <<< "${paths}"
+}
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [[ -z "${local_sha}" ]] && continue
+  scan_commit_range "${local_sha}" "${remote_sha}"
+done
+

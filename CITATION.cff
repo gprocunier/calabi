@@ -4,6 +4,8 @@ message: If you reference this project, please cite it using the metadata below.
 type: software
 license: GPL-3.0
 repository-code: https://github.com/gprocunier/calabi
+version: 1.0.0
+date-released: 2026-04-05
 authors:
   - family-names: Procunier
     given-names: Greg
