@@ -44,8 +44,8 @@ path depends on.
 ## Node sizing
 
 - control plane nodes: `8 vCPU / 24 GiB`
-- infra nodes: `16 vCPU / 48 GiB`
-- worker nodes: `8 vCPU / 16 GiB`
+- infra nodes: `16 vCPU / 64 GiB`
+- worker nodes: `12 vCPU / 16 GiB`
 
 ## Nodes
 
