@@ -79,7 +79,7 @@
   ansible.builtin.stat:
     path: "{{ item }}"
   delegate_to: localhost
-  become: true
+  become: false
   loop:
     - "{{ openshift_post_install_ldap_auth_oc_local_path }}"
     - "{{ openshift_post_install_ldap_auth_kubeconfig_local_path }}"
@@ -300,17 +300,17 @@
   become: true
   when: openshift_ldap_auth.manage_group_sync | bool
 
-- name: Render cluster-admin binding for the synced openshift-admin group
+- name: Render cluster-admin binding for the synced access group
   ansible.builtin.copy:
     dest: >-
       {{ openshift_post_install_ldap_auth_remote_dir }}/
-      openshift-admin-cluster-admin.yaml
+      {{ openshift_ldap_auth.authorization.cluster_admin_group }}-cluster-admin.yaml
     mode: "0600"
     content: |-
       apiVersion: rbac.authorization.k8s.io/v1
       kind: ClusterRoleBinding
       metadata:
-        name: openshift-admin-cluster-admin
+        name: {{ openshift_ldap_auth.authorization.cluster_admin_group }}-cluster-admin
       roleRef:
         apiGroup: rbac.authorization.k8s.io
         kind: ClusterRole
@@ -321,7 +321,7 @@
           name: {{ openshift_ldap_auth.authorization.cluster_admin_group }}
   when: openshift_ldap_auth.manage_group_sync | bool
 
-- name: Apply cluster-admin access for the synced openshift-admin group
+- name: Apply cluster-admin access for the synced access group
   ansible.builtin.command:
     argv:
       - "{{ openshift_post_install_ldap_auth_remote_oc_path }}"
@@ -329,7 +329,7 @@
       - -f
       - >-
         {{ openshift_post_install_ldap_auth_remote_dir }}/
-        openshift-admin-cluster-admin.yaml
+        {{ openshift_ldap_auth.authorization.cluster_admin_group }}-cluster-admin.yaml
   environment:
     KUBECONFIG: "{{ openshift_post_install_ldap_auth_remote_kubeconfig_path }}"
   register: openshift_post_install_ldap_auth_cluster_admin_binding
@@ -379,7 +379,7 @@
 
 # ---------------------------------------------------------------------------
 # Smoke test: verify a real LDAP-authenticated login works end-to-end.
-# Logs in as the first identity_user in the openshift-admin group using the
+# Logs in as the first identity_user in the cluster-admin access group using the
 # LDAP IDP, confirms the resulting token resolves the correct username, then
 # immediately revokes the token.  A dedicated kubeconfig is used so this
 # test never touches the admin kubeconfig.
@@ -412,7 +412,7 @@
     openshift_post_install_ldap_auth_test_user: >-
       {{
         idm_server.identity_users
-        | selectattr('groups', 'contains', 'openshift-admin')
+        | selectattr('groups', 'contains', 'access-openshift-admin')
         | map(attribute='name')
         | first
       }}

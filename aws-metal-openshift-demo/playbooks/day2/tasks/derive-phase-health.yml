@@ -51,7 +51,7 @@
     openshift_post_install_probe_ldap_test_user: >-
       {{
         idm_server.identity_users
-        | selectattr('groups', 'contains', 'openshift-admin')
+        | selectattr('groups', 'contains', 'access-openshift-admin')
         | map(attribute='name')
         | first
         | default('')
@@ -310,7 +310,7 @@
     client_secret={{ openshift_post_install_probe_oidc_client_secret | quote }}
     provider_name="{{ openshift_post_install_probe_oidc_provider_name }}"
     idm_ca="{{ openshift_post_install_probe_idm_ca_path }}"
-    cluster_admin_group="{{ openshift_oidc_auth.authorization.cluster_admin_group | default('openshift-admin') }}"
+    cluster_admin_group="{{ openshift_oidc_auth.authorization.cluster_admin_group | default('access-openshift-admin') }}"
     [[ " ${idps} " == *" ${provider_name} "* ]] || { echo false; exit 0; }
     [[ "${auth_health}" == "True,False,False" ]] || { echo false; exit 0; }
     curl --cacert "${idm_ca}" -sf "${issuer}/.well-known/openid-configuration" >/dev/null 2>&1 || { echo false; exit 0; }
@@ -330,7 +330,7 @@
     import json
     import sys
 
-    cluster_admin_group = "{{ openshift_oidc_auth.authorization.cluster_admin_group | default('openshift-admin') }}"
+    cluster_admin_group = "{{ openshift_oidc_auth.authorization.cluster_admin_group | default('access-openshift-admin') }}"
     data = json.loads(sys.argv[1])
     token = data["access_token"]
     payload = token.split(".")[1]
@@ -356,7 +356,7 @@
     import json
     import sys
 
-    cluster_admin_group = "{{ openshift_oidc_auth.authorization.cluster_admin_group | default('openshift-admin') }}"
+    cluster_admin_group = "{{ openshift_oidc_auth.authorization.cluster_admin_group | default('access-openshift-admin') }}"
     data = json.loads(sys.argv[1])
     token = data["access_token"]
     payload = token.split(".")[1]

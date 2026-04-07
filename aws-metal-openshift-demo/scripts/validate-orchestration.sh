@@ -9,6 +9,47 @@ TARGET_PLAYBOOK=""
 EXTRA_ARGS=()
 TOP_LEVEL_PLAYBOOKS=()
 
+controller_playbook_requires_winrm() {
+  local playbook_path="$1"
+  case "$playbook_path" in
+    */playbooks/bootstrap/ad-server.yml|playbooks/bootstrap/ad-server.yml)
+      return 0
+      ;;
+    */playbooks/bootstrap/idm.yml|playbooks/bootstrap/idm.yml)
+      return 0
+      ;;
+    */playbooks/bootstrap/idm-ad-trust.yml|playbooks/bootstrap/idm-ad-trust.yml)
+      return 0
+      ;;
+    */playbooks/maintenance/ad-gc-diagnose.yml|playbooks/maintenance/ad-gc-diagnose.yml)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+assert_controller_pywinrm() {
+  python3 - <<'PY'
+import importlib.util
+import sys
+
+missing = [name for name in ("requests", "winrm") if importlib.util.find_spec(name) is None]
+if missing:
+    print(
+        "missing controller Python dependencies for Windows orchestration: "
+        + ", ".join(missing),
+        file=sys.stderr,
+    )
+    print(
+        "install them with: python3 -m pip install --user -r requirements-pip.txt",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+PY
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --playbook)
@@ -38,6 +79,16 @@ else
     find "${PROJECT_ROOT}/playbooks" -type f \( -name '*.yml' -o -name '*.yaml' \) \
       ! -path '*/tasks/*' -print0 | sort -z
   )
+fi
+
+if [[ "${CALABI_VALIDATE_REMOTE_EXECUTION:-0}" != "1" ]]; then
+  for playbook_path in "${TOP_LEVEL_PLAYBOOKS[@]}"; do
+    if controller_playbook_requires_winrm "$playbook_path"; then
+      echo "==> Checking controller Python WinRM dependencies"
+      assert_controller_pywinrm
+      break
+    fi
+  done
 fi
 
 echo "==> Parsing YAML sources"

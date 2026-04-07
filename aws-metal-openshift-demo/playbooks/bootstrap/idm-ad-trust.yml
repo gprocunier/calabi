@@ -6,6 +6,7 @@
   vars_files:
     - ../../vars/global/pki.yml
     - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/ad_group_policy.yml
     - ../../vars/global/ad_integration.yml
     - ../../vars/global/ad_server.yml
     - ../../vars/guests/ad_vm.yml
@@ -57,6 +58,7 @@
   vars_files:
     - ../../vars/global/pki.yml
     - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/ad_group_policy.yml
     - ../../vars/global/ad_integration.yml
     - ../../vars/global/ad_server.yml
     - ../../vars/guests/ad_vm.yml
@@ -122,6 +124,7 @@
   vars_files:
     - ../../vars/global/pki.yml
     - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/ad_group_policy.yml
     - ../../vars/global/ad_integration.yml
     - ../../vars/global/ad_server.yml
     - ../../vars/guests/ad_vm.yml
@@ -134,13 +137,26 @@
         - not (idm_ad_trust.enabled | bool)
           or not (lab_build_ad_server | bool)
 
+    - name: Derive the hypervisor delegate host for IDM reachability checks
+      ansible.builtin.set_fact:
+        idm_ad_trust_delegate_host: >-
+          {{ (groups['aws_metal'] | default([])) | first | default('') }}
+
+    - name: Validate the hypervisor delegate host is available
+      ansible.builtin.assert:
+        that:
+          - idm_ad_trust_delegate_host | length > 0
+        fail_msg: >-
+          IDM AD trust guest configuration requires an aws_metal hypervisor
+          inventory host so the controller can reach the guest network.
+
     - name: Wait for the IDM guest SSH port from the hypervisor network
       ansible.builtin.wait_for:
         host: "{{ idm_vm.network.ipv4_address }}"
         port: 22
         timeout: 900
         sleep: 10
-      delegate_to: "{{ groups['aws_metal'] | first }}"
+      delegate_to: "{{ idm_ad_trust_delegate_host }}"
       become: false
 
     - name: Wait for the IDM guest to accept SSH connections

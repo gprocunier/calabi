@@ -63,13 +63,26 @@
     - ../../vars/global/lab_switch_ports.yml
 
   pre_tasks:
+    - name: Derive the hypervisor delegate host for mirror registry reachability checks
+      ansible.builtin.set_fact:
+        mirror_registry_guest_delegate_host: >-
+          {{ (groups['aws_metal'] | default([])) | first | default('') }}
+
+    - name: Validate the hypervisor delegate host is available
+      ansible.builtin.assert:
+        that:
+          - mirror_registry_guest_delegate_host | length > 0
+        fail_msg: >-
+          mirror registry guest configuration requires an aws_metal hypervisor
+          inventory host so the controller can reach the guest network.
+
     - name: Wait for the mirror registry guest SSH port from the hypervisor network
       ansible.builtin.wait_for:
         host: "{{ mirror_registry_vm.network.ipv4_address }}"
         port: 22
         timeout: 900
         sleep: 10
-      delegate_to: "{{ groups['aws_metal'] | first }}"
+      delegate_to: "{{ mirror_registry_guest_delegate_host }}"
       become: false
 
     - name: Reset any cached SSH state before connecting to the mirror registry guest

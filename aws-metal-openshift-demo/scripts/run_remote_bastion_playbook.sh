@@ -25,6 +25,7 @@ LOCAL_LOG_PATH="${LOCAL_STATE_DIR}/${PLAYBOOK_STEM}.log"
 LOCAL_PID_PATH="${LOCAL_STATE_DIR}/${PLAYBOOK_STEM}.pid"
 LOCAL_RC_PATH="${LOCAL_STATE_DIR}/${PLAYBOOK_STEM}.rc"
 LOCAL_REMOTE_ENV_PATH="${LOCAL_STATE_DIR}/${PLAYBOOK_STEM}.remote.env"
+LOCAL_STAGE_PATH="${LOCAL_STATE_DIR}/${PLAYBOOK_STEM}.stage"
 
 if ! command -v ansible-inventory >/dev/null 2>&1; then
   echo "ansible-inventory is required" >&2
@@ -46,11 +47,21 @@ HYPERVISOR_KEY="$(printf '%s' "${METAL_JSON}" | jq -r '.ansible_ssh_private_key_
 cd "${PROJECT_ROOT}"
 
 mkdir -p "${LOCAL_STATE_DIR}"
-rm -f "${LOCAL_PID_PATH}" "${LOCAL_RC_PATH}" "${LOCAL_LOG_PATH}" "${LOCAL_REMOTE_ENV_PATH}"
+rm -f "${LOCAL_PID_PATH}" "${LOCAL_RC_PATH}" "${LOCAL_LOG_PATH}" "${LOCAL_REMOTE_ENV_PATH}" "${LOCAL_STAGE_PATH}"
 printf '%s\n' "$$" > "${LOCAL_PID_PATH}"
 
 log_local() {
   printf '[%(%Y-%m-%d %H:%M:%S)T] %s\n' -1 "$*" | tee -a "${LOCAL_LOG_PATH}"
+}
+
+record_stage() {
+  local stage="$1"
+  local detail="${2:-}"
+  cat > "${LOCAL_STAGE_PATH}" <<EOF
+STAGE=${stage}
+DETAIL=${detail}
+UPDATED_AT=$(date +%s)
+EOF
 }
 
 record_remote_handoff() {
@@ -74,6 +85,7 @@ REMOTE_PID_PATH=${remote_pid_file}
 REMOTE_RC_PATH=${remote_rc_file}
 REMOTE_LOG_PATH=${remote_log_file}
 EOF
+    record_stage "remote-running" "${remote_log_file}"
     log_local "Remote runner handed off on bastion."
     log_local "Remote log: ${remote_log_file}"
   fi
@@ -82,6 +94,13 @@ EOF
 finish_local() {
   local rc="${1:-0}"
   printf '%s\n' "${rc}" > "${LOCAL_RC_PATH}"
+  if [[ -f "${LOCAL_REMOTE_ENV_PATH}" ]]; then
+    record_stage "remote-running" "bastion"
+  elif [[ "${rc}" == "0" ]]; then
+    record_stage "completed" "${PLAYBOOK_PATH}"
+  else
+    record_stage "failed" "${PLAYBOOK_PATH}"
+  fi
   rm -f "${LOCAL_PID_PATH}"
 }
 
@@ -108,6 +127,7 @@ case "${PLAYBOOK_PATH}" in
     STAGE_ARGS+=(
       -e "bastion_stage_require_lab_default_password=true"
       -e "bastion_stage_requires_support_service_rhsm=true"
+      -e "bastion_stage_require_operator_ssh_public_key=true"
     )
     ;;
   playbooks/day2/openshift-post-install.yml|playbooks/day2/openshift-post-install-*.yml)
@@ -115,19 +135,24 @@ case "${PLAYBOOK_PATH}" in
       -e "bastion_stage_require_lab_default_password=true"
     )
     ;;
-  playbooks/bootstrap/bastion.yml|playbooks/bootstrap/idm.yml|playbooks/lab/mirror-registry.yml|playbooks/lab/mirror-registry-refresh.yml)
+  playbooks/bootstrap/bastion.yml|playbooks/bootstrap/bastion-join.yml|playbooks/bootstrap/idm.yml|playbooks/bootstrap/idm-ad-trust.yml|playbooks/lab/mirror-registry.yml|playbooks/lab/mirror-registry-refresh.yml|playbooks/lab/openshift-dns.yml|playbooks/lab/openshift-dns-cleanup.yml)
     STAGE_ARGS+=(
       -e "bastion_stage_requires_support_service_rhsm=true"
+      -e "bastion_stage_require_operator_ssh_public_key=true"
     )
     ;;
 esac
 
+record_stage "validate" "${PLAYBOOK_PATH}"
 log_local "Validating ${PLAYBOOK_PATH}"
-"${VALIDATION_SCRIPT}" --playbook "${PLAYBOOK_PATH}" "${ORIGINAL_ARGS[@]}" 2>&1 | tee -a "${LOCAL_LOG_PATH}"
+CALABI_VALIDATE_REMOTE_EXECUTION=1 \
+  "${VALIDATION_SCRIPT}" --playbook "${PLAYBOOK_PATH}" "${ORIGINAL_ARGS[@]}" 2>&1 | tee -a "${LOCAL_LOG_PATH}"
 
+record_stage "bastion-stage" "${STAGE_PLAYBOOK}"
 log_local "Refreshing bastion staging"
 ansible-playbook -i "${INVENTORY_PATH}" "${STAGE_PLAYBOOK}" "${STAGE_ARGS[@]}" 2>&1 | tee -a "${LOCAL_LOG_PATH}"
 
+record_stage "handoff" "${BASTION_HOST}"
 log_local "Handing off ${PLAYBOOK_PATH} to bastion ${BASTION_HOST}"
 SSH_OUTPUT="$(
 ssh \

@@ -24,11 +24,11 @@ openshift_ldap_auth:
   group_sync:
     schedule: "*/30 * * * *"
     whitelist_groups:
-      - openshift-admin
-      - virt-admin
-      - developer
+      - access-openshift-admin
+      - access-virt-admin
+      - access-developer
     rfc2307:
       groups_filter: "(objectClass=groupOfNames)"
       users_filter: "(objectClass=person)"
   authorization:
-    cluster_admin_group: openshift-admin
+    cluster_admin_group: access-openshift-admin

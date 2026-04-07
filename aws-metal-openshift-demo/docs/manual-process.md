@@ -30,9 +30,10 @@ thrown away between runs.
 > [!IMPORTANT]
 > The validated support-services order changed. The current golden path is:
 > build `bastion-01`, stage the project to bastion, optionally build
-> `ad-01` with AD DS and AD CS, build `idm-01`, join the bastion to IdM, then
-> continue with `mirror-registry`, OpenShift DNS, and cluster work. The legacy
-> section numbering is retained below so older deep links do not break.
+> `ad-01` with AD DS and AD CS, build `idm-01`, optionally configure IdM to AD
+> trust, join the bastion to IdM, then continue with `mirror-registry`,
+> OpenShift DNS, and cluster work. The legacy section numbering is retained
+> below so older deep links do not break.
 
 > [!NOTE]
 > This file is the step-by-step operator runbook for the intended supported
@@ -91,6 +92,7 @@ Validated support-services order:
 - [13A. Optionally Build AD DS And AD CS From Bastion](#13a-optionally-build-ad-ds-and-ad-cs-from-bastion)
 - [10. Build The IdM VM](#10-build-the-idm-vm)
 - [11. Configure IdM In The Guest](#11-configure-idm-in-the-guest)
+- [13AA. Optionally Configure IdM To AD Trust](#13aa-optionally-configure-idm-to-ad-trust)
 - [13B. Join The Bastion To IdM](#13b-join-the-bastion-to-idm)
 - [14. Build The Mirror Registry VM](#14-build-the-mirror-registry-vm)
 - [15. Mirror OpenShift And Operator Content](#15-mirror-openshift-and-operator-content)
@@ -103,6 +105,7 @@ Legacy section order retained below:
 - [12. Build The Bastion VM](#12-build-the-bastion-vm)
 - [13. Stage The Project To The Bastion](#13-stage-the-project-to-the-bastion)
 - [13A. Optionally Build AD DS And AD CS From Bastion](#13a-optionally-build-ad-ds-and-ad-cs-from-bastion)
+- [13AA. Optionally Configure IdM To AD Trust](#13aa-optionally-configure-idm-to-ad-trust)
 - [13B. Join The Bastion To IdM](#13b-join-the-bastion-to-idm)
 - [14. Build The Mirror Registry VM](#14-build-the-mirror-registry-vm)
 - [15. Mirror OpenShift And Operator Content](#15-mirror-openshift-and-operator-content)
@@ -1226,7 +1229,9 @@ ln -sfn /opt/openshift/aws-metal-openshift-demo/generated/tools/4.20.15/bin/open
 ln -sfn /usr/local/bin/track-mirror-progress "$HOME/bin/track-mirror-progress"
 ln -sfn /usr/local/bin/track-mirror-progress-tmux "$HOME/bin/track-mirror-progress-tmux"
 ln -sfn /opt/openshift/aws-metal-openshift-demo/scripts/run_bastion_playbook.sh "$HOME/bin/run-bastion-playbook"
-ln -sfn /opt/openshift/aws-metal-openshift-demo/generated/ocp/auth/kubeconfig "$HOME/etc/kubeconfig"
+cp /opt/openshift/aws-metal-openshift-demo/generated/ocp/auth/kubeconfig "$HOME/etc/kubeconfig"
+cp /opt/openshift/aws-metal-openshift-demo/generated/ocp/auth/kubeconfig "$HOME/etc/kubeconfig.local"
+chmod 0600 "$HOME/etc/kubeconfig" "$HOME/etc/kubeconfig.local"
 ln -sfn /opt/openshift/aws-metal-openshift-demo/generated/ocp/idm-ca.crt "$HOME/etc/idm-ca.crt"
 cat <<'PROFILE' | sudo tee /etc/profile.d/openshift-bastion.sh >/dev/null
 case ":$PATH:" in
@@ -1237,8 +1242,13 @@ case ":$PATH:" in
   *":/opt/openshift/aws-metal-openshift-demo/generated/tools/4.20.15/bin:"*) ;;
   *) PATH="/opt/openshift/aws-metal-openshift-demo/generated/tools/4.20.15/bin:$PATH" ;;
 esac
-if [ -z "${KUBECONFIG:-}" ] && [ -r "$HOME/etc/kubeconfig" ]; then
-  export KUBECONFIG="$HOME/etc/kubeconfig"
+export KUBECONFIG_ADMIN="$HOME/etc/kubeconfig.local"
+if [ -z "${KUBECONFIG:-}" ]; then
+  if [ -r "$HOME/etc/kubeconfig" ]; then
+    export KUBECONFIG="$HOME/etc/kubeconfig"
+  elif [ -r "$KUBECONFIG_ADMIN" ]; then
+    export KUBECONFIG="$KUBECONFIG_ADMIN"
+  fi
 fi
 PROFILE
 EOF
@@ -1802,11 +1812,49 @@ curl -sI http://172.16.0.40:5985/wsman | head -n 1
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 'virsh domstate ad-01.corp.lan'
 ```
 
+## 13AA. Optionally Configure IdM To AD Trust
+
+_If the AD support VM is enabled and the lab should bridge selected AD groups
+into local IdM policy groups, complete the trust setup here before bastion
+enrollment._
+
+> [!NOTE]
+> Automation reference: `playbooks/bootstrap/idm-ad-trust.yml`. The current
+> automated path configures the AD conditional forwarder for `workshop.lan`,
+> enables IdM AD trust support, creates the AD DNS forward zone in IPA,
+> establishes the trust, and nests the mapped IdM external groups into the
+> target local policy groups described in
+> <a href="./ad-idm-policy-model.md"><kbd>AD / IDM POLICY MODEL</kbd></a>.
+
+Manual checkpoints for this phase:
+
+- on `AD-01`, `workshop.lan` must resolve through the conditional forwarder to
+  `idm-01`
+- on `idm-01`, `corp.lan` forward-zone lookups and AD LDAP SRV lookups must
+  resolve through `ad-01`
+- `ipa trust-show corp.lan --all` must succeed on `idm-01`
+- the mapped IdM external groups and nested local policy groups must match the
+  intended bridge policy
+
+Useful spot checks:
+
+```powershell
+Resolve-DnsName -Name 'idm-01.workshop.lan' -Server 127.0.0.1 -Type A
+```
+
+```bash
+host ad-01.corp.lan 127.0.0.1
+host -t SRV _ldap._tcp.dc._msdcs.corp.lan 127.0.0.1
+ipa trust-show corp.lan --all
+```
+
 ## 13B. Join The Bastion To IdM
 
 _At this point `bastion-01` already exists and `idm-01` is already configured.
 The remaining work is to trust the active IdM CA, enroll the bastion as an IPA
-client, and enable the authselect features used by the rest of the lab._
+client, and enable the authselect features used by the rest of the lab. The
+current join path no longer performs a general guest update or reboot; those
+cycles stay in the earlier `site-bootstrap.yml` provisioning flow._
 
 > [!NOTE]
 > Automation reference: `playbooks/bootstrap/bastion-join.yml`.
@@ -2008,6 +2056,12 @@ dnf -y install \
   openssl \
   tar \
   gzip
+
+mkdir -p /etc/containers/containers.conf.d
+cat <<'EOF' >/etc/containers/containers.conf.d/99-mirror-registry-cgroupfs.conf
+[engine]
+cgroup_manager = "cgroupfs"
+EOF
 
 systemctl enable --now firewalld
 systemctl enable --now cockpit.socket
@@ -2701,6 +2755,23 @@ export KUBECONFIG=/var/tmp/ocp-kubeconfig
 /var/tmp/oc get co
 /var/tmp/oc get nodes
 /var/tmp/oc get csr
+EOF
+```
+
+After those checks pass, refresh the bastion helper kubeconfigs from the
+current cluster state and import the live cluster CA bundle into bastion system
+trust so normal `oc login` works without `--insecure-skip-tls-verify`.
+
+```bash
+ssh cloud-user@172.16.0.30 <<'EOF'
+set -euo pipefail
+cp /opt/openshift/aws-metal-openshift-demo/generated/ocp/auth/kubeconfig "$HOME/etc/kubeconfig"
+cp /opt/openshift/aws-metal-openshift-demo/generated/ocp/auth/kubeconfig "$HOME/etc/kubeconfig.local"
+chmod 0600 "$HOME/etc/kubeconfig" "$HOME/etc/kubeconfig.local"
+oc --kubeconfig "$HOME/etc/kubeconfig.local" get configmap/kube-root-ca.crt \
+  -o jsonpath='{.data.ca\.crt}' >/tmp/kube-root-ca.crt
+sudo cp /tmp/kube-root-ca.crt /etc/pki/ca-trust/source/anchors/ocp-cluster-ca-bundle.pem
+sudo update-ca-trust extract
 EOF
 ```
 
@@ -4188,6 +4259,13 @@ destroy only the OpenShift cluster and preserve the healthy support services._
 > you only want to rebuild the cluster, preserve support services and use the
 > cluster-only cleanup path instead of the full cleanup.
 
+> [!IMPORTANT]
+> For a true fresh support-services redeploy, removing the support VMs is not
+> enough. Also wipe the support guest block devices (`/dev/ebs/bastion-01`,
+> `/dev/ebs/ad-01`, `/dev/ebs/idm-01`, and `/dev/ebs/mirror-registry`) before
+> replaying `playbooks/site-bootstrap.yml`, otherwise the next run can inherit
+> stale guest state.
+
 Automation shortcut for the preferred fresh-cluster rebuild:
 
 ```bash
@@ -4228,6 +4306,18 @@ done
 EOF
 
 rm -rf /opt/openshift/generated/ocp
+```
+
+When tearing all the way back to the post-OVS support-services boundary, wipe
+the support guest block devices too:
+
+```bash
+ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
+for disk in /dev/ebs/bastion-01 /dev/ebs/ad-01 /dev/ebs/idm-01 /dev/ebs/mirror-registry; do
+  wipefs -a "$disk" || true
+  dd if=/dev/zero of="$disk" bs=1M count=100 oflag=direct,dsync status=none || true
+done
+EOF
 ```
 
 ## 36. Manual Debugging Examples

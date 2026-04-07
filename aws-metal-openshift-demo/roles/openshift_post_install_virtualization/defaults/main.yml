@@ -63,3 +63,5 @@ openshift_post_install_virtualization_far_template_spec:
   sharedparameters: {}
   nodeparameters: {}
   nodeSecretNames: {}
+openshift_post_install_virtualization_daemonset_recovery_enabled: true
+openshift_post_install_virtualization_daemonset_recovery_settle_seconds: 15

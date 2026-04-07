@@ -211,10 +211,17 @@ idm_server:
     - freeipa-4
     - freeipa-trust
   identity_groups:
-    - admins
-    - openshift-admin
-    - virt-admin
-    - developer
+    - access-openshift-admin
+    - access-virt-admin
+    - access-developer
+    - access-aap-admin
+    - access-linux-admin
+  identity_group_descriptions:
+    access-linux-admin: "Access group: Linux sudo"
+    access-openshift-admin: "Access group: OpenShift cluster-admin"
+    access-virt-admin: "Access group: OpenShift virtualization admin"
+    access-developer: "Access group: Developer access"
+    access-aap-admin: "Access group: AAP admin"
   password_policy:
     enabled: true
     maxlife_days: 3650
@@ -222,7 +229,7 @@ idm_server:
     history_length: 0
     minclasses: 0
     minlength: 8
-    priority_start: 40
+    priority_start: 50
     priority_step: 10
   identity_users:
     - name: sysop
@@ -231,26 +238,26 @@ idm_server:
       shell: /bin/bash
       password: "{{ lab_default_password | default('') }}"
       groups:
-        - admins
-        - openshift-admin
+        - access-linux-admin
+        - access-openshift-admin
     - name: virtadm
       first_name: Virt
       last_name: Admin
       shell: /bin/bash
       password: "{{ lab_default_password | default('') }}"
       groups:
-        - virt-admin
+        - access-virt-admin
     - name: dev
       first_name: Dev
       last_name: User
       shell: /bin/bash
       password: "{{ lab_default_password | default('') }}"
       groups:
-        - developer
+        - access-developer
   sudo_policy:
     enabled: true
     rule_name: admins-nopasswd-all
     description: >-
-      Permit admins group members to run any command on any host without
+      Permit access-linux-admin group members to run any command on any host without
       authentication
-    group: admins
+    group: access-linux-admin

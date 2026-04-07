@@ -84,6 +84,7 @@ Execution model:
 - imports:
   - `playbooks/bootstrap/ad-server.yml`
   - `playbooks/bootstrap/idm.yml`
+  - `playbooks/bootstrap/idm-ad-trust.yml`
   - `playbooks/bootstrap/bastion-join.yml`
   - `playbooks/lab/mirror-registry.yml`
   - `playbooks/lab/openshift-dns.yml`
@@ -103,6 +104,8 @@ Execution model:
     `/var/tmp/bastion-playbooks/`
 - support VMs (`ad-01`, `idm-01`, `bastion-01`, and `mirror-registry`) default to
   preserving existing disks and libvirt domains on rerun
+- a true fresh support-services rebuild now means both removing the support VMs
+  and wiping their backing block devices before replaying `site-bootstrap.yml`
 - the mirror-registry phase now caches successful mirror completion for the
   rendered content set and skips the expensive `oc-mirror` work on rerun unless
   forced
@@ -216,6 +219,32 @@ Important behavior:
   - `with-sudo`
 - enables `oddjobd` so domain-user home directories are created on first login
 
+### `playbooks/bootstrap/idm-ad-trust.yml`
+
+Purpose:
+
+- configure the optional IdM to AD trust after `idm-01` and the optional AD VM
+  are both available
+
+Execution model:
+
+- first registers the IdM guest and AD guest as temporary inventory hosts
+- configures the AD conditional forwarder for `workshop.lan` from the Windows
+  side before touching the IdM trust path
+- then runs the `idm_ad_trust` role on `idm-01` from the bastion-side flow
+- exits early unless both `lab_build_ad_server=true` and the AD-trust feature
+  are enabled
+
+Important behavior:
+
+- enables IdM AD-trust server support and the IPA forward zone for the AD
+  domain
+- validates both host and LDAP SRV lookups through the new forward zone before
+  creating the trust
+- creates the AD trust with bounded retry around transient oddjob/cache issues
+- creates the configured IdM external groups and nests them into the target
+  local IdM policy groups
+
 ### `playbooks/bootstrap/bastion.yml`
 
 Purpose:
@@ -328,8 +357,11 @@ Day-2 rerun behavior:
 The shell profile installed by bastion-stage:
 
 - prepends `$HOME/bin` and `generated/tools/current/bin` to `PATH`
-- exports `KUBECONFIG=$HOME/etc/kubeconfig` only when that file exists and is
-  readable
+- exports `KUBECONFIG_ADMIN=$HOME/etc/kubeconfig.local`
+- exports `KUBECONFIG=$HOME/etc/kubeconfig` when that writable working copy
+  exists, otherwise falls back to `KUBECONFIG_ADMIN`
+- keeps the generated cluster artifact kubeconfig as the source snapshot rather
+  than the default mutable login target
 - leaves early bastion logins clean even before OpenShift auth artifacts exist
 
 ### `playbooks/bootstrap/bastion-join.yml`
@@ -349,6 +381,9 @@ Important behavior:
 
 - refreshes the active IdM CA before enrollment
 - runs the FreeIPA client role only when enrollment is required
+- does not perform a general guest `dnf update` or reboot; that behavior now
+  stays in the initial `site-bootstrap.yml` provisioning path so `site-lab.yml`
+  does not power off its own control host mid-run
 - enables `authselect` with:
   - `with-mkhomedir`
   - `with-sudo`
@@ -514,13 +549,19 @@ Execution model:
 
 - runs locally on the current execution host, typically bastion
 - uses the rendered installer directory and pinned `openshift-install` binary
-- polls assisted-service from the rendezvous host during bootstrap
+- polls assisted-service from the rendezvous host during bootstrap when
+  `/etc/assisted/rendezvous-host.env` is still present; if that bootstrap-only
+  metadata is already gone, the assisted-service probe degrades cleanly rather
+  than failing the play
 - detects control-plane nodes stuck in `installing-pending-user-action`
 - on those nodes it:
   - ejects the agent ISO from libvirt
   - restores disk-first boot order
   - power-cycles the affected domains
 - waits for `bootstrap-complete`
+- if the first `bootstrap-complete` wait fails, probes the control-plane nodes
+  for `agent.service`, `kubelet.service`, and `bootkube.service`, recovers any
+  node still stuck in agent mode, and retries `bootstrap-complete` once
 - then probes the control-plane nodes again and recovers any node still stuck in
   `agent.service` without `kubelet.service`
 - only after those checks does it wait for `install-complete`
@@ -683,10 +724,15 @@ Execution model:
 - installs `kubernetes-nmstate-operator` in `openshift-nmstate`
 - creates `NMState/nmstate`
 - waits for the NMState namespace pods to become ready
+- if the `nmstate-handler` daemonset is not fully ready, captures diagnostics,
+  recycles only the non-ready handler pods, and retries once
 - applies NodeNetworkConfigurationPolicies for:
   - VLAN `202` as the OpenShift Virtualization live-migration network
   - VLANs `300`, `301`, and `302` as VM data networks
 - currently uses interface-name matching with `enp1s0` as the parent uplink
+- if the NodeNetworkConfigurationPolicies stay `Progressing`, captures
+  daemonset and policy diagnostics, recycles only the non-ready handler pods,
+  and rechecks policy availability once before failing
 - is intended to run after LDAP/infra conversion and before ODF or later
   networking day-2 work
 
@@ -799,6 +845,11 @@ Execution model:
 - stages the pinned `oc` binary and the generated kubeconfig on `virt-01`
 - runs cluster checks there instead of on the outside control node
 - verifies node, operator, CSR, and cluster version state
+- refreshes the bastion helper kubeconfigs from the current generated cluster
+  kubeconfig after validation succeeds
+- exports `configmap/kube-root-ca.crt` from the live cluster and installs that
+  bundle into bastion system trust so `oc login` works without
+  `--insecure-skip-tls-verify`
 
 ## Data Files
 
@@ -1252,6 +1303,9 @@ Critical tasks, phase by phase:
 - updates the guest and reboots if needed
 - installs client and registry packages
 - ensures firewalld is enabled
+- on RHEL 10, creates `/etc/containers/containers.conf.d/` and forces root
+  Podman to use `cgroupfs` before the Quay appliance install so the registry
+  containers do not stall under the default `systemd` cgroup manager
 
 #### 2. IdM integration
 

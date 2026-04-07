@@ -180,13 +180,13 @@
         }
       }}
     openshift_post_install_oidc_auth_cluster_admin_binding_name: >-
-      openshift-admin-cluster-admin
+      {{ openshift_oidc_auth.authorization.cluster_admin_group }}-cluster-admin
 
 - name: Assert local OIDC auth artifacts exist
   ansible.builtin.stat:
     path: "{{ item }}"
   delegate_to: localhost
-  become: true
+  become: false
   loop:
     - "{{ openshift_post_install_oidc_auth_oc_local_path }}"
     - "{{ openshift_post_install_oidc_auth_kubeconfig_local_path }}"

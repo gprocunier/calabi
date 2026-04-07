@@ -1,13 +1,16 @@
 ---
-# Future-state scaffold for AD-as-SoT with IdM-local authorization.
+# AD-as-SoT / IdM-policy bridge contract for fresh deployments.
 #
-# This file is intentionally not wired into the live orchestration yet.
-# It exists to capture the target contract before implementation starts.
+# The orchestration creates these groups directly when AD trust is enabled.
+# In-place migration from legacy group names is intentionally unsupported.
 
 ad_group_policy:
-  enabled: false
+  enabled: "{{ lab_configure_ad_trust | bool }}"
   source_of_truth: active_directory
   authorization_hub: idm
+  description_templates:
+    local: "Access group: {permission}"
+    external: "AD source group: {domain}/{group}"
   notes:
     - >-
       AD remains the source of truth for users and source-side group
@@ -20,9 +23,9 @@ ad_group_policy:
       then nested into local IdM POSIX groups.
   mappings:
     - name: openshift_admins
-      ad_group: OpenShift-Admins
-      idm_external_group: ad-openshift-admins
-      idm_local_group: openshift-admin
+      ad_group: ad-corp-openshift-admins
+      idm_external_group: ad-corp-openshift-admins
+      idm_local_group: access-openshift-admin
       openshift_access:
         cluster_role: cluster-admin
       rhel_access: {}
@@ -30,9 +33,9 @@ ad_group_policy:
         - keycloak_oidc_groups
         - optional_ldap_group_sync
     - name: linux_admins
-      ad_group: Linux-Admins
-      idm_external_group: ad-linux-admins
-      idm_local_group: admins
+      ad_group: ad-corp-linux-admins
+      idm_external_group: ad-corp-linux-admins
+      idm_local_group: access-linux-admin
       openshift_access: {}
       rhel_access:
         sudo_rule: admins-nopasswd-all
@@ -40,27 +43,27 @@ ad_group_policy:
         - sssd
         - ipa_sudo
     - name: virtualization_admins
-      ad_group: OpenShift-Virt-Admins
-      idm_external_group: ad-openshift-virt-admins
-      idm_local_group: virt-admin
+      ad_group: ad-corp-openshift-virt-admins
+      idm_external_group: ad-corp-openshift-virt-admins
+      idm_local_group: access-virt-admin
       openshift_access: {}
       rhel_access: {}
       consumers:
         - keycloak_oidc_groups
         - optional_ldap_group_sync
     - name: developers
-      ad_group: Developers
-      idm_external_group: ad-developers
-      idm_local_group: developer
+      ad_group: ad-corp-developers
+      idm_external_group: ad-corp-developers
+      idm_local_group: access-developer
       openshift_access: {}
       rhel_access: {}
       consumers:
         - keycloak_oidc_groups
         - optional_ldap_group_sync
     - name: aap_admins
-      ad_group: Ansible-Automation-Admins
-      idm_external_group: ad-aap-admins
-      idm_local_group: aap-admin
+      ad_group: ad-corp-aap-admins
+      idm_external_group: ad-corp-aap-admins
+      idm_local_group: access-aap-admin
       openshift_access: {}
       rhel_access: {}
       consumers:

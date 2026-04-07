@@ -7,6 +7,16 @@ Calabi deploys a full 9-node OpenShift cluster (3 control-plane, 3 infra,
 VLAN segmentation, and a fully disconnected content workflow.  Everything is
 automated with Ansible and runs on one RHEL hypervisor.
 
+The current implementation also includes:
+
+- deterministic support-service and cluster DNS publication through IdM
+- workstation-to-bastion orchestration handoff with tracked runner state
+- default cluster authentication built around `HTPasswd` breakglass plus
+  Keycloak OIDC backed by IdM
+- a documented future policy model where AD is the source of truth for users
+  and source-side groups while IdM local groups remain the authorization
+  boundary
+
 The name references a Calabi-Yau manifold -- a play on folded dimensions and
 the idea of folding a datacenter into one system.
 
@@ -14,13 +24,17 @@ the idea of folding a datacenter into one system.
 
 - Provisions AWS bare-metal infrastructure via CloudFormation
 - Bootstraps a RHEL KVM/libvirt/OVS hypervisor with firewalld and PCP
-- Builds support guests: FreeIPA (IdM), bastion, mirror-registry
+- Builds support guests: FreeIPA (IdM), bastion, mirror-registry, optional AD
 - Mirrors disconnected OpenShift content for air-gapped install
 - Performs an agent-based OpenShift install with direct boot-media control
+- Recovers fresh-install control-plane nodes that need deterministic disk-boot
+  handoff during agent-based install
 - Applies day-2 operators: ODF/Ceph storage, OpenShift Virtualization,
-  Pipelines, Network Observability, Ansible Automation Platform
+  Pipelines, Network Observability, Ansible Automation Platform, Keycloak
 - Manages host CPU resources with Gold/Silver/Bronze cgroup performance
   domains and libvirt vCPU pinning
+- Validates orchestration contracts before bastion handoff with YAML, shell,
+  lint, syntax, and scoped variable/credential checks
 
 ## Architecture
 
@@ -41,10 +55,19 @@ Single m5.metal host (96 vCPU, 384 GiB) running RHEL 10.1:
 - 3 infra: 16 vCPU / 48 GiB
 - 3 workers: 4 vCPU / 16 GiB (8 vCPU uplift supported)
 
+Current validated orchestration state:
+
+- `playbooks/site-bootstrap.yml` has been re-proven from a zero-VM boundary
+- the latest bastion-side `playbooks/site-lab.yml` completed successfully
+- the repo validation lane (`make validate`) is clean
+- one final uninterrupted zero-VM `site-lab.yml` certification run remains the
+  last major confidence bar called out in the docs
+
 ## Key technologies
 
 Ansible, KVM, libvirt, Open vSwitch, VLAN, CloudFormation, RHEL, FreeIPA,
-systemd cgroups v2, OpenShift agent-based installer, ODF/Ceph, Cockpit, PCP
+Active Directory, Keycloak, systemd cgroups v2, OpenShift agent-based
+installer, ODF/Ceph, Cockpit, PCP
 
 ## Documentation
 
@@ -52,6 +75,9 @@ systemd cgroups v2, OpenShift agent-based installer, ODF/Ceph, Cockpit, PCP
 - [Docs Map](aws-metal-openshift-demo/docs/README.md): guided navigation
 - [Prerequisites](aws-metal-openshift-demo/docs/prerequisites.md): what you need before building
 - [Automation Flow](aws-metal-openshift-demo/docs/automation-flow.md): 17-step deployment sequence
+- [Orchestration Plumbing](aws-metal-openshift-demo/docs/orchestration-plumbing.md): workstation-to-bastion handoff and runner telemetry
+- [Authentication Model](aws-metal-openshift-demo/docs/authentication-model.md): current auth and authorization boundaries
+- [AD / IdM Policy Model](aws-metal-openshift-demo/docs/ad-idm-policy-model.md): planned AD-as-source-of-truth authorization model
 - [Network Topology](aws-metal-openshift-demo/docs/network-topology.md): VLAN design and routing
 - [Resource Management](aws-metal-openshift-demo/docs/host-resource-management.md): CPU domains and sizing
 - [IaaS Model](aws-metal-openshift-demo/docs/iaas-resource-model.md): AWS resource design and cost

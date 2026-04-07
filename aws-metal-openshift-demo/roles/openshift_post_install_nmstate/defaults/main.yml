@@ -14,3 +14,7 @@ openshift_post_install_nmstate_configure_vm_data_vlans: true
 openshift_post_install_nmstate_vm_data_vlan_base_interface: enp1s0
 openshift_post_install_nmstate_vm_data_vlan_node_selector:
   node-role.kubernetes.io/worker: ""
+
+openshift_post_install_nmstate_handler_recovery_enabled: true
+openshift_post_install_nmstate_handler_ready_timeout: 600s
+openshift_post_install_nmstate_recovery_settle_seconds: 15

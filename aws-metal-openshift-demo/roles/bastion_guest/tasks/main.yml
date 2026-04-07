@@ -2,7 +2,8 @@
 - name: Derive bastion guest facts
   ansible.builtin.set_fact:
     bastion_guest_vm_fqdn: "{{ bastion_vm.name }}.{{ bastion_vm.domain }}"
-    bastion_guest_hypervisor_host: "{{ groups['aws_metal'] | first }}"
+    bastion_guest_hypervisor_host: >-
+      {{ (groups['aws_metal'] | default([])) | first | default('') }}
     bastion_guest_cloudinit_iso: >-
       /var/lib/aws-metal-openshift-demo/{{ bastion_vm.name }}/{{
       bastion_vm.name }}-cidata.iso
@@ -30,6 +31,19 @@
 - name: Derive whether IdM enrollment work is enabled for the bastion guest
   ansible.builtin.set_fact:
     bastion_guest_join_idm_enabled: "{{ bastion_guest_join_idm | default(false) | bool }}"
+
+- name: Derive whether bastion guest package updates are enabled
+  ansible.builtin.set_fact:
+    bastion_guest_manage_package_updates: >-
+      {{ bastion_guest_manage_updates | default(false) | bool }}
+
+- name: Validate bastion guest hypervisor inventory is present
+  ansible.builtin.assert:
+    that:
+      - bastion_guest_hypervisor_host | length > 0
+    fail_msg: >-
+      bastion guest configuration requires an aws_metal hypervisor inventory
+      host.
 
 - name: Ensure insights-client is installed on the bastion guest
   ansible.builtin.package:
@@ -59,6 +73,7 @@
     state: latest
     update_cache: true
   register: bastion_guest_package_update
+  when: bastion_guest_manage_package_updates | bool
   # noqa: package-latest
 
 - name: Power-cycle the bastion domain after guest updates so persistent XML changes take effect
@@ -396,6 +411,15 @@
           - A
       register: bastion_guest_authoritative_dns
       changed_when: false
+      retries: 12
+      delay: 5
+      until: >-
+        (
+          bastion_guest_authoritative_dns.stdout_lines
+          | map('trim')
+          | reject('equalto', '')
+          | list
+        ) == [bastion_guest_ipv4_address]
       failed_when: >-
         (
           bastion_guest_authoritative_dns.stdout_lines

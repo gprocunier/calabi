@@ -38,6 +38,10 @@ The supported default cluster auth baseline is:
 - OpenShift authorization through group claims
 - direct OpenShift LDAP auth disabled by default
 
+The current live IdM group descriptions are intentionally terse so operators
+can distinguish access groups from AD source groups at a glance in the web UI
+and `ipa` output.
+
 At a high level:
 
 ```mermaid
@@ -258,6 +262,20 @@ The future direction under consideration is:
 - IdM external groups bridging trusted AD groups into local IdM policy groups
 - local IdM groups remaining the authorization boundary for both RHEL and
   OpenShift
+
+The first implementation slice for that bridge now exists in the orchestration:
+
+- the mapping contract lives in
+  <a href="../vars/global/ad_group_policy.yml"><kbd>vars/global/ad_group_policy.yml</kbd></a>
+- the AD trust play can create the mapped IdM external groups and nest them
+  into the target local groups
+
+The remaining proof is consumer-side:
+
+- confirm trusted AD users inherit the intended local IdM groups
+- confirm RHEL sudo flows from those local groups
+- confirm Keycloak emits those local groups into the OpenShift OIDC `groups`
+  claim
 
 That future model is documented in
 <a href="./ad-idm-policy-model.md"><kbd>AD / IDM POLICY MODEL</kbd></a>.

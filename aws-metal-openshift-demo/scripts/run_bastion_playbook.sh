@@ -9,11 +9,16 @@ fi
 PLAYBOOK_PATH="$1"
 shift
 EXTRA_ARGS=("$@")
-EXTRA_ARGS_RENDERED=""
+EXTRA_ARGS_DECL=$'EXTRA_ARGS=(\n'
 
 if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
-  EXTRA_ARGS_RENDERED="$(printf ' %q' "${EXTRA_ARGS[@]}")"
+  for arg in "${EXTRA_ARGS[@]}"; do
+    printf -v quoted_arg '%q' "${arg}"
+    EXTRA_ARGS_DECL+="  ${quoted_arg}"$'\n'
+  done
 fi
+
+EXTRA_ARGS_DECL+=')'
 
 PROJECT_ROOT="/opt/openshift/aws-metal-openshift-demo"
 STATE_DIR="/var/tmp/bastion-playbooks"
@@ -30,9 +35,10 @@ cat > "${STATE_DIR}/${PLAYBOOK_STEM}.runner.sh" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 cd "${PROJECT_ROOT}"
+${EXTRA_ARGS_DECL}
 set +e
 ANSIBLE_COLLECTIONS_PATH=/usr/share/ansible/collections \\
-  ansible-playbook -i inventory/hosts.yml "${PLAYBOOK_PATH}"${EXTRA_ARGS_RENDERED} > "${LOG_PATH}" 2>&1
+  ansible-playbook -i inventory/hosts.yml "${PLAYBOOK_PATH}" "\${EXTRA_ARGS[@]}" > "${LOG_PATH}" 2>&1
 rc="\$?"
 printf '%s\n' "\${rc}" > "${RC_PATH}"
 exit "\${rc}"

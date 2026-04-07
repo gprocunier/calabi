@@ -2,7 +2,7 @@
 - name: Derive install artifact context
   ansible.builtin.set_fact:
     openshift_install_artifacts_hypervisor_host: >-
-      {{ groups['aws_metal'] | first }}
+      {{ (groups['aws_metal'] | default([])) | first | default('') }}
     openshift_install_artifacts_render_dir: >-
       {{ openshift_install_artifacts.output_dir }}
     openshift_install_artifacts_idm_ca_file: >-
@@ -11,7 +11,7 @@
 - name: Validate hypervisor inventory is present
   ansible.builtin.assert:
     that:
-      - groups['aws_metal'] | default([]) | length > 0
+      - openshift_install_artifacts_hypervisor_host | length > 0
     fail_msg: >-
       playbooks/cluster/openshift-install-artifacts.yml requires an aws_metal inventory host so
       the role can fetch the IdM CA bundle through the hypervisor.
@@ -123,6 +123,26 @@
   ansible.builtin.slurp:
     src: "{{ openshift_install_artifacts.ssh_public_key_file }}"
   register: openshift_install_artifacts_ssh_public_key_raw
+
+- name: Ensure the OpenShift render workspace parent exists and is bastion-writable
+  ansible.builtin.file:
+    path: "{{ openshift_install_artifacts_render_dir | dirname }}"
+    state: directory
+    owner: "{{ lookup('env', 'USER') }}"
+    group: "{{ lookup('env', 'USER') }}"
+    mode: "0755"
+  become: true
+
+- name: Normalize existing OpenShift render directory ownership before reset
+  ansible.builtin.file:
+    path: "{{ openshift_install_artifacts_render_dir }}"
+    state: directory
+    owner: "{{ lookup('env', 'USER') }}"
+    group: "{{ lookup('env', 'USER') }}"
+    mode: "0755"
+    recurse: true
+  become: true
+  when: openshift_install_artifacts.reset_render_dir | bool
 
 - name: Create render directory
   ansible.builtin.file:

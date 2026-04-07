@@ -229,6 +229,16 @@
     label: "{{ item.label }}"
   register: idm_openshift_dns_authoritative_a_responses
   changed_when: false
+  retries: 12
+  delay: 5
+  until: >-
+    (
+      idm_openshift_dns_authoritative_a_responses.stdout_lines
+      | default([])
+      | map('trim')
+      | reject('equalto', '')
+      | list
+    ) == [item.expected_ipv4]
 
 - name: Assert authoritative IdM DNS matches OpenShift A records
   ansible.builtin.assert:
@@ -293,6 +303,16 @@
     label: "{{ item.label }}"
   register: idm_openshift_dns_authoritative_ptr_responses
   changed_when: false
+  retries: 12
+  delay: 5
+  until: >-
+    (
+      idm_openshift_dns_authoritative_ptr_responses.stdout_lines
+      | default([])
+      | map('trim')
+      | reject('equalto', '')
+      | list
+    ) == [item.expected_fqdn]
 
 - name: Assert authoritative IdM DNS matches OpenShift PTR records
   ansible.builtin.assert:

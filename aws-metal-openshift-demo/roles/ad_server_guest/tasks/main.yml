@@ -290,11 +290,25 @@
 - name: Create AD security groups
   ansible.windows.win_shell: |
     $group = '{{ item }}'
-    if (-not (Get-ADGroup -Filter "Name -eq '$group'" -ErrorAction SilentlyContinue)) {
+    $descriptions = @{
+    {% for group_name, description in ad_server.identity_group_descriptions.items() %}
+      '{{ group_name }}' = '{{ description }}'
+    {% endfor %}
+    }
+    $description = $descriptions[$group]
+    if (-not $description) {
+      $description = "AD source group: {{ ad_server.domain_name }}/$group"
+    }
+    $existing = Get-ADGroup -Filter "Name -eq '$group'" -Properties Description -ErrorAction SilentlyContinue
+    if (-not $existing) {
       New-ADGroup -Name $group `
         -GroupScope Global `
         -GroupCategory Security `
+        -Description $description `
         -Path "CN=Users,DC={{ ad_server.domain_name.split('.') | join(',DC=') }}"
+      Write-Output "CHANGED"
+    } elseif ($existing.Description -ne $description) {
+      Set-ADGroup -Identity $group -Description $description
       Write-Output "CHANGED"
     } else {
       Write-Output "OK"

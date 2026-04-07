@@ -3,7 +3,8 @@
   ansible.builtin.set_fact:
     idm_guest_vm_fqdn: "{{ idm_vm.name }}.{{ idm_vm.domain }}"
     idm_guest_admin_email: "hostmaster.{{ idm_vm.domain }}"
-    idm_guest_hypervisor_host: "{{ groups['aws_metal'] | first }}"
+    idm_guest_hypervisor_host: >-
+      {{ (groups['aws_metal'] | default([])) | first | default('') }}
     idm_guest_cloudinit_iso: >-
       /var/lib/aws-metal-openshift-demo/{{ idm_vm.name }}/{{
       idm_vm.name }}-cidata.iso
@@ -24,6 +25,7 @@
 - name: Validate the IDM guest configuration data
   ansible.builtin.assert:
     that:
+      - idm_guest_hypervisor_host | length > 0
       - idm_server.realm | length > 0
       - idm_server.ds_password | length > 0
       - idm_server.admin_password | length > 0
@@ -491,6 +493,16 @@
     label: "{{ item.label }}"
   register: idm_guest_static_dns_authoritative_responses
   changed_when: false
+  retries: 12
+  delay: 5
+  until: >-
+    (
+      idm_guest_static_dns_authoritative_responses.stdout_lines
+      | default([])
+      | map('trim')
+      | reject('equalto', '')
+      | list
+    ) == [item.expected_ipv4]
 
 - name: Assert authoritative IdM DNS matches static infrastructure A records
   ansible.builtin.assert:
@@ -515,6 +527,7 @@
     ipaapi_context: server
     name:
       - "{{ item }}"
+    description: "{{ idm_server.identity_group_descriptions[item] | default(omit) }}"
     state: present
   loop: "{{ idm_server.identity_groups }}"
 

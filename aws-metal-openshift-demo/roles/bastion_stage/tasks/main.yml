@@ -27,10 +27,34 @@
     bastion_stage_user_etc_files:
       - file_name: kubeconfig
         src: "{{ bastion_client.cluster_artifact_root }}/auth/kubeconfig"
+        mode: "0600"
+      - file_name: kubeconfig.local
+        src: "{{ bastion_client.cluster_artifact_root }}/auth/kubeconfig"
+        mode: "0600"
     bastion_stage_project_lab_credentials_path: >-
       {{ lab_execution_project_root }}/inventory/group_vars/all/lab_credentials.yml
     bastion_stage_manager_lab_credentials_path: >-
       {{ lookup('env', 'HOME') }}/.local/state/calabi-manager/secrets/lab_credentials.yml
+    bastion_stage_controller_ssh_public_key: >-
+      {{
+        lookup(
+          'file',
+          bastion_client.controller_ssh_public_key_file,
+          errors='ignore'
+        )
+        | default('', true)
+        | trim
+      }}
+    bastion_stage_hypervisor_host: >-
+      {{ (groups['aws_metal'] | default([])) | first | default('') }}
+
+- name: Validate bastion staging hypervisor inventory is present
+  ansible.builtin.assert:
+    that:
+      - bastion_stage_hypervisor_host | length > 0
+    fail_msg: >-
+      bastion staging requires an aws_metal hypervisor inventory host so the
+      workstation can proxy through virt-01 to reach the lab bastion.
 
 - name: Ensure bastion execution prerequisites are installed
   ansible.builtin.package:
@@ -118,9 +142,9 @@
         ssh -i {{ bastion_client.controller_ssh_private_key_file }}
         -o IdentitiesOnly=yes
         -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-        -o ProxyCommand="ssh -i {{ hostvars[groups['aws_metal'][0]].ansible_ssh_private_key_file }}
+        -o ProxyCommand="ssh -i {{ hostvars[bastion_stage_hypervisor_host].ansible_ssh_private_key_file }}
         -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-        {{ hostvars[groups['aws_metal'][0]].ansible_user }}@{{ hostvars[groups['aws_metal'][0]].ansible_host }}
+        {{ hostvars[bastion_stage_hypervisor_host].ansible_user }}@{{ hostvars[bastion_stage_hypervisor_host].ansible_host }}
         -W %h:%p"
       - "{{ lab_execution_project_root }}/"
       - "{{ bastion_vm.access.admin_user }}@{{ bastion_vm.network.ipv4_address }}:{{ bastion_stage_remote_project_root }}/"
@@ -276,6 +300,22 @@
           true
         )
       }}
+    bastion_stage_rendered_lab_operator_ssh_public_key: >-
+      {{
+        lab_operator_ssh_public_key
+        | default(
+          bastion_stage_project_lab_credentials.lab_operator_ssh_public_key
+          | default(
+            bastion_stage_manager_lab_credentials.lab_operator_ssh_public_key
+            | default(
+              bastion_stage_controller_ssh_public_key,
+              true
+            ),
+            true
+          ),
+          true
+        )
+      }}
 
 - name: Assert a lab default password is available for bastion-side orchestration when required
   ansible.builtin.assert:
@@ -308,6 +348,16 @@
       bastion_vm.subscription.enabled | bool or
       idm_vm.subscription.enabled | bool or
       mirror_registry_vm.subscription.enabled | bool
+
+- name: Assert an operator SSH public key is available for bastion-side guest bootstrap when required
+  ansible.builtin.assert:
+    that:
+      - bastion_stage_rendered_lab_operator_ssh_public_key | length > 0
+    fail_msg: >-
+      Bastion staging requires lab_operator_ssh_public_key for guest SSH
+      bootstrap, but no value was supplied via -e, inventory/group_vars/all/lab_credentials.yml,
+      calabi-manager credentials, or {{ bastion_client.controller_ssh_public_key_file }}.
+  when: bastion_stage_require_operator_ssh_public_key | default(false) | bool
 
 - name: Ensure bastion-side inventory group_vars directory exists
   ansible.builtin.file:
@@ -481,7 +531,7 @@
     group: root
     mode: "0644"
 
-- name: Ensure shared OpenShift client artifacts are readable by cloud-user and IdM admins
+- name: Ensure shared OpenShift client artifacts are readable by cloud-user and the IdM Linux access group
   ansible.builtin.command:
     argv:
       - setfacl
@@ -492,11 +542,11 @@
     - path: "{{ bastion_client.cluster_artifact_root }}/auth/kubeconfig"
       acl: u:cloud-user:r
     - path: "{{ bastion_client.cluster_artifact_root }}/auth/kubeconfig"
-      acl: g:admins:r
+      acl: g:access-linux-admin:r
     - path: "{{ bastion_client.cluster_artifact_root }}/idm-ca.crt"
       acl: u:cloud-user:r
     - path: "{{ bastion_client.cluster_artifact_root }}/idm-ca.crt"
-      acl: g:admins:r
+      acl: g:access-linux-admin:r
   changed_when: true
   failed_when: false
 
@@ -514,7 +564,13 @@
           [
             {
               'file_name': 'kubeconfig',
-              'src': bastion_client.cluster_artifact_root ~ '/auth/kubeconfig'
+              'src': bastion_client.cluster_artifact_root ~ '/auth/kubeconfig',
+              'mode': '0600'
+            },
+            {
+              'file_name': 'kubeconfig.local',
+              'src': bastion_client.cluster_artifact_root ~ '/auth/kubeconfig',
+              'mode': '0600'
             }
           ]
           if bastion_stage_cluster_kubeconfig_stat.stat.exists
@@ -522,13 +578,13 @@
         )
       }}
 
-- name: Discover current members of the IdM admins group on the bastion
+- name: Discover current members of the IdM Linux access group on the bastion
   ansible.builtin.command:
     argv:
       - getent
       - group
-      - admins
-  register: bastion_stage_admins_group
+      - access-linux-admin
+  register: bastion_stage_linux_access_group
   changed_when: false
   failed_when: false
 
@@ -540,9 +596,9 @@
           [bastion_vm.access.admin_user] +
           (
             (
-              bastion_stage_admins_group.stdout.split(':')[-1].split(',')
-              if bastion_stage_admins_group.rc == 0 and
-              (bastion_stage_admins_group.stdout | length > 0)
+              bastion_stage_linux_access_group.stdout.split(':')[-1].split(',')
+              if bastion_stage_linux_access_group.rc == 0 and
+              (bastion_stage_linux_access_group.stdout | length > 0)
               else []
             )
           )
@@ -643,7 +699,7 @@
     dest: "{{ item.0.home }}/etc/{{ item.1.file_name }}"
     owner: "{{ item.0.user }}"
     group: "{{ item.0.gid }}"
-    mode: "0644"
+    mode: "{{ item.1.mode | default('0644') }}"
     remote_src: true
     force: true
   loop: "{{ (bastion_stage_home_link_targets | default([])) | product(bastion_stage_user_etc_files) | list }}"

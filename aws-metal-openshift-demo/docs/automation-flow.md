@@ -187,11 +187,14 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
 7. `playbooks/site-lab.yml`
    - Runs the full inside-facing lab phase from the bastion.
    - Imports the validated support-service order:
-     optional `ad-server`, `idm`, `bastion-join`, then `mirror-registry`,
-     followed by cluster preparation, cluster build, validation, and day-2.
+     optional `ad-server`, `idm`, optional `idm-ad-trust`, `bastion-join`,
+     then `mirror-registry`, followed by cluster preparation, cluster build,
+     validation, and day-2.
    - Support VMs (`ad-01`, `idm-01`, `bastion-01`, and `mirror-registry`) now
      default to preserving their existing disks and libvirt domains on rerun
-     instead of being rebuilt automatically.
+     instead of being rebuilt automatically. A deliberate fresh support-stack
+     replay also needs the support guest block devices wiped; VM removal alone
+     is no longer treated as a true clean boundary.
    - The mirror-registry phase now records successful mirror completion for the
      rendered content set and skips the expensive `oc-mirror` execution on
      rerun unless a force flag is set.
@@ -248,11 +251,30 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
        ```bash
        ./scripts/run_remote_bastion_playbook.sh playbooks/bootstrap/idm.yml
        ```
-10. `playbooks/bootstrap/bastion-join.yml`
+10. `playbooks/bootstrap/idm-ad-trust.yml`
+   - Configures the optional IdM-to-AD trust after both support directories are
+     available.
+   - Ensures the AD conditional forwarder for `workshop.lan`, enables IdM AD
+     trust support, creates the IPA forward zone for `corp.lan`, establishes
+     the trust, and nests the mapped IdM external groups into the target local
+     policy groups.
+   - Example:
+     - `RUN ON BASTION`
+       ```bash
+       ansible-playbook -i inventory/hosts.yml playbooks/bootstrap/idm-ad-trust.yml \
+         -e lab_build_ad_server=true
+       ```
+     - Alternatively, from the workstation:
+       ```bash
+       ./scripts/run_remote_bastion_playbook.sh playbooks/bootstrap/idm-ad-trust.yml \
+         -e lab_build_ad_server=true
+       ```
+11. `playbooks/bootstrap/bastion-join.yml`
    - Joins the already-built bastion to IdM after identity services are ready.
    - Refreshes the IdM CA, enrolls the host, and enables `with-mkhomedir` plus
      `with-sudo` so domain users receive home directories and SSSD sudo rules
-     on first login.
+     on first login. The join path no longer performs a general bastion update
+     or reboot; that remains part of the earlier `site-bootstrap.yml` flow.
    - Example:
      - `RUN ON BASTION`
        ```bash
@@ -262,7 +284,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
        ```bash
        ./scripts/run_remote_bastion_playbook.sh playbooks/bootstrap/bastion-join.yml
        ```
-11. `playbooks/lab/mirror-registry.yml`
+12. `playbooks/lab/mirror-registry.yml`
    - Builds `mirror-registry`, joins it to IdM, installs Quay, and prepares disconnected content tooling.
    - Static-IP support guests no longer rely on SSSD dynamic DNS updates. The
      play reasserts the mirror-registry A/PTR records in authoritative IdM DNS
@@ -437,6 +459,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
 - `playbooks/site-lab.yml` now begins with support services in this order:
   - optional `ad-server`
   - `idm`
+  - optional `idm-ad-trust`
   - `bastion-join`
   - `mirror-registry`
 - the bastion now also presents a ready-to-use shell environment for

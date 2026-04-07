@@ -72,6 +72,7 @@ fi
 VIRT_HOST="${VIRT_HOST:-${VIRT_HOST_DEFAULT}}"
 VIRT_USER="${VIRT_USER:-${VIRT_USER_DEFAULT}}"
 SSH_KEY="${SSH_KEY:-${SSH_KEY_DEFAULT}}"
+DASHBOARD_RUNTIME_BASE="${XDG_RUNTIME_DIR:-/tmp}"
 
 if ! command -v tmux >/dev/null 2>&1; then
   echo "tmux is required" >&2
@@ -98,34 +99,54 @@ detect_runner() {
     printf '%s' "$1"
     return
   fi
-  local newest=""
-  local newest_ts=0
+  local newest_live=""
+  local newest_live_ts=0
+  local newest_stale=""
+  local newest_stale_ts=0
+  local newest_log=""
+  local newest_log_ts=0
   for pid_file in "${STATE_DIR}"/*.pid; do
     [[ -f "$pid_file" ]] || continue
     local stem
     stem="$(basename "$pid_file" .pid)"
     local rc_file="${STATE_DIR}/${stem}.rc"
+    local pid
+    pid="$(cat "$pid_file" 2>/dev/null || true)"
     local ts
     ts="$(stat -c %Y "$pid_file" 2>/dev/null || echo 0)"
-    if [[ ! -f "$rc_file" && "$ts" -gt "$newest_ts" ]]; then
-      newest="$stem"
-      newest_ts="$ts"
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      if [[ "$ts" -gt "$newest_live_ts" ]]; then
+        newest_live="$stem"
+        newest_live_ts="$ts"
+      fi
+    elif [[ ! -f "$rc_file" && "$ts" -gt "$newest_stale_ts" ]]; then
+      newest_stale="$stem"
+      newest_stale_ts="$ts"
     fi
   done
-  if [[ -z "$newest" ]]; then
+  if [[ -n "$newest_live" ]]; then
+    printf '%s' "$newest_live"
+    return
+  fi
+  if [[ -z "$newest_stale" ]]; then
     for log_file in "${STATE_DIR}"/*.log; do
       [[ -f "$log_file" ]] || continue
       local stem
       stem="$(basename "$log_file" .log)"
+      local rc_file="${STATE_DIR}/${stem}.rc"
       local ts
       ts="$(stat -c %Y "$log_file" 2>/dev/null || echo 0)"
-      if [[ "$ts" -gt "$newest_ts" ]]; then
-        newest="$stem"
-        newest_ts="$ts"
+      if [[ ! -f "$rc_file" && "$ts" -gt "$newest_log_ts" ]]; then
+        newest_log="$stem"
+        newest_log_ts="$ts"
       fi
     done
   fi
-  printf '%s' "${newest:-site-lab}"
+  if [[ -n "$newest_stale" ]]; then
+    printf '%s' "$newest_stale"
+  else
+    printf '%s' "${newest_log:-site-lab}"
+  fi
 }
 
 RUNNER_STEM="$(detect_runner "${1:-}")"
@@ -133,6 +154,7 @@ LOG_PATH="${STATE_DIR}/${RUNNER_STEM}.log"
 PID_PATH="${STATE_DIR}/${RUNNER_STEM}.pid"
 RC_PATH="${STATE_DIR}/${RUNNER_STEM}.rc"
 REMOTE_ENV_PATH="${LOCAL_STATE_DIR}/${RUNNER_STEM}.remote.env"
+STAGE_PATH="${LOCAL_STATE_DIR}/${RUNNER_STEM}.stage"
 
 detect_canvas_size() {
   local width=""
@@ -202,8 +224,107 @@ if [[ ! -r "$SSH_KEY" ]]; then
   exit 1
 fi
 
-PANE_DIR="$(mktemp -d /tmp/lab-dashboard.XXXXXX)"
-trap 'rm -rf "$PANE_DIR"' EXIT
+PANE_DIR="$(mktemp -d "${DASHBOARD_RUNTIME_BASE%/}/lab-dashboard.panes.XXXXXX")"
+SSH_MUX_DIR="$(mktemp -d "${DASHBOARD_RUNTIME_BASE%/}/lab-dashboard.mux.XXXXXX")"
+chmod 700 "$PANE_DIR" "$SSH_MUX_DIR"
+
+close_dashboard_mux_master() {
+  local control_path="$1"
+  shift
+  [[ -S "$control_path" ]] || return 0
+  ssh -q -S "$control_path" -O exit "$@" >/dev/null 2>&1 || true
+}
+
+cleanup_dashboard_runtime() {
+  local mux_hypervisor_host="$VIRT_HOST"
+  local mux_hypervisor_user="$VIRT_USER"
+  local mux_hypervisor_key="$SSH_KEY"
+  local mux_bastion_host="$BASTION_HOST"
+  local mux_bastion_user="cloud-user"
+
+  if [[ -f "$REMOTE_ENV_PATH" ]]; then
+    # shellcheck disable=SC1090
+    source "$REMOTE_ENV_PATH"
+    mux_hypervisor_host="${HYPERVISOR_HOST:-$mux_hypervisor_host}"
+    mux_hypervisor_user="${HYPERVISOR_USER:-$mux_hypervisor_user}"
+    mux_hypervisor_key="${HYPERVISOR_KEY:-$mux_hypervisor_key}"
+    mux_bastion_host="${BASTION_HOST:-$mux_bastion_host}"
+    mux_bastion_user="${BASTION_USER:-$mux_bastion_user}"
+  fi
+
+  close_dashboard_mux_master \
+    "${SSH_MUX_DIR}/bastion.sock" \
+    -i "$mux_hypervisor_key" \
+    -o BatchMode=yes \
+    -o ConnectTimeout=5 \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o ProxyCommand="ssh -q -i ${mux_hypervisor_key} -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ControlMaster=auto -o ControlPersist=600 -o ControlPath=${SSH_MUX_DIR}/hypervisor.sock ${mux_hypervisor_user}@${mux_hypervisor_host} -W %h:%p" \
+    "${mux_bastion_user}@${mux_bastion_host}"
+
+  close_dashboard_mux_master \
+    "${SSH_MUX_DIR}/hypervisor.sock" \
+    -i "$SSH_KEY" \
+    -o BatchMode=yes \
+    -o ConnectTimeout=5 \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    "${VIRT_USER}@${VIRT_HOST}"
+
+  rm -rf "$PANE_DIR" "$SSH_MUX_DIR"
+}
+
+trap cleanup_dashboard_runtime EXIT
+
+cat > "${PANE_DIR}/ssh-common.sh" <<'SSHEOF'
+#!/usr/bin/env bash
+SSH_MUX_DIR="__SSH_MUX_DIR__"
+SSH_MUX_CONTROL_PERSIST="600"
+
+ssh_hypervisor_control_path() {
+  printf '%s\n' "${SSH_MUX_DIR}/hypervisor.sock"
+}
+
+ssh_bastion_control_path() {
+  printf '%s\n' "${SSH_MUX_DIR}/bastion.sock"
+}
+
+hypervisor_ssh() {
+  local control_path
+  control_path="$(ssh_hypervisor_control_path)"
+  ssh -q -i "$SSH_KEY" \
+    -o BatchMode=yes \
+    -o ConnectTimeout=5 \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o ControlMaster=auto \
+    -o ControlPersist="${SSH_MUX_CONTROL_PERSIST}" \
+    -o ControlPath="$control_path" \
+    "${VIRT_USER}@${VIRT_HOST}" "$@" 2>/dev/null
+}
+
+bastion_ssh_mux() {
+  local bastion_control_path
+  local hypervisor_control_path
+  : "${HYPERVISOR_KEY:=${SSH_KEY:-}}"
+  bastion_control_path="$(ssh_bastion_control_path)"
+  hypervisor_control_path="$(ssh_hypervisor_control_path)"
+  ssh -q -i "$HYPERVISOR_KEY" \
+    -o BatchMode=yes \
+    -o ConnectTimeout=5 \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o ControlMaster=auto \
+    -o ControlPersist="${SSH_MUX_CONTROL_PERSIST}" \
+    -o ControlPath="$bastion_control_path" \
+    -o ProxyCommand="ssh -q -i ${HYPERVISOR_KEY} -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ControlMaster=auto -o ControlPersist=${SSH_MUX_CONTROL_PERSIST} -o ControlPath=${hypervisor_control_path} ${HYPERVISOR_USER}@${HYPERVISOR_HOST} -W %h:%p" \
+    "${BASTION_USER}@${BASTION_HOST}" "$@" 2>/dev/null
+}
+SSHEOF
+sed -i \
+  -e "s|__SSH_MUX_DIR__|${SSH_MUX_DIR}|g" \
+  "${PANE_DIR}/ssh-common.sh"
+chmod 700 "${PANE_DIR}/ssh-common.sh"
 
 bastion_ssh_manifest() {
   [[ -f "$REMOTE_ENV_PATH" ]] || return 1
@@ -223,6 +344,9 @@ bastion_ssh_manifest() {
 # Output format: one line per play — "task_count|play_name"
 
 PLAYBOOK_MAP=(
+  "ad-server:playbooks/bootstrap/ad-server.yml"
+  "idm:playbooks/bootstrap/idm.yml"
+  "idm-ad-trust:playbooks/bootstrap/idm-ad-trust.yml"
   "site-lab:playbooks/site-lab.yml"
   "site-bootstrap:playbooks/site-bootstrap.yml"
   "mirror-registry:playbooks/lab/mirror-registry.yml"
@@ -260,18 +384,16 @@ BASTION_USER="cloud-user"
 HYPERVISOR_HOST="__HYPERVISOR_HOST__"
 HYPERVISOR_USER="__HYPERVISOR_USER__"
 SSH_KEY="__SSH_KEY__"
+SSH_HELPERS="__SSH_HELPERS__"
+
+# shellcheck disable=SC1090
+source "$SSH_HELPERS"
 
 bastion_ssh_manifest() {
   [[ -f "$REMOTE_ENV_PATH" ]] || return 1
   # shellcheck disable=SC1090
   source "$REMOTE_ENV_PATH"
-  ssh -q -i "$HYPERVISOR_KEY" \
-    -o BatchMode=yes \
-    -o ConnectTimeout=5 \
-    -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null \
-    -o ProxyCommand="ssh -q -i ${HYPERVISOR_KEY} -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${HYPERVISOR_USER}@${HYPERVISOR_HOST} -W %h:%p" \
-    "${BASTION_USER}@${BASTION_HOST}" "$@" 2>/dev/null
+  bastion_ssh_mux "$@"
 }
 
 build_from_stream() {
@@ -326,6 +448,7 @@ sed -i \
   -e "s|__HYPERVISOR_HOST__|${VIRT_HOST}|g" \
   -e "s|__HYPERVISOR_USER__|${VIRT_USER}|g" \
   -e "s|__SSH_KEY__|${SSH_KEY}|g" \
+  -e "s|__SSH_HELPERS__|${PANE_DIR}/ssh-common.sh|g" \
   "${PANE_DIR}/build-manifest.sh"
 
 PROJECT_ROOT_FOR_PYTHON="${PROJECT_ROOT}" python - <<'PY' > "${ROLE_TASK_COUNTS}"
@@ -371,6 +494,7 @@ MANIFEST="__MANIFEST__"
 MANIFEST_STATUS="__MANIFEST_STATUS__"
 DASHBOARD_MODE="__DASHBOARD_MODE__"
 REMOTE_ENV_PATH="__REMOTE_ENV_PATH__"
+STAGE_PATH="__STAGE_PATH__"
 BASTION_HOST="__BASTION_HOST__"
 BASTION_USER="cloud-user"
 HYPERVISOR_HOST="__HYPERVISOR_HOST__"
@@ -380,15 +504,13 @@ SESSION="__SESSION__"
 PANE_DIR="__PANE_DIR__"
 BUILD_MANIFEST_SCRIPT="__BUILD_MANIFEST_SCRIPT__"
 ROLE_TASK_COUNTS="__ROLE_TASK_COUNTS__"
+SSH_HELPERS="__SSH_HELPERS__"
+
+# shellcheck disable=SC1090
+source "$SSH_HELPERS"
 
 bastion_ssh() {
-  ssh -q -i "$SSH_KEY" \
-    -o BatchMode=yes \
-    -o ConnectTimeout=5 \
-    -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null \
-    -o ProxyCommand="ssh -q -i ${SSH_KEY} -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${HYPERVISOR_USER}@${HYPERVISOR_HOST} -W %h:%p" \
-    "${BASTION_USER}@${BASTION_HOST}" "$@" 2>/dev/null
+  bastion_ssh_mux "$@"
 }
 
 load_remote_env() {
@@ -397,12 +519,35 @@ load_remote_env() {
   source "$REMOTE_ENV_PATH"
 }
 
+load_stage_env() {
+  [[ -f "$STAGE_PATH" ]] || return 1
+  # shellcheck disable=SC1090
+  source "$STAGE_PATH"
+}
+
 active_source() {
   if [[ "$DASHBOARD_MODE" == "bastion" ]]; then
-    printf 'local\n'
+    printf 'bastion\n'
     return
   fi
+  if [[ -f "$PID_PATH" ]]; then
+    local pid
+    pid="$(cat "$PID_PATH" 2>/dev/null || true)"
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      printf 'local\n'
+      return
+    fi
+  fi
   if load_remote_env; then
+    if [[ -f "$LOG_PATH" && -f "$REMOTE_ENV_PATH" ]]; then
+      local local_ts remote_ts
+      local_ts="$(stat -c %Y "$LOG_PATH" 2>/dev/null || echo 0)"
+      remote_ts="$(stat -c %Y "$REMOTE_ENV_PATH" 2>/dev/null || echo 0)"
+      if (( local_ts > remote_ts )); then
+        printf 'local\n'
+        return
+      fi
+    fi
     printf 'remote\n'
     return
   fi
@@ -531,6 +676,70 @@ progress_bar() {
     suffix="$(printf '%3d%%' "$percent")"
   fi
   printf ']\033[0m %s' "$suffix"
+}
+
+staging_percent_for_task() {
+  local task_name="$1"
+  case "$task_name" in
+    *"Sync the project repository to the bastion"*|*"Recreate the staged project root"*|*"Recreate the staged project-local secrets directory"*)
+      printf '15\n'
+      ;;
+    *"Copy pull secret"*|*"Copy hypervisor SSH private key"*|*"Copy hypervisor SSH public key"*|*"Render the bastion-side inventory"*|*"Render bastion-side lab credentials"*)
+      printf '35\n'
+      ;;
+    *"Install the mirror progress helper on the bastion"*|*"Install the tmux mirror progress helper on the bastion"*|*"Install the lab dashboard helper on the bastion"*|*"Install per-user bastion helper links"*)
+      printf '55\n'
+      ;;
+    *"Install required Ansible collections on the bastion"*|*"Install required Python packages on the bastion"*|*"Ensure bastion execution prerequisites are installed"*)
+      printf '75\n'
+      ;;
+    *"Verify SSH access from the bastion to the hypervisor management address"*|*"Seed managed name-resolution entries"*|*"Verify managed hostnames resolve"*|*"Verify managed hostnames resolve on the current host"*)
+      printf '90\n'
+      ;;
+    *)
+      printf '5\n'
+      ;;
+  esac
+}
+
+render_staging_progress() {
+  local stage_name="$1"
+  local latest_task="$2"
+  local percent=0
+  local detail=""
+  case "$stage_name" in
+    validate)
+      percent=10
+      detail="workstation validation"
+      ;;
+    bastion-stage)
+      percent="$(staging_percent_for_task "$latest_task")"
+      detail="${latest_task}"
+      ;;
+    handoff)
+      percent=95
+      detail="remote bastion handoff"
+      ;;
+    remote-running)
+      percent=100
+      detail="bastion runner active"
+      ;;
+    completed)
+      percent=100
+      detail="local wrapper completed"
+      ;;
+    failed)
+      percent=100
+      detail="local wrapper failed"
+      ;;
+    *)
+      return
+      ;;
+  esac
+
+  printf '\033[1m%-14s\033[0m ' "Staging"
+  progress_bar "$percent" "active" "$PROGRESS_WIDTH"
+  printf '  %s\n' "$(format_detail_field "$(clip_text "$detail" "$DETAIL_WIDTH")" "$DETAIL_WIDTH")"
 }
 
 format_elapsed() {
@@ -680,6 +889,8 @@ runner_status() {
     && ! file_exists_for_source "$source_kind" "$current_rc_path"; then
     if [[ "$source_kind" == "remote" ]]; then
       printf '\033[1;33mRUNNING (bastion)\033[0m'
+    elif [[ "$source_kind" == "bastion" ]]; then
+      printf '\033[1;33mRUNNING (pid tracked locally)\033[0m'
     else
       printf '\033[1;33mRUNNING (workstation)\033[0m'
     fi
@@ -933,6 +1144,16 @@ while true; do
     fi
   fi
 
+  current_stage=""
+  current_stage_detail=""
+  if load_stage_env; then
+    current_stage="${STAGE:-}"
+    current_stage_detail="${DETAIL:-}"
+  fi
+  if [[ "$state_source" == "local" && -n "$current_stage" && "$current_stage" != "remote-running" ]]; then
+    render_staging_progress "$current_stage" "${latest_task:-$current_stage_detail}"
+  fi
+
   display_play_name="$cur_play_name"
   if (( cur_play_idx > 0 && manifest_idx < num_plays )); then
     display_play_name="${play_names[$manifest_idx]}"
@@ -940,6 +1161,9 @@ while true; do
   sync_bootstrap_log_pane "$latest_task"
   printf '\033[1mSource:\033[0m %s\n' "$state_source"
   printf '\033[1mPhase:\033[0m %s\n' "$(clip_text "$display_play_name" $(( PANE_WIDTH - 8 )))"
+  if [[ "$state_source" == "local" && -n "$current_stage" ]]; then
+    printf '\033[1mStage:\033[0m %s\n' "$(clip_text "$current_stage" $(( PANE_WIDTH - 8 )))"
+  fi
   printf '\033[1mTask:\033[0m  %s\n' "$(clip_text "$latest_task" $(( PANE_WIDTH - 8 )))"
   if (( total_tasks > 0 )); then
     printf '\033[1mManifest:\033[0m %d plays, %d tasks\n' "$num_plays" "$total_tasks"
@@ -962,6 +1186,7 @@ sed -i \
   -e "s|__MANIFEST_STATUS__|${MANIFEST_STATUS}|g" \
   -e "s|__DASHBOARD_MODE__|${DASHBOARD_MODE}|g" \
   -e "s|__REMOTE_ENV_PATH__|${REMOTE_ENV_PATH}|g" \
+  -e "s|__STAGE_PATH__|${STAGE_PATH}|g" \
   -e "s|__BASTION_HOST__|${BASTION_HOST}|g" \
   -e "s|__HYPERVISOR_HOST__|${VIRT_HOST}|g" \
   -e "s|__HYPERVISOR_USER__|${VIRT_USER}|g" \
@@ -971,6 +1196,7 @@ sed -i \
   -e "s|__BUILD_MANIFEST_SCRIPT__|${PANE_DIR}/build-manifest.sh|g" \
   -e "s|__ROLE_TASK_COUNTS__|${ROLE_TASK_COUNTS}|g" \
   -e "s|__STATE_DIR__|${STATE_DIR}|g" \
+  -e "s|__SSH_HELPERS__|${PANE_DIR}/ssh-common.sh|g" \
   "${PANE_DIR}/runner.sh"
 
 # Pane 1 — Hypervisor VMs
@@ -980,14 +1206,13 @@ VIRT_HOST="__VIRT_HOST__"
 VIRT_USER="__VIRT_USER__"
 SSH_KEY="__SSH_KEY__"
 REFRESH="__REFRESH__"
+SSH_HELPERS="__SSH_HELPERS__"
+
+# shellcheck disable=SC1090
+source "$SSH_HELPERS"
 
 virt_ssh() {
-  ssh -q -i "$SSH_KEY" \
-    -o BatchMode=yes \
-    -o ConnectTimeout=5 \
-    -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null \
-    "${VIRT_USER}@${VIRT_HOST}" "$@" 2>/dev/null
+  hypervisor_ssh "$@"
 }
 
 while true; do
@@ -1056,6 +1281,7 @@ sed -i \
   -e "s|__VIRT_USER__|${VIRT_USER}|g" \
   -e "s|__SSH_KEY__|${SSH_KEY}|g" \
   -e "s|__REFRESH__|${REFRESH}|g" \
+  -e "s|__SSH_HELPERS__|${PANE_DIR}/ssh-common.sh|g" \
   "${PANE_DIR}/vms.sh"
 
 # Pane 2 — OpenShift cluster
@@ -1174,15 +1400,13 @@ BASTION_USER="cloud-user"
 HYPERVISOR_HOST="__HYPERVISOR_HOST__"
 HYPERVISOR_USER="__HYPERVISOR_USER__"
 SSH_KEY="__SSH_KEY__"
+SSH_HELPERS="__SSH_HELPERS__"
+
+# shellcheck disable=SC1090
+source "$SSH_HELPERS"
 
 bastion_ssh() {
-  ssh -q -i "$SSH_KEY" \
-    -o BatchMode=yes \
-    -o ConnectTimeout=5 \
-    -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null \
-    -o ProxyCommand="ssh -q -i ${SSH_KEY} -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${HYPERVISOR_USER}@${HYPERVISOR_HOST} -W %h:%p" \
-    "${BASTION_USER}@${BASTION_HOST}" "$@" 2>/dev/null
+  bastion_ssh_mux "$@"
 }
 
 load_remote_env() {
@@ -1216,6 +1440,7 @@ sed -i \
   -e "s|__HYPERVISOR_HOST__|${VIRT_HOST}|g" \
   -e "s|__HYPERVISOR_USER__|${VIRT_USER}|g" \
   -e "s|__SSH_KEY__|${SSH_KEY}|g" \
+  -e "s|__SSH_HELPERS__|${PANE_DIR}/ssh-common.sh|g" \
   "${PANE_DIR}/log.sh"
 
 # Pane 4 — OpenShift installer bootstrap log
@@ -1231,15 +1456,13 @@ HYPERVISOR_USER="__HYPERVISOR_USER__"
 SSH_KEY="__SSH_KEY__"
 INSTALL_LOG_PATH="/opt/openshift/aws-metal-openshift-demo/generated/ocp/.openshift_install.log"
 LOCAL_INSTALL_LOG_PATH="__PROJECT_ROOT__/generated/ocp/.openshift_install.log"
+SSH_HELPERS="__SSH_HELPERS__"
+
+# shellcheck disable=SC1090
+source "$SSH_HELPERS"
 
 bastion_ssh() {
-  ssh -q -i "$SSH_KEY" \
-    -o BatchMode=yes \
-    -o ConnectTimeout=5 \
-    -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null \
-    -o ProxyCommand="ssh -q -i ${SSH_KEY} -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${HYPERVISOR_USER}@${HYPERVISOR_HOST} -W %h:%p" \
-    "${BASTION_USER}@${BASTION_HOST}" "$@" 2>/dev/null
+  bastion_ssh_mux "$@"
 }
 
 load_remote_env() {
@@ -1276,6 +1499,7 @@ sed -i \
   -e "s|__HYPERVISOR_USER__|${VIRT_USER}|g" \
   -e "s|__SSH_KEY__|${SSH_KEY}|g" \
   -e "s|__PROJECT_ROOT__|${PROJECT_ROOT}|g" \
+  -e "s|__SSH_HELPERS__|${PANE_DIR}/ssh-common.sh|g" \
   "${PANE_DIR}/bootstrap-log.sh"
 
 chmod +x "${PANE_DIR}"/*.sh
@@ -1329,9 +1553,25 @@ tmux split-window -v -t "${SESSION}:0.1" \
 tmux resize-pane -t "${SESSION}:0.0" -y "$RUNNER_PANE_HEIGHT"
 tmux resize-pane -t "${SESSION}:0.1" -x "$LEFT_COLUMN_WIDTH"
 tmux resize-pane -t "${SESSION}:0.1" -y "$LEFT_STACK_HEIGHT"
-tmux select-pane -t "${SESSION}:0.1" -T "lab-infra"
-tmux select-pane -t "${SESSION}:0.2" -T "lab-ansible-log"
-tmux select-pane -t "${SESSION}:0.3" -T "lab-cluster"
+
+# Pane indexes shift after the final left-column split, so assign titles by
+# geometry instead of assuming static pane numbers.
+INFRA_PANE="$(
+  tmux list-panes -t "${SESSION}" -F '#{pane_id} #{pane_left} #{pane_top}' 2>/dev/null \
+  | awk '$2 == 0 && $3 > 0 { if (min_top == "" || $3 < min_top) { min_top = $3; id = $1 } } END { print id }'
+)"
+CLUSTER_PANE="$(
+  tmux list-panes -t "${SESSION}" -F '#{pane_id} #{pane_left} #{pane_top}' 2>/dev/null \
+  | awk '$2 == 0 && $3 > 0 { if (max_top == "" || $3 > max_top) { max_top = $3; id = $1 } } END { print id }'
+)"
+ANSIBLE_LOG_PANE="$(
+  tmux list-panes -t "${SESSION}" -F '#{pane_id} #{pane_left}' 2>/dev/null \
+  | awk '$2 > 0 { if (max_left == "" || $2 > max_left) { max_left = $2; id = $1 } } END { print id }'
+)"
+
+[[ -n "${INFRA_PANE}" ]] && tmux select-pane -t "${INFRA_PANE}" -T "lab-infra"
+[[ -n "${ANSIBLE_LOG_PANE}" ]] && tmux select-pane -t "${ANSIBLE_LOG_PANE}" -T "lab-ansible-log"
+[[ -n "${CLUSTER_PANE}" ]] && tmux select-pane -t "${CLUSTER_PANE}" -T "lab-cluster"
 
 # Fast exit keys for the dashboard.
 # Prefer session-targeted bindings when the local tmux supports them.
@@ -1363,4 +1603,4 @@ printf 'tmux %s on %s using %s binding mode\n' \
   "$TMUX_OS_ID" \
   "$([[ "$TMUX_BIND_SUPPORTS_TARGET_SESSION" == "1" ]] && printf 'session-targeted' || printf 'guarded-root-table')"
 
-exec tmux attach -t "$SESSION"
+tmux attach -t "$SESSION"

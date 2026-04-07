@@ -26,6 +26,8 @@
       {{ lab_execution_project_root }}/inventory/group_vars/all/lab_credentials.yml
     validate_manager_lab_credentials_path: >-
       {{ lookup('env', 'HOME') }}/.local/state/calabi-manager/secrets/lab_credentials.yml
+    validate_controller_ssh_public_key_path: >-
+      {{ bastion_client.controller_ssh_public_key_file }}
 
   tasks:
     - name: Validate requested playbook path exists when provided
@@ -162,6 +164,30 @@
               true
             )
           }}
+        validate_rendered_lab_operator_ssh_public_key: >-
+          {{
+            lab_operator_ssh_public_key
+            | default(
+              validate_project_lab_credentials.lab_operator_ssh_public_key
+              | default(
+                validate_manager_lab_credentials.lab_operator_ssh_public_key
+                | default(
+                  (
+                    lookup(
+                      'file',
+                      validate_controller_ssh_public_key_path,
+                      errors='ignore'
+                    )
+                    | default('', true)
+                    | trim
+                  ),
+                  true
+                ),
+                true
+              ),
+              true
+            )
+          }}
         validate_require_lab_default_password: >-
           {{
             (
@@ -181,6 +207,20 @@
               'playbooks/bootstrap/idm.yml',
               'playbooks/lab/mirror-registry.yml',
               'playbooks/lab/mirror-registry-refresh.yml'
+            ]
+          }}
+        validate_require_operator_ssh_public_key: >-
+          {{
+            validate_target_playbook in [
+              'playbooks/site-lab.yml',
+              'playbooks/bootstrap/bastion.yml',
+              'playbooks/bootstrap/bastion-join.yml',
+              'playbooks/bootstrap/idm.yml',
+              'playbooks/bootstrap/idm-ad-trust.yml',
+              'playbooks/lab/mirror-registry.yml',
+              'playbooks/lab/mirror-registry-refresh.yml',
+              'playbooks/lab/openshift-dns.yml',
+              'playbooks/lab/openshift-dns-cleanup.yml'
             ]
           }}
 
@@ -269,3 +309,14 @@
           bastion_vm.subscription.enabled | bool or
           idm_vm.subscription.enabled | bool or
           mirror_registry_vm.subscription.enabled | bool
+
+    - name: Assert an operator SSH public key is available when the target playbook requires guest SSH bootstrap
+      ansible.builtin.assert:
+        that:
+          - validate_rendered_lab_operator_ssh_public_key | length > 0
+        fail_msg: >-
+          {{ validate_target_playbook }} requires lab_operator_ssh_public_key
+          for guest SSH bootstrap, but no value was supplied via -e, project
+          lab_credentials.yml, calabi-manager lab credentials, or
+          {{ validate_controller_ssh_public_key_path }}.
+      when: validate_require_operator_ssh_public_key | bool

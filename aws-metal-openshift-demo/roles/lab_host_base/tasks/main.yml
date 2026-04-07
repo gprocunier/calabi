@@ -247,6 +247,7 @@
     update_cache: true
   register: lab_host_base_package_update
   # noqa: package-latest
+  when: not (lab_host_base_skip_package_updates | default(false) | bool)
 
 - name: Install virtualization and networking packages
   ansible.builtin.package:
@@ -256,7 +257,10 @@
 - name: Reboot the hypervisor after package updates when needed
   ansible.builtin.reboot:
     reboot_timeout: 1800
-  when: lab_host_base_package_update.changed
+  when:
+    - not (lab_host_base_skip_package_updates | default(false) | bool)
+    - lab_host_base_package_update is defined
+    - lab_host_base_package_update.changed
   # noqa: no-handler
 
 - name: Set the hypervisor static hostname

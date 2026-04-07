@@ -39,13 +39,26 @@
     - ../../vars/cluster/openshift_install_cluster.yml
 
   pre_tasks:
+    - name: Derive the hypervisor delegate host for IDM reachability checks
+      ansible.builtin.set_fact:
+        openshift_dns_cleanup_hypervisor_host: >-
+          {{ (groups['aws_metal'] | default([])) | first | default('') }}
+
+    - name: Validate the hypervisor delegate host is available
+      ansible.builtin.assert:
+        that:
+          - openshift_dns_cleanup_hypervisor_host | length > 0
+        fail_msg: >-
+          OpenShift DNS cleanup requires an aws_metal hypervisor inventory host
+          so the controller can reach the IdM guest network.
+
     - name: Wait for the IDM guest SSH port from the hypervisor network
       ansible.builtin.wait_for:
         host: "{{ idm_vm.network.ipv4_address }}"
         port: 22
         timeout: 900
         sleep: 10
-      delegate_to: "{{ groups['aws_metal'] | first }}"
+      delegate_to: "{{ openshift_dns_cleanup_hypervisor_host }}"
       become: false
 
     - name: Reset any cached SSH state before connecting to the IDM guest

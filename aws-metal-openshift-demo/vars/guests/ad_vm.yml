@@ -71,32 +71,45 @@ ad_server:
       password: "{{ lab_default_password | default(ansible_password) }}"
       groups:
         - Domain Admins
+    - name: ad-linuxadmin
+      first_name: Linux
+      last_name: Admin
+      password: "{{ lab_default_password | default(ansible_password) }}"
+      groups:
+        - ad-corp-linux-admins
     - name: ad-ocpadmin
       first_name: OpenShift
       last_name: Admin
       password: "{{ lab_default_password | default(ansible_password) }}"
       groups:
-        - OpenShift-Admins
+        - ad-corp-openshift-admins
     - name: ad-virtadmin
       first_name: Virtualization
       last_name: Admin
       password: "{{ lab_default_password | default(ansible_password) }}"
       groups:
-        - OpenShift-Virt-Admins
+        - ad-corp-openshift-virt-admins
     - name: ad-aapadmin
       first_name: Automation
       last_name: Admin
       password: "{{ lab_default_password | default(ansible_password) }}"
       groups:
-        - Ansible-Automation-Admins
+        - ad-corp-aap-admins
     - name: ad-dev01
       first_name: Developer
       last_name: One
       password: "{{ lab_default_password | default(ansible_password) }}"
       groups:
-        - Developers
+        - ad-corp-developers
   identity_groups:
-    - OpenShift-Admins
-    - OpenShift-Virt-Admins
-    - Ansible-Automation-Admins
-    - Developers
+    - ad-corp-linux-admins
+    - ad-corp-openshift-admins
+    - ad-corp-openshift-virt-admins
+    - ad-corp-aap-admins
+    - ad-corp-developers
+  identity_group_descriptions:
+    ad-corp-linux-admins: "AD source group: corp.lan/ad-corp-linux-admins"
+    ad-corp-openshift-admins: "AD source group: corp.lan/ad-corp-openshift-admins"
+    ad-corp-openshift-virt-admins: "AD source group: corp.lan/ad-corp-openshift-virt-admins"
+    ad-corp-aap-admins: "AD source group: corp.lan/ad-corp-aap-admins"
+    ad-corp-developers: "AD source group: corp.lan/ad-corp-developers"

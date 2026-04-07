@@ -11,6 +11,37 @@ shift
 EXTRA_ARGS=("$@")
 EXTRA_ARGS_RENDERED=""
 
+controller_playbook_requires_winrm() {
+  case "$1" in
+    playbooks/bootstrap/ad-server.yml|playbooks/bootstrap/idm.yml|playbooks/bootstrap/idm-ad-trust.yml|playbooks/maintenance/ad-gc-diagnose.yml)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+assert_controller_pywinrm() {
+  python3 - <<'PY'
+import importlib.util
+import sys
+
+missing = [name for name in ("requests", "winrm") if importlib.util.find_spec(name) is None]
+if missing:
+    print(
+        "missing controller Python dependencies for Windows orchestration: "
+        + ", ".join(missing),
+        file=sys.stderr,
+    )
+    print(
+        "install them with: python3 -m pip install --user -r requirements-pip.txt",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+PY
+}
+
 if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
   EXTRA_ARGS_RENDERED="$(printf ' %q' "${EXTRA_ARGS[@]}")"
 fi
@@ -22,6 +53,10 @@ PLAYBOOK_STEM="${PLAYBOOK_BASENAME%.yml}"
 LOG_PATH="${STATE_DIR}/${PLAYBOOK_STEM}.log"
 PID_PATH="${STATE_DIR}/${PLAYBOOK_STEM}.pid"
 RC_PATH="${STATE_DIR}/${PLAYBOOK_STEM}.rc"
+
+if controller_playbook_requires_winrm "${PLAYBOOK_PATH}"; then
+  assert_controller_pywinrm
+fi
 
 mkdir -p "${STATE_DIR}"
 rm -f "${PID_PATH}" "${RC_PATH}" "${LOG_PATH}"

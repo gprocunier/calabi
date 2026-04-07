@@ -5,6 +5,27 @@
       {{ openshift_installer_binaries.download_dir }}
     openshift_installer_binaries_install_dir: >-
       {{ openshift_installer_binaries.install_dir }}
+    openshift_installer_binaries_current_link: >-
+      {{ lab_execution_tools_root }}/current
+    openshift_installer_binaries_tools_root: >-
+      {{ lab_execution_tools_root }}
+
+- name: Determine the unprivileged local execution user for OpenShift tool staging
+  ansible.builtin.command:
+    argv:
+      - id
+      - -un
+  become: false
+  register: openshift_installer_binaries_local_user
+  changed_when: false
+
+- name: Ensure the shared OpenShift tools root exists and is writable
+  ansible.builtin.file:
+    path: "{{ openshift_installer_binaries_tools_root }}"
+    state: directory
+    owner: "{{ openshift_installer_binaries_local_user.stdout }}"
+    group: "{{ openshift_installer_binaries_local_user.stdout }}"
+    mode: "0755"
 
 - name: Install local packages required for agent media generation
   ansible.builtin.package:
@@ -16,6 +37,7 @@
     path: "{{ item }}"
     state: directory
     mode: "0755"
+  become: false
   loop:
     - "{{ openshift_installer_binaries_download_dir }}"
     - "{{ openshift_installer_binaries_install_dir }}"
@@ -33,6 +55,7 @@
         ~ openshift_installer_binaries.binaries.openshift_install.archive
       }}
     mode: "0644"
+  become: false
 
 - name: Download OpenShift client archive for the mirrored release
   ansible.builtin.get_url:
@@ -47,6 +70,7 @@
         ~ openshift_installer_binaries.binaries.openshift_client.archive
       }}
     mode: "0644"
+  become: false
 
 - name: Extract openshift-install binary
   ansible.builtin.unarchive:
@@ -62,6 +86,7 @@
         openshift_installer_binaries_install_dir ~ '/'
         ~ openshift_installer_binaries.binaries.openshift_install.binary_name
       }}
+  become: false
 
 - name: Extract OpenShift client binaries
   ansible.builtin.unarchive:
@@ -72,14 +97,24 @@
       }}
     dest: "{{ openshift_installer_binaries_install_dir }}"
     remote_src: true
+  become: false
   register: openshift_installer_binaries_client_extract
 
 - name: Ensure extracted OpenShift binaries are executable
   ansible.builtin.file:
     path: "{{ openshift_installer_binaries_install_dir }}/{{ item }}"
     mode: "0755"
+  become: false
   loop: >-
     {{
       [openshift_installer_binaries.binaries.openshift_install.binary_name]
       + openshift_installer_binaries.binaries.openshift_client.binary_names
     }}
+
+- name: Publish the stable current OpenShift tool symlink after refreshing binaries
+  ansible.builtin.file:
+    src: "{{ openshift_installer_binaries_install_dir }}"
+    dest: "{{ openshift_installer_binaries_current_link }}"
+    state: link
+    force: true
+  become: false

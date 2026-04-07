@@ -22,7 +22,9 @@ Status:
 - zero-VM teardown and `playbooks/site-bootstrap.yml` have now been re-proven
 - cluster build, mirrored-content use, and the default auth/day-2 path have
   already succeeded from preserved support-service boundaries
-- the final bar is now one uninterrupted zero-VM `playbooks/site-lab.yml` run
+- recent fresh-path `playbooks/site-lab.yml` reruns have still exposed late
+  orchestration defects that required code repair
+- the final bar remains one uninterrupted zero-VM `playbooks/site-lab.yml` run
   on the current codebase, without live code repair during the attempt
 
 ### What is already proven
@@ -31,6 +33,8 @@ Status:
 - a zero-VM rebuild through `playbooks/site-bootstrap.yml` completes on the
   current codebase
 - the cluster can install successfully on the current codebase
+- the full support-service plus cluster path can converge cleanly on the
+  current codebase
 - mirrored Keycloak content deploys and runs
 - OpenShift OAuth converges on:
   - `HTPasswd` breakglass
@@ -62,8 +66,9 @@ Status:
 
 Status:
 
-- planned
-- not implemented in the live orchestration yet
+- in progress
+- the first orchestration slice is now wired
+- live validation of the bridge and downstream consumers is still pending
 
 The future target is:
 
@@ -76,10 +81,23 @@ Saved implementation artifacts:
 
 - <a href="./ad-idm-policy-model.md"><kbd>AD / IDM POLICY MODEL</kbd></a>
 - <a href="../vars/global/ad_group_policy.yml"><kbd>vars/global/ad_group_policy.yml</kbd></a>
+- <a href="../roles/idm_ad_trust/tasks/main.yml"><kbd>roles/idm_ad_trust/tasks/main.yml</kbd></a>
 
-This is intentionally scaffold only for now. It should not be treated as the
-current live behavior until the IdM trust policy objects and validation steps
-are implemented.
+What is implemented now:
+
+- canonical AD-to-IdM mapping data
+- IdM external-group creation for mapped AD groups
+- nesting of those external groups into the target local IdM groups during the
+  AD trust play
+
+What is still pending:
+
+- live proof that trusted AD users inherit the intended local IdM groups
+- RHEL-side authorization validation through the bridged local groups
+- Keycloak/OpenShift validation that the bridged local groups are what drive
+  OIDC group claims and RBAC
+- deferred naming/description cleanup so local IdM access groups and external
+  AD source groups are visually distinct in the UI and `ipa` output
 
 ## Closed Investigation: ODF NooBaa / CNPG initialization stall
 

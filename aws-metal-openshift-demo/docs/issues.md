@@ -12,8 +12,9 @@ Executive summary:
 - all issues listed below are closed
 - the cluster build plus current day-2/auth path have been validated on a live
   environment
-- the final zero-intervention end-to-end `site-lab.yml` certification run is
-  still pending
+- recent fresh-path rebuilds have continued to expose additional orchestration
+  defects, so the final zero-intervention end-to-end `playbooks/site-lab.yml`
+  certification run is still pending
 - this page is now a historical record of fixes, not an open-triage queue
 
 This ledger records problems that showed up during real rebuild and validation

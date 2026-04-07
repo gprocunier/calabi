@@ -56,7 +56,14 @@
       {{
         openshift_aap.ldap.require_group_dns
         if openshift_aap.ldap.require_group_dns | length > 0
-        else ['cn=openshift-admin,cn=groups,cn=accounts,' ~ openshift_post_install_aap_base_dn]
+        else ['cn=access-openshift-admin,cn=groups,cn=accounts,' ~ openshift_post_install_aap_base_dn]
+      }}
+    openshift_post_install_aap_superuser_map_name: >-
+      {{
+        (
+          openshift_post_install_aap_ldap_require_group_dns | first | regex_search('cn=([^,]+)', '\\1')
+        )[0]
+        ~ ' AAP superuser'
       }}
 
 - name: Assert local AAP orchestration artifacts exist
@@ -251,18 +258,119 @@
   until: openshift_post_install_aap_gateway_deployment.rc == 0
 
 - name: Wait for AAP gateway deployment rollout
-  ansible.builtin.command:
-    argv:
-      - "{{ openshift_post_install_aap_remote_oc_path }}"
-      - rollout
-      - status
-      - "deployment/{{ openshift_aap.instance_name }}-gateway"
-      - -n
-      - "{{ openshift_aap.namespace }}"
-      - --timeout=15m
-  environment:
-    KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
-  changed_when: false
+  block:
+    - name: Wait for AAP gateway deployment rollout
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_aap_remote_oc_path }}"
+          - rollout
+          - status
+          - "deployment/{{ openshift_aap.instance_name }}-gateway"
+          - -n
+          - "{{ openshift_aap.namespace }}"
+          - --timeout=15m
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+      register: openshift_post_install_aap_gateway_rollout
+      changed_when: false
+  rescue:
+    - name: Derive the AAP gateway deployment selector for rollout recovery
+      ansible.builtin.shell: |
+        set -o pipefail
+        "{{ openshift_post_install_aap_remote_oc_path }}" get deployment "{{ openshift_aap.instance_name }}-gateway" \
+          -n "{{ openshift_aap.namespace }}" -o json \
+        | jq -r '[.spec.selector.matchLabels // {} | to_entries[] | "\(.key)=\(.value)"] | join(",")'
+      args:
+        executable: /bin/bash
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+      register: openshift_post_install_aap_gateway_selector
+      changed_when: false
+
+    - name: Discover non-ready AAP gateway pods for rollout recovery
+      ansible.builtin.shell: |
+        set -o pipefail
+        selector="{{ openshift_post_install_aap_gateway_selector.stdout | trim }}"
+        if [ -z "$selector" ]; then
+          exit 0
+        fi
+        "{{ openshift_post_install_aap_remote_oc_path }}" get pods -n "{{ openshift_aap.namespace }}" --selector "$selector" -o json \
+        | jq -r '[
+            .items[]
+            | select(
+                (
+                  .status.containerStatuses // []
+                  | map(select(.ready == true))
+                  | length
+                ) !=
+                (
+                  .spec.containers // []
+                  | length
+                )
+              )
+            | .metadata.name
+          ] | join(" ")'
+      args:
+        executable: /bin/bash
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+      register: openshift_post_install_aap_gateway_recovery_pods
+      changed_when: false
+
+    - name: Delete non-ready AAP gateway pods so the deployment can recreate them
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_aap_remote_oc_path }}"
+          - delete
+          - pod
+          - "{{ item }}"
+          - -n
+          - "{{ openshift_aap.namespace }}"
+          - --ignore-not-found=true
+          - --force
+          - --grace-period=0
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+      changed_when: true
+      loop: "{{ openshift_post_install_aap_gateway_recovery_pods.stdout.split() }}"
+      when:
+        - openshift_post_install_aap_rollout_recovery_enabled | bool
+        - openshift_post_install_aap_gateway_recovery_pods.stdout | trim | length > 0
+
+    - name: Pause briefly for AAP gateway rollout recovery
+      ansible.builtin.pause:
+        seconds: "{{ openshift_post_install_aap_rollout_recovery_settle_seconds }}"
+      when:
+        - openshift_post_install_aap_rollout_recovery_enabled | bool
+        - openshift_post_install_aap_gateway_recovery_pods.stdout | trim | length > 0
+
+    - name: Retry AAP gateway deployment rollout after recycling non-ready pods
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_aap_remote_oc_path }}"
+          - rollout
+          - status
+          - "deployment/{{ openshift_aap.instance_name }}-gateway"
+          - -n
+          - "{{ openshift_aap.namespace }}"
+          - --timeout=15m
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+      changed_when: false
+      when:
+        - openshift_post_install_aap_rollout_recovery_enabled | bool
+        - openshift_post_install_aap_gateway_recovery_pods.stdout | trim | length > 0
+
+    - name: Fail when the AAP gateway rollout has no recoverable pod candidates
+      ansible.builtin.fail:
+        msg: >-
+          AAP gateway rollout did not complete and no recoverable non-ready pods were found.
+          selector={{ openshift_post_install_aap_gateway_selector.stdout | default('') }};
+          recovery pods={{ openshift_post_install_aap_gateway_recovery_pods.stdout | default('') }}.
+      when: >-
+        (not (openshift_post_install_aap_rollout_recovery_enabled | bool))
+        or
+        (openshift_post_install_aap_gateway_recovery_pods.stdout | trim | length == 0)
 
 - name: Wait for AAP controller deployment to exist
   ansible.builtin.command:
@@ -302,32 +410,234 @@
   until: openshift_post_install_aap_controller_web_deploy.rc == 0
 
 - name: Wait for primary AAP controller web deployment rollout
-  ansible.builtin.command:
-    argv:
-      - "{{ openshift_post_install_aap_remote_oc_path }}"
-      - rollout
-      - status
-      - "deployment/{{ openshift_aap.controller.name }}-web"
-      - -n
-      - "{{ openshift_aap.namespace }}"
-      - --timeout=20m
-  environment:
-    KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
-  changed_when: false
+  block:
+    - name: Wait for primary AAP controller web deployment rollout
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_aap_remote_oc_path }}"
+          - rollout
+          - status
+          - "deployment/{{ openshift_aap.controller.name }}-web"
+          - -n
+          - "{{ openshift_aap.namespace }}"
+          - --timeout=20m
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+      register: openshift_post_install_aap_controller_web_rollout
+      changed_when: false
+  rescue:
+    - name: Derive the AAP controller web deployment selector for rollout recovery
+      ansible.builtin.shell: |
+        set -o pipefail
+        "{{ openshift_post_install_aap_remote_oc_path }}" get deployment "{{ openshift_aap.controller.name }}-web" \
+          -n "{{ openshift_aap.namespace }}" -o json \
+        | jq -r '[.spec.selector.matchLabels // {} | to_entries[] | "\(.key)=\(.value)"] | join(",")'
+      args:
+        executable: /bin/bash
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+      register: openshift_post_install_aap_controller_web_selector
+      changed_when: false
+
+    - name: Discover non-ready AAP controller web pods for rollout recovery
+      ansible.builtin.shell: |
+        set -o pipefail
+        selector="{{ openshift_post_install_aap_controller_web_selector.stdout | trim }}"
+        if [ -z "$selector" ]; then
+          exit 0
+        fi
+        "{{ openshift_post_install_aap_remote_oc_path }}" get pods -n "{{ openshift_aap.namespace }}" --selector "$selector" -o json \
+        | jq -r '[
+            .items[]
+            | select(
+                (
+                  .status.containerStatuses // []
+                  | map(select(.ready == true))
+                  | length
+                ) !=
+                (
+                  .spec.containers // []
+                  | length
+                )
+              )
+            | .metadata.name
+          ] | join(" ")'
+      args:
+        executable: /bin/bash
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+      register: openshift_post_install_aap_controller_web_recovery_pods
+      changed_when: false
+
+    - name: Delete non-ready AAP controller web pods so the deployment can recreate them
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_aap_remote_oc_path }}"
+          - delete
+          - pod
+          - "{{ item }}"
+          - -n
+          - "{{ openshift_aap.namespace }}"
+          - --ignore-not-found=true
+          - --force
+          - --grace-period=0
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+      changed_when: true
+      loop: "{{ openshift_post_install_aap_controller_web_recovery_pods.stdout.split() }}"
+      when:
+        - openshift_post_install_aap_rollout_recovery_enabled | bool
+        - openshift_post_install_aap_controller_web_recovery_pods.stdout | trim | length > 0
+
+    - name: Pause briefly for AAP controller web rollout recovery
+      ansible.builtin.pause:
+        seconds: "{{ openshift_post_install_aap_rollout_recovery_settle_seconds }}"
+      when:
+        - openshift_post_install_aap_rollout_recovery_enabled | bool
+        - openshift_post_install_aap_controller_web_recovery_pods.stdout | trim | length > 0
+
+    - name: Retry AAP controller web deployment rollout after recycling non-ready pods
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_aap_remote_oc_path }}"
+          - rollout
+          - status
+          - "deployment/{{ openshift_aap.controller.name }}-web"
+          - -n
+          - "{{ openshift_aap.namespace }}"
+          - --timeout=20m
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+      changed_when: false
+      when:
+        - openshift_post_install_aap_rollout_recovery_enabled | bool
+        - openshift_post_install_aap_controller_web_recovery_pods.stdout | trim | length > 0
+
+    - name: Fail when the AAP controller web rollout has no recoverable pod candidates
+      ansible.builtin.fail:
+        msg: >-
+          AAP controller web rollout did not complete and no recoverable non-ready pods were found.
+          selector={{ openshift_post_install_aap_controller_web_selector.stdout | default('') }};
+          recovery pods={{ openshift_post_install_aap_controller_web_recovery_pods.stdout | default('') }}.
+      when: >-
+        (not (openshift_post_install_aap_rollout_recovery_enabled | bool))
+        or
+        (openshift_post_install_aap_controller_web_recovery_pods.stdout | trim | length == 0)
 
 - name: Wait for primary AAP controller task deployment rollout
-  ansible.builtin.command:
-    argv:
-      - "{{ openshift_post_install_aap_remote_oc_path }}"
-      - rollout
-      - status
-      - "deployment/{{ openshift_aap.controller.name }}-task"
-      - -n
-      - "{{ openshift_aap.namespace }}"
-      - --timeout=20m
-  environment:
-    KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
-  changed_when: false
+  block:
+    - name: Wait for primary AAP controller task deployment rollout
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_aap_remote_oc_path }}"
+          - rollout
+          - status
+          - "deployment/{{ openshift_aap.controller.name }}-task"
+          - -n
+          - "{{ openshift_aap.namespace }}"
+          - --timeout=20m
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+      register: openshift_post_install_aap_controller_task_rollout
+      changed_when: false
+  rescue:
+    - name: Derive the AAP controller task deployment selector for rollout recovery
+      ansible.builtin.shell: |
+        set -o pipefail
+        "{{ openshift_post_install_aap_remote_oc_path }}" get deployment "{{ openshift_aap.controller.name }}-task" \
+          -n "{{ openshift_aap.namespace }}" -o json \
+        | jq -r '[.spec.selector.matchLabels // {} | to_entries[] | "\(.key)=\(.value)"] | join(",")'
+      args:
+        executable: /bin/bash
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+      register: openshift_post_install_aap_controller_task_selector
+      changed_when: false
+
+    - name: Discover non-ready AAP controller task pods for rollout recovery
+      ansible.builtin.shell: |
+        set -o pipefail
+        selector="{{ openshift_post_install_aap_controller_task_selector.stdout | trim }}"
+        if [ -z "$selector" ]; then
+          exit 0
+        fi
+        "{{ openshift_post_install_aap_remote_oc_path }}" get pods -n "{{ openshift_aap.namespace }}" --selector "$selector" -o json \
+        | jq -r '[
+            .items[]
+            | select(
+                (
+                  .status.containerStatuses // []
+                  | map(select(.ready == true))
+                  | length
+                ) !=
+                (
+                  .spec.containers // []
+                  | length
+                )
+              )
+            | .metadata.name
+          ] | join(" ")'
+      args:
+        executable: /bin/bash
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+      register: openshift_post_install_aap_controller_task_recovery_pods
+      changed_when: false
+
+    - name: Delete non-ready AAP controller task pods so the deployment can recreate them
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_aap_remote_oc_path }}"
+          - delete
+          - pod
+          - "{{ item }}"
+          - -n
+          - "{{ openshift_aap.namespace }}"
+          - --ignore-not-found=true
+          - --force
+          - --grace-period=0
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+      changed_when: true
+      loop: "{{ openshift_post_install_aap_controller_task_recovery_pods.stdout.split() }}"
+      when:
+        - openshift_post_install_aap_rollout_recovery_enabled | bool
+        - openshift_post_install_aap_controller_task_recovery_pods.stdout | trim | length > 0
+
+    - name: Pause briefly for AAP controller task rollout recovery
+      ansible.builtin.pause:
+        seconds: "{{ openshift_post_install_aap_rollout_recovery_settle_seconds }}"
+      when:
+        - openshift_post_install_aap_rollout_recovery_enabled | bool
+        - openshift_post_install_aap_controller_task_recovery_pods.stdout | trim | length > 0
+
+    - name: Retry AAP controller task deployment rollout after recycling non-ready pods
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_aap_remote_oc_path }}"
+          - rollout
+          - status
+          - "deployment/{{ openshift_aap.controller.name }}-task"
+          - -n
+          - "{{ openshift_aap.namespace }}"
+          - --timeout=20m
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+      changed_when: false
+      when:
+        - openshift_post_install_aap_rollout_recovery_enabled | bool
+        - openshift_post_install_aap_controller_task_recovery_pods.stdout | trim | length > 0
+
+    - name: Fail when the AAP controller task rollout has no recoverable pod candidates
+      ansible.builtin.fail:
+        msg: >-
+          AAP controller task rollout did not complete and no recoverable non-ready pods were found.
+          selector={{ openshift_post_install_aap_controller_task_selector.stdout | default('') }};
+          recovery pods={{ openshift_post_install_aap_controller_task_recovery_pods.stdout | default('') }}.
+      when: >-
+        (not (openshift_post_install_aap_rollout_recovery_enabled | bool))
+        or
+        (openshift_post_install_aap_controller_task_recovery_pods.stdout | trim | length == 0)
 
 - name: Render AAP LDAP authenticator payload
   ansible.builtin.copy:
@@ -372,7 +682,7 @@
     mode: "0600"
     content: |-
       {
-        "name": "openshift-admin AAP superuser",
+        "name": {{ openshift_post_install_aap_superuser_map_name | to_json }},
         "map_type": "is_superuser",
         "revoke": true,
         "triggers": {
@@ -530,7 +840,7 @@
   args:
     executable: /bin/bash
   changed_when: true
-  when: "'openshift-admin AAP superuser' not in openshift_post_install_aap_existing_map_names.stdout_lines"
+  when: openshift_post_install_aap_superuser_map_name not in openshift_post_install_aap_existing_map_names.stdout_lines
 
 - name: Restart AAP gateway deployment after CA bundle/auth changes
   ansible.builtin.command:

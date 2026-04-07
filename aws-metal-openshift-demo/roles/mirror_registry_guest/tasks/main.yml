@@ -3,7 +3,8 @@
   ansible.builtin.set_fact:
     mirror_registry_guest_vm_fqdn: >-
       {{ mirror_registry_vm.name }}.{{ mirror_registry_vm.domain }}
-    mirror_registry_guest_hypervisor_host: "{{ groups['aws_metal'] | first }}"
+    mirror_registry_guest_hypervisor_host: >-
+      {{ (groups['aws_metal'] | default([])) | first | default('') }}
     mirror_registry_guest_cloudinit_iso: >-
       /var/lib/aws-metal-openshift-demo/{{ mirror_registry_vm.name }}/{{
       mirror_registry_vm.name }}-cidata.iso
@@ -91,6 +92,14 @@
         mirror_registry_reset_storage_requested | bool
         or mirror_registry_service.reset_storage | bool
       }}
+
+- name: Validate mirror registry hypervisor inventory is present
+  ansible.builtin.assert:
+    that:
+      - mirror_registry_guest_hypervisor_host | length > 0
+    fail_msg: >-
+      mirror registry guest configuration requires an aws_metal hypervisor
+      inventory host.
 
 - name: Validate the mirror registry guest configuration data
   ansible.builtin.assert:
@@ -272,6 +281,30 @@
         ) | unique
       }}
     state: present
+
+- name: Ensure the root Podman config drop-in directory exists on RHEL 10 mirror registry guests
+  ansible.builtin.file:
+    path: /etc/containers/containers.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when:
+    - ansible_distribution == 'RedHat'
+    - (ansible_distribution_major_version | int) >= 10
+
+- name: Ensure root Podman uses cgroupfs on RHEL 10 mirror registry guests
+  ansible.builtin.copy:
+    dest: /etc/containers/containers.conf.d/99-mirror-registry-cgroupfs.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [engine]
+      cgroup_manager = "cgroupfs"
+  when:
+    - ansible_distribution == 'RedHat'
+    - (ansible_distribution_major_version | int) >= 10
 
 - name: Ensure firewalld is enabled on the mirror registry guest
   ansible.builtin.systemd_service:
@@ -519,6 +552,15 @@
       - A
   register: mirror_registry_guest_authoritative_dns
   changed_when: false
+  retries: 12
+  delay: 5
+  until: >-
+    (
+      mirror_registry_guest_authoritative_dns.stdout_lines
+      | map('trim')
+      | reject('equalto', '')
+      | list
+    ) == [mirror_registry_guest_ipv4_address]
   failed_when: >-
     (
       mirror_registry_guest_authoritative_dns.stdout_lines

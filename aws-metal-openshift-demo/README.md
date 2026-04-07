@@ -60,6 +60,8 @@ Current validation status:
 
 - cluster build, mirrored-content consumption, and the default auth baseline
   (`HTPasswd` breakglass plus Keycloak OIDC) are working on the current lab
+- the latest bastion-side `playbooks/site-lab.yml` run completed successfully
+  with `rc=0` on the live environment
 - the repo validation lane (`make validate`) is clean
 - the final zero-intervention certification run of `playbooks/site-lab.yml`
   from a fresh teardown boundary is still pending

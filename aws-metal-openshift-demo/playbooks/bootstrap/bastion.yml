@@ -60,6 +60,7 @@
 
   roles:
     - role: bastion_guest
+      bastion_guest_join_idm: false
 
 - name: Detach bastion cloud-init media after guest configuration
   hosts: aws_metal

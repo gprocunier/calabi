@@ -1,2 +1,4 @@
 ---
 openshift_post_install_aap_remote_dir: /var/tmp/openshift-post-install-aap
+openshift_post_install_aap_rollout_recovery_enabled: true
+openshift_post_install_aap_rollout_recovery_settle_seconds: 15

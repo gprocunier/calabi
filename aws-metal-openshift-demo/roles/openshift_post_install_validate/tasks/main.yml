@@ -1,4 +1,16 @@
 ---
+- name: Register the bastion host for post-install validation delegates
+  ansible.builtin.add_host:
+    name: "{{ bastion_vm.name }}.{{ bastion_vm.domain }}"
+    groups:
+      - openshift_bastion
+    ansible_host: "{{ bastion_vm.network.ipv4_address }}"
+    ansible_user: "{{ bastion_vm.access.admin_user }}"
+    ansible_ssh_private_key_file: >-
+      {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+    ansible_ssh_common_args: >-
+      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+
 - name: Derive post-install validation paths
   ansible.builtin.set_fact:
     openshift_post_install_validate_oc_local_path: >-
@@ -12,19 +24,32 @@
       /var/tmp/openshift-post-install-validate/oc
     openshift_post_install_validate_remote_kubeconfig_path: >-
       /var/tmp/openshift-post-install-validate/kubeconfig
+    openshift_post_install_validate_bastion_host: >-
+      {{ (groups['openshift_bastion'] | default([])) | first | default('') }}
+    openshift_post_install_validate_bastion_admin_user: "{{ bastion_vm.access.admin_user }}"
+    openshift_post_install_validate_bastion_remote_dir: >-
+      /var/tmp/openshift-post-install-validate-bastion
+    openshift_post_install_validate_bastion_remote_oc_path: >-
+      /var/tmp/openshift-post-install-validate-bastion/oc
+    openshift_post_install_validate_bastion_remote_kubeconfig_path: >-
+      /var/tmp/openshift-post-install-validate-bastion/kubeconfig
+    openshift_post_install_validate_bastion_cluster_ca_bundle_path: >-
+      /var/tmp/openshift-post-install-validate-bastion/kube-root-ca.crt
+    openshift_post_install_validate_bastion_cluster_ca_anchor_path: >-
+      /etc/pki/ca-trust/source/anchors/ocp-cluster-ca-bundle.pem
 
 - name: Assert local oc binary exists
   ansible.builtin.stat:
     path: "{{ openshift_post_install_validate_oc_local_path }}"
   delegate_to: localhost
-  become: true
+  become: false
   register: openshift_post_install_validate_oc_local_stat
 
 - name: Assert generated kubeconfig exists
   ansible.builtin.stat:
     path: "{{ openshift_post_install_validate_kubeconfig_local_path }}"
   delegate_to: localhost
-  become: true
+  become: false
   register: openshift_post_install_validate_kubeconfig_local_stat
 
 - name: Fail when required local validation artifacts are missing
@@ -188,6 +213,166 @@
       - "{{ openshift_post_install_validate_operator_summary }}"
       - "{{ openshift_post_install_validate_nodes.stdout_lines }}"
       - "{{ openshift_post_install_validate_csrs.stdout_lines }}"
+
+- name: Refresh bastion OpenShift helper kubeconfigs from the current cluster state
+  when: openshift_post_install_validate_bastion_host | length > 0
+  block:
+    - name: Create bastion validation workspace
+      ansible.builtin.file:
+        path: "{{ openshift_post_install_validate_bastion_remote_dir }}"
+        state: directory
+        mode: "0700"
+      delegate_to: "{{ openshift_post_install_validate_bastion_host }}"
+
+    - name: Copy the pinned oc binary to the bastion validation workspace
+      ansible.builtin.copy:
+        src: "{{ openshift_post_install_validate_oc_local_path }}"
+        dest: "{{ openshift_post_install_validate_bastion_remote_oc_path }}"
+        mode: "0755"
+      delegate_to: "{{ openshift_post_install_validate_bastion_host }}"
+
+    - name: Copy the current generated kubeconfig to the bastion validation workspace
+      ansible.builtin.copy:
+        src: "{{ openshift_post_install_validate_kubeconfig_local_path }}"
+        dest: "{{ openshift_post_install_validate_bastion_remote_kubeconfig_path }}"
+        mode: "0600"
+      delegate_to: "{{ openshift_post_install_validate_bastion_host }}"
+
+    - name: Discover current members of the IdM Linux access group on the bastion
+      ansible.builtin.command:
+        argv:
+          - getent
+          - group
+          - access-linux-admin
+      register: openshift_post_install_validate_bastion_linux_access_group
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ openshift_post_install_validate_bastion_host }}"
+
+    - name: Derive bastion users who should receive refreshed helper kubeconfigs
+      ansible.builtin.set_fact:
+        openshift_post_install_validate_bastion_home_link_users: >-
+          {{
+            (
+              [openshift_post_install_validate_bastion_admin_user] +
+              (
+                (
+                  openshift_post_install_validate_bastion_linux_access_group.stdout.split(':')[-1].split(',')
+                  if openshift_post_install_validate_bastion_linux_access_group.rc == 0 and
+                  (openshift_post_install_validate_bastion_linux_access_group.stdout | length > 0)
+                  else []
+                )
+              )
+            ) | reject('equalto', '') | unique | list
+          }}
+
+    - name: Gather passwd entries for bastion kubeconfig refresh targets
+      ansible.builtin.command:
+        argv:
+          - getent
+          - passwd
+          - "{{ item }}"
+      loop: "{{ openshift_post_install_validate_bastion_home_link_users }}"
+      register: openshift_post_install_validate_bastion_passwd_entries
+      changed_when: false
+      failed_when: false
+      delegate_to: "{{ openshift_post_install_validate_bastion_host }}"
+
+    - name: Build structured bastion home-directory targets
+      ansible.builtin.set_fact:
+        openshift_post_install_validate_bastion_home_link_targets: >-
+          {{
+            (openshift_post_install_validate_bastion_home_link_targets | default([]))
+            + [{'user': item.item, 'gid': (item.stdout.split(':')[3]), 'home': (item.stdout.split(':')[5])}]
+          }}
+      loop: "{{ openshift_post_install_validate_bastion_passwd_entries.results }}"
+      when: item.rc == 0
+
+    - name: Ensure skeleton etc directory exists for future bastion admin logins
+      ansible.builtin.file:
+        path: /etc/skel/etc
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      become: true
+      delegate_to: "{{ openshift_post_install_validate_bastion_host }}"
+
+    - name: Seed current cluster kubeconfigs into the skeleton bastion helper layout
+      ansible.builtin.copy:
+        src: "{{ openshift_post_install_validate_bastion_remote_kubeconfig_path }}"
+        dest: "/etc/skel/etc/{{ item }}"
+        owner: root
+        group: root
+        mode: "0600"
+        remote_src: true
+      loop:
+        - kubeconfig
+        - kubeconfig.local
+      become: true
+      delegate_to: "{{ openshift_post_install_validate_bastion_host }}"
+
+    - name: Ensure per-user bastion etc directories exist for kubeconfig refresh
+      ansible.builtin.file:
+        path: "{{ item.home }}/etc"
+        state: directory
+        owner: "{{ item.user }}"
+        group: "{{ item.gid }}"
+        mode: "0755"
+      loop: "{{ openshift_post_install_validate_bastion_home_link_targets | default([]) }}"
+      become: true
+      delegate_to: "{{ openshift_post_install_validate_bastion_host }}"
+
+    - name: Seed current cluster kubeconfigs into bastion admin homes
+      ansible.builtin.copy:
+        src: "{{ openshift_post_install_validate_bastion_remote_kubeconfig_path }}"
+        dest: "{{ item.0.home }}/etc/{{ item.1 }}"
+        owner: "{{ item.0.user }}"
+        group: "{{ item.0.gid }}"
+        mode: "0600"
+        remote_src: true
+      loop: "{{ (openshift_post_install_validate_bastion_home_link_targets | default([])) | product(['kubeconfig', 'kubeconfig.local']) | list }}"
+      become: true
+      delegate_to: "{{ openshift_post_install_validate_bastion_host }}"
+
+    - name: Export the current OpenShift cluster CA bundle on the bastion
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_validate_bastion_remote_oc_path }}"
+          - get
+          - configmap/kube-root-ca.crt
+          - -o
+          - jsonpath={.data.ca\.crt}
+      environment:
+        KUBECONFIG: "{{ openshift_post_install_validate_bastion_remote_kubeconfig_path }}"
+      register: openshift_post_install_validate_bastion_cluster_ca_bundle
+      changed_when: false
+      delegate_to: "{{ openshift_post_install_validate_bastion_host }}"
+
+    - name: Write the current OpenShift cluster CA bundle into the bastion validation workspace
+      ansible.builtin.copy:
+        content: "{{ openshift_post_install_validate_bastion_cluster_ca_bundle.stdout ~ '\n' }}"
+        dest: "{{ openshift_post_install_validate_bastion_cluster_ca_bundle_path }}"
+        mode: "0644"
+      delegate_to: "{{ openshift_post_install_validate_bastion_host }}"
+
+    - name: Refresh the bastion system trust anchor for the current OpenShift cluster CA bundle
+      ansible.builtin.shell: |
+        set -euo pipefail
+        source_path="{{ openshift_post_install_validate_bastion_cluster_ca_bundle_path }}"
+        anchor_path="{{ openshift_post_install_validate_bastion_cluster_ca_anchor_path }}"
+
+        if [ ! -f "${anchor_path}" ] || ! cmp -s "${source_path}" "${anchor_path}"; then
+          cp "${source_path}" "${anchor_path}"
+          update-ca-trust extract
+          echo changed
+        fi
+      args:
+        executable: /bin/bash
+      register: openshift_post_install_validate_bastion_cluster_ca_refresh
+      changed_when: "'changed' in openshift_post_install_validate_bastion_cluster_ca_refresh.stdout"
+      become: true
+      delegate_to: "{{ openshift_post_install_validate_bastion_host }}"
 
 - name: Detach agent boot media from converged OpenShift domains
   ansible.builtin.include_role:

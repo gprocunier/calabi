@@ -176,38 +176,163 @@
   until: openshift_post_install_web_terminal_csv_phase.stdout == 'Succeeded'
 
 - name: Wait for Web Terminal pods to become Ready
-  ansible.builtin.shell: |
-    set -o pipefail
-    "{{ openshift_post_install_web_terminal_remote_oc_path }}" get pods \
-      -n "{{ openshift_post_install_web_terminal_namespace }}" \
-      -l 'operators.coreos.com/web-terminal.openshift-operators=' \
-      -o json \
-    | jq -r '
-        [
-          .items[]
-          | select(
-              (
-                .status.containerStatuses // []
-                | map(select(.ready == true))
-                | length
-              ) !=
-              (
-                .spec.containers // []
-                | length
+  block:
+    - name: Check Web Terminal pod readiness
+      ansible.builtin.shell: |
+        set -o pipefail
+        "{{ openshift_post_install_web_terminal_remote_oc_path }}" get pods \
+          -n "{{ openshift_post_install_web_terminal_namespace }}" \
+          -l 'operators.coreos.com/web-terminal.openshift-operators=' \
+          -o json \
+        | jq -r '
+            {
+              total: (.items | length),
+              not_ready: (
+                [
+                  .items[]
+                  | select(
+                      (
+                        .status.containerStatuses // []
+                        | map(select(.ready == true))
+                        | length
+                      ) !=
+                      (
+                        .spec.containers // []
+                        | length
+                      )
+                    )
+                ] | length
               )
-            )
-        ] | length
-      '
-  args:
-    executable: /bin/bash
-  environment:
-    KUBECONFIG: >-
-      {{ openshift_post_install_web_terminal_remote_kubeconfig_path }}
-  register: openshift_post_install_web_terminal_not_ready_count
-  changed_when: false
-  retries: 30
-  delay: 10
-  until: openshift_post_install_web_terminal_not_ready_count.stdout == '0'
+            } | "\(.total)|\(.not_ready)"
+          '
+      args:
+        executable: /bin/bash
+      environment:
+        KUBECONFIG: >-
+          {{ openshift_post_install_web_terminal_remote_kubeconfig_path }}
+      register: openshift_post_install_web_terminal_pod_readiness
+      changed_when: false
+      retries: 30
+      delay: 10
+      until: >-
+        ((openshift_post_install_web_terminal_pod_readiness.stdout | trim).split('|')[0] | int) > 0
+        and
+        ((openshift_post_install_web_terminal_pod_readiness.stdout | trim).split('|')[1] | int) == 0
+  rescue:
+    - name: Discover non-ready Web Terminal pods for recovery
+      ansible.builtin.shell: |
+        set -o pipefail
+        "{{ openshift_post_install_web_terminal_remote_oc_path }}" get pods \
+          -n "{{ openshift_post_install_web_terminal_namespace }}" \
+          -l 'operators.coreos.com/web-terminal.openshift-operators=' \
+          -o json \
+        | jq -r '
+            [
+              .items[]
+              | select(
+                  (
+                    .status.containerStatuses // []
+                    | map(select(.ready == true))
+                    | length
+                  ) !=
+                  (
+                    .spec.containers // []
+                    | length
+                  )
+                )
+              | .metadata.name
+            ] | join(" ")
+          '
+      args:
+        executable: /bin/bash
+      environment:
+        KUBECONFIG: >-
+          {{ openshift_post_install_web_terminal_remote_kubeconfig_path }}
+      register: openshift_post_install_web_terminal_recovery_pods
+      changed_when: false
+
+    - name: Delete non-ready Web Terminal pods so the deployment can recreate them
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_web_terminal_remote_oc_path }}"
+          - delete
+          - pod
+          - "{{ item }}"
+          - -n
+          - "{{ openshift_post_install_web_terminal_namespace }}"
+          - --ignore-not-found=true
+          - --force
+          - --grace-period=0
+      environment:
+        KUBECONFIG: >-
+          {{ openshift_post_install_web_terminal_remote_kubeconfig_path }}
+      changed_when: true
+      loop: "{{ openshift_post_install_web_terminal_recovery_pods.stdout.split() }}"
+      when:
+        - openshift_post_install_web_terminal_pod_recovery_enabled | bool
+        - openshift_post_install_web_terminal_recovery_pods.stdout | trim | length > 0
+
+    - name: Pause briefly for Web Terminal recovery pods to be recreated
+      ansible.builtin.pause:
+        seconds: "{{ openshift_post_install_web_terminal_pod_recovery_settle_seconds }}"
+      when:
+        - openshift_post_install_web_terminal_pod_recovery_enabled | bool
+        - openshift_post_install_web_terminal_recovery_pods.stdout | trim | length > 0
+
+    - name: Recheck Web Terminal pod readiness after recycling non-ready pods
+      ansible.builtin.shell: |
+        set -o pipefail
+        "{{ openshift_post_install_web_terminal_remote_oc_path }}" get pods \
+          -n "{{ openshift_post_install_web_terminal_namespace }}" \
+          -l 'operators.coreos.com/web-terminal.openshift-operators=' \
+          -o json \
+        | jq -r '
+            {
+              total: (.items | length),
+              not_ready: (
+                [
+                  .items[]
+                  | select(
+                      (
+                        .status.containerStatuses // []
+                        | map(select(.ready == true))
+                        | length
+                      ) !=
+                      (
+                        .spec.containers // []
+                        | length
+                      )
+                    )
+                ] | length
+              )
+            } | "\(.total)|\(.not_ready)"
+          '
+      args:
+        executable: /bin/bash
+      environment:
+        KUBECONFIG: >-
+          {{ openshift_post_install_web_terminal_remote_kubeconfig_path }}
+      register: openshift_post_install_web_terminal_pod_readiness_recheck
+      changed_when: false
+      retries: 30
+      delay: 10
+      until: >-
+        ((openshift_post_install_web_terminal_pod_readiness_recheck.stdout | trim).split('|')[0] | int) > 0
+        and
+        ((openshift_post_install_web_terminal_pod_readiness_recheck.stdout | trim).split('|')[1] | int) == 0
+      when:
+        - openshift_post_install_web_terminal_pod_recovery_enabled | bool
+        - openshift_post_install_web_terminal_recovery_pods.stdout | trim | length > 0
+
+    - name: Fail when Web Terminal pods remain unhealthy without recoverable pod candidates
+      ansible.builtin.fail:
+        msg: >-
+          Web Terminal pods did not become Ready. Initial readiness={{ openshift_post_install_web_terminal_pod_readiness.stdout | default('') }};
+          recovery pods={{ openshift_post_install_web_terminal_recovery_pods.stdout | default('') }}.
+      when: >-
+        (not (openshift_post_install_web_terminal_pod_recovery_enabled | bool))
+        or
+        (openshift_post_install_web_terminal_recovery_pods.stdout | trim | length == 0)
 
 - name: Apply Web Terminal tooling ImageStream
   ansible.builtin.command:

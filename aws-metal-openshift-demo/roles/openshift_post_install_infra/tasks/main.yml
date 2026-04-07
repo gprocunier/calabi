@@ -24,14 +24,14 @@
   ansible.builtin.stat:
     path: "{{ openshift_post_install_infra_oc_local_path }}"
   delegate_to: localhost
-  become: true
+  become: false
   register: openshift_post_install_infra_oc_local_stat
 
 - name: Assert generated kubeconfig exists
   ansible.builtin.stat:
     path: "{{ openshift_post_install_infra_kubeconfig_local_path }}"
   delegate_to: localhost
-  become: true
+  become: false
   register: openshift_post_install_infra_kubeconfig_local_stat
 
 - name: Fail when required local infra-conversion artifacts are missing

@@ -6,6 +6,7 @@ idm_ad_trust:
   disable_dnssec_validation: true
   ad_domain: "{{ ad_server.domain_name }}"
   ad_realm: "{{ ad_server.domain_name | upper }}"
+  ad_netbios_name: "{{ ad_server.domain_netbios }}"
   ad_server: "{{ ad_vm.name }}.{{ ad_vm.domain }}"
   ad_admin_user: "{{ ad_vm.access.admin_user }}"
   ad_admin_password: "{{ ad_vm.access.admin_password }}"

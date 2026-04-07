@@ -700,22 +700,143 @@
     openshift_post_install_virtualization_kubevirt_available.stdout == 'True'
 
 - name: Wait for virt-handler daemonset to be ready
-  ansible.builtin.command:
-    argv:
-      - "{{ openshift_post_install_virtualization_remote_oc_path }}"
-      - get
-      - daemonset
-      - virt-handler
-      - -n
-      - "{{ openshift_post_install_virtualization_namespace }}"
-      - -o
-      - jsonpath={.status.numberReady}
-  environment:
-    KUBECONFIG: >-
-      {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
-  register: openshift_post_install_virtualization_virt_handler_ready
-  changed_when: false
-  retries: 60
-  delay: 15
-  until: >-
-    openshift_post_install_virtualization_virt_handler_ready.stdout | int >= 1
+  block:
+    - name: Check virt-handler daemonset readiness
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+          - get
+          - daemonset
+          - virt-handler
+          - -n
+          - "{{ openshift_post_install_virtualization_namespace }}"
+          - -o
+          - jsonpath={.status.numberReady}|{.status.desiredNumberScheduled}
+      environment:
+        KUBECONFIG: >-
+          {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+      register: openshift_post_install_virtualization_virt_handler_readiness
+      changed_when: false
+      retries: 60
+      delay: 15
+      until: >-
+        ((openshift_post_install_virtualization_virt_handler_readiness.stdout | trim).split('|')[1] | int) > 0
+        and
+        ((openshift_post_install_virtualization_virt_handler_readiness.stdout | trim).split('|')[0] | int)
+        ==
+        ((openshift_post_install_virtualization_virt_handler_readiness.stdout | trim).split('|')[1] | int)
+  rescue:
+    - name: Derive the virt-handler daemonset selector for recovery
+      ansible.builtin.shell: |
+        set -o pipefail
+        "{{ openshift_post_install_virtualization_remote_oc_path }}" get daemonset virt-handler \
+          -n "{{ openshift_post_install_virtualization_namespace }}" -o json \
+        | jq -r '[.spec.selector.matchLabels // {} | to_entries[] | "\(.key)=\(.value)"] | join(",")'
+      args:
+        executable: /bin/bash
+      environment:
+        KUBECONFIG: >-
+          {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+      register: openshift_post_install_virtualization_virt_handler_selector
+      changed_when: false
+
+    - name: Discover non-ready virt-handler pods for recovery
+      ansible.builtin.shell: |
+        set -o pipefail
+        selector="{{ openshift_post_install_virtualization_virt_handler_selector.stdout | trim }}"
+        if [ -z "$selector" ]; then
+          exit 0
+        fi
+        "{{ openshift_post_install_virtualization_remote_oc_path }}" get pods \
+          -n "{{ openshift_post_install_virtualization_namespace }}" \
+          --selector "$selector" -o json \
+        | jq -r '[
+            .items[]
+            | select(
+                (
+                  .status.containerStatuses // []
+                  | map(select(.ready == true))
+                  | length
+                ) !=
+                (
+                  .spec.containers // []
+                  | length
+                )
+              )
+            | .metadata.name
+          ] | join(" ")'
+      args:
+        executable: /bin/bash
+      environment:
+        KUBECONFIG: >-
+          {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+      register: openshift_post_install_virtualization_virt_handler_recovery_pods
+      changed_when: false
+
+    - name: Delete non-ready virt-handler pods so the daemonset can recreate them
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+          - delete
+          - pod
+          - "{{ item }}"
+          - -n
+          - "{{ openshift_post_install_virtualization_namespace }}"
+          - --ignore-not-found=true
+          - --force
+          - --grace-period=0
+      environment:
+        KUBECONFIG: >-
+          {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+      changed_when: true
+      loop: "{{ openshift_post_install_virtualization_virt_handler_recovery_pods.stdout.split() }}"
+      when:
+        - openshift_post_install_virtualization_daemonset_recovery_enabled | bool
+        - openshift_post_install_virtualization_virt_handler_recovery_pods.stdout | trim | length > 0
+
+    - name: Pause briefly for virt-handler daemonset recovery
+      ansible.builtin.pause:
+        seconds: "{{ openshift_post_install_virtualization_daemonset_recovery_settle_seconds }}"
+      when:
+        - openshift_post_install_virtualization_daemonset_recovery_enabled | bool
+        - openshift_post_install_virtualization_virt_handler_recovery_pods.stdout | trim | length > 0
+
+    - name: Recheck virt-handler daemonset readiness after recycling non-ready pods
+      ansible.builtin.command:
+        argv:
+          - "{{ openshift_post_install_virtualization_remote_oc_path }}"
+          - get
+          - daemonset
+          - virt-handler
+          - -n
+          - "{{ openshift_post_install_virtualization_namespace }}"
+          - -o
+          - jsonpath={.status.numberReady}|{.status.desiredNumberScheduled}
+      environment:
+        KUBECONFIG: >-
+          {{ openshift_post_install_virtualization_remote_kubeconfig_path }}
+      register: openshift_post_install_virtualization_virt_handler_readiness_recheck
+      changed_when: false
+      retries: 60
+      delay: 15
+      until: >-
+        ((openshift_post_install_virtualization_virt_handler_readiness_recheck.stdout | trim).split('|')[1] | int) > 0
+        and
+        ((openshift_post_install_virtualization_virt_handler_readiness_recheck.stdout | trim).split('|')[0] | int)
+        ==
+        ((openshift_post_install_virtualization_virt_handler_readiness_recheck.stdout | trim).split('|')[1] | int)
+      when:
+        - openshift_post_install_virtualization_daemonset_recovery_enabled | bool
+        - openshift_post_install_virtualization_virt_handler_recovery_pods.stdout | trim | length > 0
+
+    - name: Fail when virt-handler remains unhealthy without recoverable pod candidates
+      ansible.builtin.fail:
+        msg: >-
+          virt-handler daemonset did not become fully ready.
+          Initial readiness={{ openshift_post_install_virtualization_virt_handler_readiness.stdout | default('') }};
+          selector={{ openshift_post_install_virtualization_virt_handler_selector.stdout | default('') }};
+          recovery pods={{ openshift_post_install_virtualization_virt_handler_recovery_pods.stdout | default('') }}.
+      when: >-
+        (not (openshift_post_install_virtualization_daemonset_recovery_enabled | bool))
+        or
+        (openshift_post_install_virtualization_virt_handler_recovery_pods.stdout | trim | length == 0)

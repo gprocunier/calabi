@@ -35,7 +35,7 @@
   ansible.builtin.stat:
     path: "{{ item }}"
   delegate_to: localhost
-  become: true
+  become: false
   loop:
     - "{{ openshift_post_install_breakglass_auth_oc_local_path }}"
     - "{{ openshift_post_install_breakglass_auth_kubeconfig_local_path }}"

@@ -81,8 +81,8 @@
         id ad-ocpadmin@corp.lan || true
         echo '=== getent trusted groups ==='
         getent group 'domain users@corp.lan' || true
-        getent group 'developers@corp.lan' || true
-        getent group 'OpenShift-Admins@corp.lan' || true
+        getent group 'ad-corp-developers@corp.lan' || true
+        getent group 'ad-corp-openshift-admins@corp.lan' || true
         echo '=== default trust view ==='
         ipa idview-show 'Default Trust View' || true
         echo '=== idoverrideuser-find default trust view ==='

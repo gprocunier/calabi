@@ -51,4 +51,4 @@ openshift_aap:
       member_attr: member
       name_attr: cn
     require_group_dns:
-      - cn=openshift-admin,cn=groups,cn=accounts,dc=workshop,dc=lan
+      - cn=access-openshift-admin,cn=groups,cn=accounts,dc=workshop,dc=lan

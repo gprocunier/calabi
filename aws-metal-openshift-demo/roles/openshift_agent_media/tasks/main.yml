@@ -1,7 +1,8 @@
 ---
 - name: Derive agent media paths
   ansible.builtin.set_fact:
-    openshift_agent_media_hypervisor_host: "{{ groups['aws_metal'] | first }}"
+    openshift_agent_media_hypervisor_host: >-
+      {{ (groups['aws_metal'] | default([])) | first | default('') }}
     openshift_agent_media_render_dir: "{{ openshift_agent_media.output_dir }}"
     openshift_agent_media_attachment_plan_path: >-
       {{ openshift_agent_media.attachment_plan_file }}
@@ -17,6 +18,13 @@
         openshift_agent_media.output_dir ~ '/'
         ~ openshift_agent_media.boot_artifact.filename
       }}
+
+- name: Validate agent media hypervisor inventory is present
+  ansible.builtin.assert:
+    that:
+      - openshift_agent_media_hypervisor_host | length > 0
+    fail_msg: >-
+      agent media generation requires an aws_metal hypervisor inventory host.
 
 - name: Validate rendered install artifacts exist
   ansible.builtin.stat:

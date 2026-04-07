@@ -11,7 +11,8 @@ Nearby docs:
 
 ## Status
 
-This document is a saved implementation plan, not the live behavior.
+This document describes the target model and the implementation work now
+underway.
 
 The current orchestration already does:
 
@@ -21,9 +22,16 @@ The current orchestration already does:
 - local IdM group `openshift-admin` bound to OpenShift `cluster-admin`
 - local IdM group `admins` bound to the `admins-nopasswd-all` sudo rule
 
-The future model described here changes the authorization source so AD becomes
-the user and source-group system of record, while IdM local groups remain the
-authorization boundary.
+The current implementation now also includes the first policy-bridge slice:
+
+- canonical mapping data in
+  <a href="../vars/global/ad_group_policy.yml"><kbd>vars/global/ad_group_policy.yml</kbd></a>
+- optional creation of one IdM external group per mapped AD group
+- optional nesting of those external groups into the target local IdM groups
+  during <a href="../playbooks/bootstrap/idm-ad-trust.yml"><kbd>playbooks/bootstrap/idm-ad-trust.yml</kbd></a>
+
+What is still pending is consumer-side proof that those bridged local groups
+drive the intended RHEL and OpenShift access end to end.
 
 ## Target Model
 
@@ -63,10 +71,42 @@ The current planned mappings are:
 | `Developers` | `ad-developers` | `developer` | future non-admin application access |
 | `Ansible-Automation-Admins` | `ad-aap-admins` | `aap-admin` | future AAP authorization path |
 
-## Current Gap Versus Target
+## Deferred Hygiene: Naming And Descriptions
 
-The current repo does not yet implement explicit AD-group to IdM-local-group
-nesting.
+This is saved as follow-on housekeeping after the current rollout completes.
+
+The current implementation now applies terse descriptions to both sides of the
+bridge so the IdM web UI and `ipa group-show` output communicate the two roles
+immediately:
+
+- local IdM groups grant access
+- external IdM groups are only upstream AD membership sources
+
+Planned naming direction remains:
+
+| Group type | Planned pattern | Example |
+| --- | --- | --- |
+| IdM local access group | `access-<scope>-<role>` | `access-openshift-admin` |
+| IdM external AD source group | `ext-<domain>-<group>` | `ext-corp-lan-openshift-admins` |
+
+Planned description pattern:
+
+| Group type | Description template | Example |
+| --- | --- | --- |
+| IdM local access group | `Access group: <permission>` | `Access group: OpenShift cluster-admin` |
+| IdM external AD source group | `AD source group: <domain>/<group>` | `AD source group: corp.lan/OpenShift-Admins` |
+
+Why this is deferred:
+
+- the current bridge is already wired and being exercised
+- renaming the groups now would create extra churn while rollout validation is
+  still in progress
+- the current hygiene work is description-first so operators can see the role
+  split without changing live names
+- a later rename can still be done if we decide the `ad-*` bridge names are too
+  noisy for long-term use
+
+## Current Gap Versus Target
 
 What exists now:
 
@@ -74,13 +114,16 @@ What exists now:
 - IdM local groups are created on `idm-01`
 - IdM trust and compat are enabled
 - Keycloak reads users and groups from the IdM compat tree
+- the AD-to-IdM policy bridge data model is defined centrally
+- IdM external groups and local-group nesting are now created from that mapping
+  during the AD trust play
 
 What does not exist yet:
 
-- explicit IdM external groups for the AD groups above
-- explicit nesting of those external groups into local IdM groups
-- a dedicated AD group that maps to local IdM `admins`
 - validation that an AD group change alone changes RHEL and OpenShift access
+- proof that Keycloak emits the bridged local IdM groups for trusted AD users
+- proof that RHEL sudo/HBAC are being granted through the bridged local groups
+  rather than through broader trust behavior
 
 ## Implementation Plan
 
@@ -96,6 +139,10 @@ Success criteria:
 
 - one canonical mapping source exists in the repo
 - the mapping covers OpenShift, RHEL, and AAP intent explicitly
+
+Status:
+
+- implemented
 
 ### Phase 2: IdM Trust Policy Objects
 
@@ -114,6 +161,12 @@ Success criteria:
 
 - `ipa group-show <local-group>` shows the external group as a member
 - trusted AD users land in the correct local IdM policy group through nesting
+
+Status:
+
+- implementation landed in
+  <a href="../roles/idm_ad_trust/tasks/main.yml"><kbd>roles/idm_ad_trust/tasks/main.yml</kbd></a>
+- live validation still in progress
 
 ### Phase 3: RHEL Authorization Validation
 

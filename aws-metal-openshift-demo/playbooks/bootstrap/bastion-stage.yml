@@ -87,7 +87,7 @@
       ansible.builtin.add_host:
         name: bastion_stage_target
         groups:
-          - openshift_bastion
+          - bastion_stage_hosts
         ansible_host: "{{ bastion_vm.network.ipv4_address }}"
         ansible_user: "{{ bastion_vm.access.admin_user }}"
         ansible_ssh_private_key_file: >-
@@ -105,7 +105,7 @@
         sleep: 10
 
 - name: Prepare the bastion as the lab execution host
-  hosts: openshift_bastion
+  hosts: bastion_stage_hosts
   become: true
   gather_facts: true
   vars_files:

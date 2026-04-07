@@ -51,12 +51,12 @@ openshift_oidc_auth:
       groups:
         - groups
   authorization:
-    cluster_admin_group: openshift-admin
+    cluster_admin_group: access-openshift-admin
   validation:
     native_test_user: >-
       {{
         idm_server.identity_users
-        | selectattr('groups', 'contains', 'openshift-admin')
+        | selectattr('groups', 'contains', 'access-openshift-admin')
         | map(attribute='name')
         | first
         | default('')
