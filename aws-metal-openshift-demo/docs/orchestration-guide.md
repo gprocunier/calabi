@@ -637,7 +637,7 @@ Execution model:
   - OpenShift Virtualization deployment
   - OpenShift Pipelines and Windows image-build lane setup
   - Web Terminal installation
-  - AAP deployment and LDAP integration
+  - AAP deployment and Keycloak OIDC integration
   - Network Observability and Loki deployment
   - validation
 - the disconnected OperatorHub phase also checks that every cluster node can
@@ -748,7 +748,8 @@ Design note:
 
 Purpose:
 
-- install Red Hat Ansible Automation Platform and integrate it with IdM
+- install Red Hat Ansible Automation Platform and integrate it with the
+  Keycloak/IdM auth path
 
 Execution model:
 
@@ -757,16 +758,22 @@ Execution model:
 - keeps controller enabled and hub, EDA, and Lightspeed disabled
 - uses `ocs-storagecluster-ceph-rbd` for the embedded PostgreSQL storage
 - creates an IdM CA bundle secret using the required key name `bundle-ca.crt`
-- creates the `Red Hat Identity Management` LDAP authenticator in the gateway
-- creates the `openshift-admin AAP superuser` authenticator map
-- validates LDAP login with the configured test user after the gateway rollout
+- creates or updates the Keycloak `aap` client in the existing realm
+- creates or updates the Keycloak `groups` and `aap-audience` protocol mappers
+- creates the `Red Hat build of Keycloak` gateway authenticator
+- creates the `access-openshift-admin AAP superuser` authenticator map
+- removes the legacy direct-LDAP authenticator when present
+- validates AD-backed OIDC login after the gateway rollout when trust is
+  enabled, otherwise validates the native IdM user path
 
 Validated live result:
 
 - route `https://aap.apps.ocp.workshop.lan`
-- login page shows `Red Hat Identity Management`
-- `sysop` authenticates through IdM
-- the AAP user for `sysop` has `is_superuser: true`
+- login page shows `Red Hat build of Keycloak`
+- `ad-ocpadmin@corp.lan` authenticates through Keycloak/IdM on the live trust
+  path
+- the resulting AAP user has `is_superuser: true`
+- a clean AAP teardown and redeploy was revalidated on the same OIDC path
 
 ### `playbooks/day2/openshift-post-install-virtualization.yml`
 

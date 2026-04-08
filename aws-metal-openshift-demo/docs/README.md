@@ -9,7 +9,7 @@ the part of the project you actually need.
 <a href="./orchestration-plumbing.md"><kbd>&nbsp;&nbsp;ORCHESTRATION PLUMBING&nbsp;&nbsp;</kbd></a>
 <a href="./authentication-model.md"><kbd>&nbsp;&nbsp;AUTH MODEL&nbsp;&nbsp;</kbd></a>
 <a href="./ad-idm-policy-model.md"><kbd>&nbsp;&nbsp;AD / IDM POLICY MODEL&nbsp;&nbsp;</kbd></a>
-<a href="./manual-process.md"><kbd>&nbsp;&nbsp;MANUAL FLOW&nbsp;&nbsp;</kbd></a>
+<a href="./manual-process.md"><kbd>&nbsp;&nbsp;MANUAL PROCESS&nbsp;&nbsp;</kbd></a>
 <a href="./iaas-resource-model.md"><kbd>&nbsp;&nbsp;IAAS MODEL&nbsp;&nbsp;</kbd></a>
 <a href="./host-resource-management.md"><kbd>&nbsp;&nbsp;RESOURCE DESIGN&nbsp;&nbsp;</kbd></a>
 <a href="./host-memory-oversubscription.md"><kbd>&nbsp;&nbsp;HOST MEMORY&nbsp;&nbsp;</kbd></a>
@@ -25,6 +25,23 @@ The root `README.md` explains what the project is. This page answers:
 - where do I start for my specific task?
 - which docs explain design versus operation versus implementation?
 - where in the codebase do those documents point?
+
+## Current Validated Baseline
+
+The docs below now reflect the current validated posture:
+
+- `playbooks/site-bootstrap.yml` has been re-proven from a zero-VM boundary
+- the current cluster/day-2 path has converged on the live lab
+- the supported auth baseline is:
+  - OpenShift: `HTPasswd` breakglass plus Keycloak OIDC
+  - AAP: Keycloak OIDC, not direct LDAP
+- AD-backed user login has been validated through:
+  - Keycloak into OpenShift
+  - Keycloak into AAP
+
+The remaining certification bar is still one uninterrupted fresh
+`playbooks/site-lab.yml` run on the current codebase without live repair during
+that attempt.
 
 ## Choose Your Path
 

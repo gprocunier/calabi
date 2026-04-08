@@ -30,13 +30,15 @@ separately in <a href="./ad-idm-policy-model.md"><kbd>AD / IDM POLICY MODEL</kbd
 
 ## Current Supported Model
 
-The supported default cluster auth baseline is:
+The supported default platform auth baseline is:
 
 - `HTPasswd` breakglass for recovery
 - Keycloak OIDC for human login
 - IdM as the identity and policy hub
 - OpenShift authorization through group claims
+- AAP authorization through Keycloak groups plus gateway authenticator maps
 - direct OpenShift LDAP auth disabled by default
+- direct AAP LDAP retired from the preferred clean-build path
 
 The current live IdM group descriptions are intentionally terse so operators
 can distinguish access groups from AD source groups at a glance in the web UI
@@ -47,18 +49,22 @@ At a high level:
 ```mermaid
 flowchart LR
     User[Human User] --> OCP[OpenShift OAuth]
+    User --> AAP[AAP Gateway]
     OCP --> KC[Keycloak]
+    AAP --> KC
     KC --> LDAP[IdM compat LDAP]
     LDAP --> IDM[IdM]
     IDM --> AD[AD trust]
     KC --> Token[OIDC token with groups]
     Token --> RBAC[OpenShift RBAC]
+    Token --> AAPRBAC[AAP authenticator maps]
 ```
 
 The current repo proves two supported login cases:
 
 - native IdM user -> Keycloak -> OpenShift
 - AD-trusted user -> IdM trust/compat -> Keycloak -> OpenShift
+- AD-trusted user -> Keycloak -> AAP
 
 ## Authorization Boundary
 
@@ -124,6 +130,21 @@ OpenShift currently provides:
 - claim-to-group mapping from the OIDC `groups` claim
 - RBAC binding of `openshift-admin` to `cluster-admin`
 - a separate `HTPasswd` breakglass path
+
+### AAP
+
+AAP currently provides:
+
+- management-plane access through Keycloak OIDC
+- gateway authenticator and authenticator-map enforcement
+- superuser elevation from the emitted admin access group
+
+In the validated clean-build path:
+
+- AAP uses the Keycloak realm already deployed for cluster SSO
+- the AAP client ID is `aap`
+- the required admin group is `access-openshift-admin`
+- direct AAP LDAP is not the supported default path
 
 ### RHEL Hosts
 

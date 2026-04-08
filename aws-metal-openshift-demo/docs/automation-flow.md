@@ -79,6 +79,10 @@ experiences in practice.
   - create the nine nested OpenShift guests
   - wait for install completion
   - normalize the domain boot state and apply the baseline day-2 config
+  - converge on:
+    - `HTPasswd` breakglass plus Keycloak OIDC for OpenShift
+    - Keycloak OIDC for AAP
+    - AD-backed user login through the IdM/Keycloak path when trust is enabled
 
 ## Recommended Run Order
 
@@ -204,6 +208,10 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
      the cluster-only cleanup path first, then rerun `site-lab.yml`.
    - On reruns, the day-2 portion now probes the major post-install phases and
      skips ones that are already configured and healthy.
+   - The current supported day-2 auth baseline is:
+     - OpenShift: `HTPasswd` breakglass plus Keycloak OIDC
+     - AAP: Keycloak OIDC with the same Keycloak realm
+   - Direct AAP LDAP is no longer the preferred clean-build path.
    - Destructive ODF recovery is not part of a normal rerun. It must be
      explicitly forced with `-e openshift_post_install_force_odf_rebuild=true`
      (or the legacy `openshift_post_install_odf_force_osd_device_reset=true`).

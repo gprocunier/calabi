@@ -4,6 +4,8 @@ Nearby docs:
 
 <a href="./prerequisites.md"><kbd>&nbsp;&nbsp;PREREQUISITES&nbsp;&nbsp;</kbd></a>
 <a href="./automation-flow.md"><kbd>&nbsp;&nbsp;AUTOMATION FLOW&nbsp;&nbsp;</kbd></a>
+<a href="./authentication-model.md"><kbd>&nbsp;&nbsp;AUTH MODEL&nbsp;&nbsp;</kbd></a>
+<a href="./orchestration-plumbing.md"><kbd>&nbsp;&nbsp;ORCHESTRATION PLUMBING&nbsp;&nbsp;</kbd></a>
 <a href="./host-resource-management.md"><kbd>&nbsp;&nbsp;RESOURCE MANAGEMENT&nbsp;&nbsp;</kbd></a>
 <a href="./openshift-cluster-matrix.md"><kbd>&nbsp;&nbsp;CLUSTER MATRIX&nbsp;&nbsp;</kbd></a>
 <a href="./orchestration-guide.md"><kbd>&nbsp;&nbsp;ORCHESTRATION GUIDE&nbsp;&nbsp;</kbd></a>
@@ -18,6 +20,8 @@ If you are starting from zero, read
 Keep these pages nearby while you use this runbook:
 
 - <a href="./automation-flow.md"><kbd>AUTOMATION FLOW</kbd></a> for phase order and execution context
+- <a href="./authentication-model.md"><kbd>AUTH MODEL</kbd></a> for the current supported OpenShift and AAP auth boundary
+- <a href="./orchestration-plumbing.md"><kbd>ORCHESTRATION PLUMBING</kbd></a> for workstation-to-bastion handoff and tracked runner state
 - <a href="./host-resource-management.md"><kbd>RESOURCE MANAGEMENT</kbd></a> for CPU pools, performance domains, and host-resize guidance
 
 Do not read this as a byte-for-byte dump of every Ansible task. Read it as the
@@ -2932,6 +2936,9 @@ Direct OpenShift LDAP auth is no longer the default baseline. Keep it out of
 the cluster OAuth configuration unless you are deliberately validating that
 compatibility path.
 
+The same principle now applies to AAP: the supported clean-build path is
+Keycloak OIDC, not direct AAP LDAP.
+
 Label the infra nodes and move platform workloads onto them early in day-2 so
 the later auth and storage work settles on the intended node tier.
 
@@ -3787,13 +3794,17 @@ EOF
 ## 30. Install Ansible Automation Platform
 
 _Install Ansible Automation Platform on OpenShift and configure it to
-authenticate against IdM._
+authenticate through Keycloak OIDC backed by IdM._
 
 > [!NOTE]
 > Automation reference: `playbooks/day2/openshift-post-install-aap.yml`, role
 > `openshift_post_install_aap`.
+>
+> Architecture reference:
+> <a href="./authentication-model.md"><kbd>AUTH MODEL</kbd></a>.
 
-Install AAP on OpenShift and configure it to use IdM LDAP authentication.
+Install AAP on OpenShift and wire it to the same Keycloak realm already used
+for the cluster OAuth path.
 
 ```bash
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
@@ -3871,38 +3882,181 @@ YAML
 EOF
 ```
 
-Configure AAP LDAP authentication against IdM.
+Configure the Keycloak `aap` client, add the `groups` and `aap` audience
+protocol mappers, then create the AAP gateway authenticator and superuser map.
+
+The validated clean-build path uses:
+
+- AAP route: `https://aap.apps.ocp.workshop.lan`
+- Keycloak route: `https://sso.apps.ocp.workshop.lan`
+- Keycloak realm: `openshift`
+- AAP client ID: `aap`
+- AAP authenticator name: `Red Hat build of Keycloak`
+- required AAP admin group: `access-openshift-admin`
 
 ```bash
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
 AAP_ROUTE="$(oc -n aap get route workshop-aap -o jsonpath='{.spec.host}')"
+KEYCLOAK_ROUTE="$(oc -n keycloak get route workshop-keycloak -o jsonpath='{.spec.host}')"
+
+KEYCLOAK_ADMIN_TOKEN="$(curl --cacert /etc/ipa/ca.crt -sS \
+  -X POST https://${KEYCLOAK_ROUTE}/realms/master/protocol/openid-connect/token \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  --data-urlencode 'grant_type=password' \
+  --data-urlencode 'client_id=admin-cli' \
+  --data-urlencode 'username=admin' \
+  --data-urlencode 'password=<lab-default-password>' | jq -r .access_token)"
+
+CLIENT_ID="$(curl --cacert /etc/ipa/ca.crt -sS \
+  -H \"Authorization: Bearer ${KEYCLOAK_ADMIN_TOKEN}\" \
+  \"https://${KEYCLOAK_ROUTE}/admin/realms/openshift/clients?clientId=aap\" \
+  | jq -r '.[0].id')"
+
+if [ -z "${CLIENT_ID}" ] || [ "${CLIENT_ID}" = "null" ]; then
+  curl --cacert /etc/ipa/ca.crt -sS \
+    -H "Authorization: Bearer ${KEYCLOAK_ADMIN_TOKEN}" \
+    -H 'Content-Type: application/json' \
+    -X POST "https://${KEYCLOAK_ROUTE}/admin/realms/openshift/clients" \
+    -d '{
+      "clientId":"aap",
+      "enabled":true,
+      "protocol":"openid-connect",
+      "publicClient":false,
+      "standardFlowEnabled":true,
+      "directAccessGrantsEnabled":true,
+      "serviceAccountsEnabled":false,
+      "secret":"<lab-default-password>",
+      "redirectUris":[
+        "https://aap.apps.ocp.workshop.lan/*"
+      ]
+    }'
+
+  CLIENT_ID="$(curl --cacert /etc/ipa/ca.crt -sS \
+    -H \"Authorization: Bearer ${KEYCLOAK_ADMIN_TOKEN}\" \
+    \"https://${KEYCLOAK_ROUTE}/admin/realms/openshift/clients?clientId=aap\" \
+    | jq -r '.[0].id')"
+fi
+
+curl --cacert /etc/ipa/ca.crt -sS \
+  -H "Authorization: Bearer ${KEYCLOAK_ADMIN_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -X POST "https://${KEYCLOAK_ROUTE}/admin/realms/openshift/clients/${CLIENT_ID}/protocol-mappers/models" \
+  -d '{
+    "name":"groups",
+    "protocol":"openid-connect",
+    "protocolMapper":"oidc-group-membership-mapper",
+    "consentRequired":false,
+    "config":{
+      "full.path":"false",
+      "id.token.claim":"true",
+      "access.token.claim":"true",
+      "userinfo.token.claim":"true",
+      "claim.name":"groups"
+    }
+  }' || true
+
+curl --cacert /etc/ipa/ca.crt -sS \
+  -H "Authorization: Bearer ${KEYCLOAK_ADMIN_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -X POST "https://${KEYCLOAK_ROUTE}/admin/realms/openshift/clients/${CLIENT_ID}/protocol-mappers/models" \
+  -d '{
+    "name":"aap-audience",
+    "protocol":"openid-connect",
+    "protocolMapper":"oidc-audience-mapper",
+    "consentRequired":false,
+    "config":{
+      "included.client.audience":"aap",
+      "id.token.claim":"true",
+      "access.token.claim":"true"
+    }
+  }' || true
+
 TOKEN="$(curl -sk -X POST https://${AAP_ROUTE}/api/gateway/v1/token/ \
   -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"<lab-default-password>"}' | jq -r .access)"
 
+REALM_PUBLIC_KEY="$(curl --cacert /etc/ipa/ca.crt -sS \
+  "https://${KEYCLOAK_ROUTE}/realms/openshift" | jq -r .public_key)"
+
+AAP_AUTH_PAYLOAD="$(jq -n \
+  --arg public_key "${REALM_PUBLIC_KEY}" '
+  {
+    name: "Red Hat build of Keycloak",
+    enabled: true,
+    order: 2,
+    type: "ansible_base.authentication.authenticator_plugins.keycloak",
+    configuration: {
+      AUTHORIZATION_URL: "https://sso.apps.ocp.workshop.lan/realms/openshift/protocol/openid-connect/auth",
+      ACCESS_TOKEN_URL: "https://sso.apps.ocp.workshop.lan/realms/openshift/protocol/openid-connect/token",
+      KEY: "aap",
+      SECRET: "<lab-default-password>",
+      PUBLIC_KEY: $public_key,
+      GROUPS_CLAIM: "groups"
+    }
+  }')"
+
 curl -sk -X POST https://${AAP_ROUTE}/api/gateway/v1/authenticators/ \
   -H "Authorization: Bearer ${TOKEN}" \
   -H 'Content-Type: application/json' \
-  -d @- <<'JSON'
+  -d "${AAP_AUTH_PAYLOAD}"
+
+AUTH_ID="$(curl -sk -H "Authorization: Bearer ${TOKEN}" \
+  "https://${AAP_ROUTE}/api/gateway/v1/authenticators/" \
+  | jq -r '.results[] | select(.name=="Red Hat build of Keycloak") | .id')"
+
+curl -sk -X POST https://${AAP_ROUTE}/api/gateway/v1/authenticator_maps/ \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d @- <<JSON
 {
-  "name": "Red Hat Identity Management",
-  "type": "ldap",
-  "configuration": {
-    "host": "idm-01.workshop.lan",
-    "port": 636,
-    "bind_dn": "cn=Directory Manager",
-    "bind_password": "<lab-default-password>",
-    "user_search_base_dn": "cn=users,cn=accounts,dc=workshop,dc=lan",
-    "group_search_base_dn": "cn=groups,cn=accounts,dc=workshop,dc=lan",
-    "group_type": "MemberDNGroupType",
-    "group_type_params": {
-      "member_attr": "member",
-      "name_attr": "cn"
+  "name": "access-openshift-admin AAP superuser",
+  "map_type": "is_superuser",
+  "triggers": {
+    "groups": {
+      "has_or": [
+        "access-openshift-admin"
+      ]
     }
-  }
+  },
+  "authenticator": ${AUTH_ID}
 }
 JSON
+EOF
+```
+
+The automation writes the full JSON payload and drives this through the API
+directly; the manual runbook keeps the moving parts visible instead of hiding
+them in a helper script.
+
+Validate the end state with the same two checkpoints the automation now uses
+before the final browser-style login proof:
+
+1. the AAP UI advertises only the Keycloak SSO entry
+2. an AD-backed user can obtain an OIDC token for the `aap` client with the
+   expected group claims
+
+If the lab trust path is enabled, the validated user is
+`ad-ocpadmin@corp.lan`. Without AD trust, use the native IdM admin-path user
+instead.
+
+```bash
+ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
+export KUBECONFIG=/var/tmp/ocp-kubeconfig
+AAP_ROUTE="$(oc -n aap get route workshop-aap -o jsonpath='{.spec.host}')"
+KEYCLOAK_ROUTE="$(oc -n keycloak get route workshop-keycloak -o jsonpath='{.spec.host}')"
+
+curl -sk "https://${AAP_ROUTE}/api/gateway/v1/ui_auth/" | jq .
+
+curl --cacert /etc/ipa/ca.crt -sS \
+  -X POST "https://${KEYCLOAK_ROUTE}/realms/openshift/protocol/openid-connect/token" \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  --data-urlencode 'client_id=aap' \
+  --data-urlencode 'client_secret=<lab-default-password>' \
+  --data-urlencode 'grant_type=password' \
+  --data-urlencode 'username=ad-ocpadmin@corp.lan' \
+  --data-urlencode 'password=<lab-default-password>' \
+  | jq .
 EOF
 ```
 
@@ -4362,6 +4516,7 @@ Check AAP:
 ```bash
 oc -n aap get pods
 oc -n aap get route
+curl -sk https://aap.apps.ocp.workshop.lan/api/gateway/v1/ui_auth/ | jq .
 ```
 
 Check Tekton and Windows build lane:

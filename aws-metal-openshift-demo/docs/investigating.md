@@ -40,6 +40,10 @@ Status:
   - `HTPasswd` breakglass
   - Keycloak OIDC
   - group-based RBAC through `openshift-admin`
+- AAP now converges on Keycloak OIDC instead of the former direct-LDAP path
+- AD-backed user login to AAP has been validated on:
+  - the repaired in-place AAP run
+  - a clean AAP teardown and redeploy
 - the repo validation lane is clean:
   - `make validate`
   - `ansible-lint -p`
