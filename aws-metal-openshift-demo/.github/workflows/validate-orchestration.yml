@@ -1,0 +1,52 @@
+---
+name: validate-orchestration
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - calabi-ad-services
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Install Python tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ansible-core ansible-lint yamllint PyYAML
+
+      - name: Install Ansible collections
+        run: ansible-galaxy collection install -r requirements.yml
+
+      - name: Validate generic orchestration structure
+        run: make validate
+
+      - name: Validate site-lab credential contracts
+        run: |
+          ./scripts/validate-orchestration.sh \
+            --playbook playbooks/site-lab.yml \
+            -e lab_default_password=ci-placeholder-password \
+            -e lab_rhsm_activation_key=ci-placeholder-activation-key \
+            -e lab_rhsm_organization_id=ci-placeholder-org
+
+      - name: Validate day-2 credential contracts
+        run: |
+          ./scripts/validate-orchestration.sh \
+            --playbook playbooks/day2/openshift-post-install.yml \
+            -e lab_default_password=ci-placeholder-password

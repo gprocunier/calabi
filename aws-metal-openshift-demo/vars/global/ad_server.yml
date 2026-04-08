@@ -1,0 +1,5 @@
+---
+lab_build_ad_server: false
+ad_server_reset_storage_requested: false
+ad_server_install_profile: full
+ad_runtime_root: /var/lib/aws-metal-openshift-demo

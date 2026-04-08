@@ -1,0 +1,171 @@
+---
+- name: Register the IDM guest for optional AD trust configuration
+  hosts: aws_metal
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/pki.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/ad_group_policy.yml
+    - ../../vars/global/ad_integration.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+    - ../../vars/guests/idm_vm.yml
+
+  pre_tasks:
+    - name: Skip IdM AD trust configuration when disabled
+      ansible.builtin.meta: end_play
+      when: not (idm_ad_trust.enabled | bool)
+
+  tasks:
+    - name: Require the AD server when IdM AD trust is enabled
+      ansible.builtin.assert:
+        that:
+          - lab_build_ad_server | bool
+        fail_msg: >-
+          IdM AD trust requires lab_build_ad_server=true so the AD domain
+          exists before trust configuration runs.
+
+    - name: Register the IDM guest as a temporary Ansible host
+      ansible.builtin.add_host:
+        name: "{{ idm_vm.name }}.{{ idm_vm.domain }}"
+        groups:
+          - idm_guest
+        ansible_host: "{{ idm_vm.network.ipv4_address }}"
+        ansible_user: "{{ idm_vm.access.admin_user }}"
+        ansible_ssh_private_key_file: >-
+          {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+        ansible_become: true
+        ansible_ssh_common_args: >-
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+
+    - name: Register the AD guest as a temporary WinRM host
+      ansible.builtin.add_host:
+        name: ad-trust-guest
+        groups:
+          - ad_trust_servers
+        ansible_host: "{{ ad_vm.network.ipv4_address }}"
+        ansible_user: "{{ ad_vm.access.admin_user }}"
+        ansible_password: "{{ ad_vm.access.admin_password }}"
+        ansible_connection: ansible.builtin.winrm
+        ansible_port: 5985
+        ansible_winrm_transport: basic
+        ansible_winrm_server_cert_validation: ignore
+
+- name: Configure the AD conditional forwarder for the IdM domain
+  hosts: ad_trust_servers
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/pki.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/ad_group_policy.yml
+    - ../../vars/global/ad_integration.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+    - ../../vars/guests/idm_vm.yml
+
+  pre_tasks:
+    - name: Wait for authenticated WinRM connectivity to the AD guest
+      ansible.builtin.wait_for_connection:
+        timeout: 900
+        sleep: 15
+        connect_timeout: 10
+
+    - name: Verify WinRM connectivity to the AD guest
+      ansible.windows.win_ping:
+
+  tasks:
+    - name: Ensure the AD DNS conditional forwarder exists for the IdM domain
+      ansible.windows.win_powershell:
+        script: |
+          $zoneName = "{{ idm_vm.domain }}"
+          $masterServers = @("{{ idm_vm.network.ipv4_address }}")
+          $existing = Get-DnsServerZone -Name $zoneName -ErrorAction SilentlyContinue
+
+          if ($null -eq $existing) {
+            Add-DnsServerConditionalForwarderZone `
+              -Name $zoneName `
+              -MasterServers $masterServers `
+              -ReplicationScope Forest
+            Write-Output "CHANGED"
+            return
+          }
+
+          if ($existing.ZoneType -ne 'Forwarder') {
+            throw "DNS zone $zoneName exists but is not a conditional forwarder."
+          }
+
+          $current = @(Get-DnsServerConditionalForwarderZone -Name $zoneName).MasterServers |
+            ForEach-Object { $_.IPAddressToString }
+          $expected = $masterServers | Sort-Object
+          $actual = $current | Sort-Object
+
+          if (Compare-Object -ReferenceObject $expected -DifferenceObject $actual) {
+            Set-DnsServerConditionalForwarderZone -Name $zoneName -MasterServers $masterServers
+            Write-Output "CHANGED"
+            return
+          }
+
+          Write-Output "OK"
+      register: ad_trust_idm_forwarder
+      changed_when: "'CHANGED' in ad_trust_idm_forwarder.output"
+
+    - name: Validate that AD resolves the IdM host through the conditional forwarder
+      ansible.windows.win_powershell:
+        script: |
+          Resolve-DnsName -Name "{{ idm_vm.name }}.{{ idm_vm.domain }}" -Server 127.0.0.1 -Type A | Out-Null
+          Write-Output "OK"
+      changed_when: false
+
+- name: Configure optional AD trust on the IDM guest
+  hosts: idm_guest
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/pki.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/ad_group_policy.yml
+    - ../../vars/global/ad_integration.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+    - ../../vars/guests/idm_vm.yml
+
+  pre_tasks:
+    - name: Skip optional AD trust on the IDM guest when AD trust is disabled
+      ansible.builtin.meta: end_play
+      when:
+        - not (idm_ad_trust.enabled | bool)
+          or not (lab_build_ad_server | bool)
+
+    - name: Derive the hypervisor delegate host for IDM reachability checks
+      ansible.builtin.set_fact:
+        idm_ad_trust_delegate_host: >-
+          {{ (groups['aws_metal'] | default([])) | first | default('') }}
+
+    - name: Validate the hypervisor delegate host is available
+      ansible.builtin.assert:
+        that:
+          - idm_ad_trust_delegate_host | length > 0
+        fail_msg: >-
+          IDM AD trust guest configuration requires an aws_metal hypervisor
+          inventory host so the controller can reach the guest network.
+
+    - name: Wait for the IDM guest SSH port from the hypervisor network
+      ansible.builtin.wait_for:
+        host: "{{ idm_vm.network.ipv4_address }}"
+        port: 22
+        timeout: 900
+        sleep: 10
+      delegate_to: "{{ idm_ad_trust_delegate_host }}"
+      become: false
+
+    - name: Wait for the IDM guest to accept SSH connections
+      ansible.builtin.wait_for_connection:
+        timeout: 900
+        sleep: 10
+
+    - name: Gather IDM guest facts after SSH is available
+      ansible.builtin.setup:
+
+  roles:
+    - role: idm_ad_trust

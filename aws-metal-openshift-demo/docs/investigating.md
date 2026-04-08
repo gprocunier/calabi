@@ -14,6 +14,95 @@ It is more operational than <a href="./issues.md"><kbd>ISSUES LEDGER</kbd></a>: 
 that already landed, while this file keeps the observations, experiments, and
 unanswered questions.
 
+## Open Investigation: Final Golden-Path Certification Run
+
+Status:
+
+- open
+- zero-VM teardown and `playbooks/site-bootstrap.yml` have now been re-proven
+- cluster build, mirrored-content use, and the default auth/day-2 path have
+  already succeeded from preserved support-service boundaries
+- recent fresh-path `playbooks/site-lab.yml` reruns have still exposed late
+  orchestration defects that required code repair
+- the final bar remains one uninterrupted zero-VM `playbooks/site-lab.yml` run
+  on the current codebase, without live code repair during the attempt
+
+### What is already proven
+
+- support services can be brought up and reused across retries
+- a zero-VM rebuild through `playbooks/site-bootstrap.yml` completes on the
+  current codebase
+- the cluster can install successfully on the current codebase
+- the full support-service plus cluster path can converge cleanly on the
+  current codebase
+- mirrored Keycloak content deploys and runs
+- OpenShift OAuth converges on:
+  - `HTPasswd` breakglass
+  - Keycloak OIDC
+  - group-based RBAC through `openshift-admin`
+- AAP now converges on Keycloak OIDC instead of the former direct-LDAP path
+- AD-backed user login to AAP has been validated on:
+  - the repaired in-place AAP run
+  - a clean AAP teardown and redeploy
+- the repo validation lane is clean:
+  - `make validate`
+  - `ansible-lint -p`
+- the runner split and workstation-to-bastion handoff are now documented in
+  <a href="./orchestration-plumbing.md"><kbd>ORCHESTRATION PLUMBING</kbd></a>
+- the current live auth model and the planned AD-source-of-truth policy model
+  now have dedicated architecture pages:
+  - <a href="./authentication-model.md"><kbd>AUTH MODEL</kbd></a>
+  - <a href="./ad-idm-policy-model.md"><kbd>AD / IDM POLICY MODEL</kbd></a>
+
+### What remains to prove
+
+- one uninterrupted zero-VM `playbooks/site-lab.yml` run after
+  `playbooks/site-bootstrap.yml` completes
+- no live code repair during that attempt
+
+### Current confidence gate
+
+1. Tear down to zero VMs and reset lab networking.
+2. Run `playbooks/site-bootstrap.yml`.
+3. Run `playbooks/site-lab.yml` end to end without intervention.
+
+## Planned Work: AD Source-Of-Truth Policy Model
+
+Status:
+
+- in progress
+- the first orchestration slice is now wired
+- live validation of the bridge and downstream consumers is still pending
+
+The future target is:
+
+- AD as the source of truth for users and source-side group membership
+- IdM local groups as the policy and authorization boundary
+- RHEL sudo, Keycloak group emission, and OpenShift RBAC all consuming the
+  local IdM groups rather than raw AD group names
+
+Saved implementation artifacts:
+
+- <a href="./ad-idm-policy-model.md"><kbd>AD / IDM POLICY MODEL</kbd></a>
+- <a href="../vars/global/ad_group_policy.yml"><kbd>vars/global/ad_group_policy.yml</kbd></a>
+- <a href="../roles/idm_ad_trust/tasks/main.yml"><kbd>roles/idm_ad_trust/tasks/main.yml</kbd></a>
+
+What is implemented now:
+
+- canonical AD-to-IdM mapping data
+- IdM external-group creation for mapped AD groups
+- nesting of those external groups into the target local IdM groups during the
+  AD trust play
+
+What is still pending:
+
+- live proof that trusted AD users inherit the intended local IdM groups
+- RHEL-side authorization validation through the bridged local groups
+- Keycloak/OpenShift validation that the bridged local groups are what drive
+  OIDC group claims and RBAC
+- deferred naming/description cleanup so local IdM access groups and external
+  AD source groups are visually distinct in the UI and `ipa` output
+
 ## Closed Investigation: ODF NooBaa / CNPG initialization stall
 
 Status:

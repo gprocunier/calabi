@@ -1,0 +1,9 @@
+# Local inventory-backed secrets.
+inventory/group_vars/all/lab_credentials.yml
+
+# Generated orchestration artifacts.
+generated/
+
+# Interpreter caches and bytecode.
+__pycache__/
+*.pyc

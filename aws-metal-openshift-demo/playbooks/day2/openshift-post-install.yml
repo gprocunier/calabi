@@ -5,12 +5,19 @@
   vars_files:
     - ../../vars/global/execution_environment.yml
     - ../../vars/global/mirror_content.yml
+    - ../../vars/global/pki.yml
     - ../../vars/guests/mirror_registry_vm.yml
     - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
     - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/bastion_vm.yml
     - ../../vars/cluster/openshift_install_cluster.yml
     - ../../vars/cluster/openshift_agent_media.yml
     - ../../vars/guests/openshift_cluster_vm.yml
+    - ../../vars/day2/openshift_breakglass_auth.yml
+    - ../../vars/day2/openshift_keycloak.yml
+    - ../../vars/day2/openshift_oidc_auth.yml
     - ../../vars/day2/openshift_ldap_auth.yml
     - ../../vars/day2/openshift_idm_certs.yml
     - ../../vars/day2/openshift_aap.yml
@@ -24,21 +31,27 @@
     #                                 nodes (tolerations in place from phase 2); convergence
     #                                 gate waits for ingress/auth/console COs fully stable
     #                                 and asserts the IdM cert is being served before continuing
-    #  4. ldap_auth                 — OAuth configures in a stable, trusted TLS environment
+    #  4. breakglass_auth           — establish a local recovery login before riskier auth changes
     #  5. nmstate                   — network bridges/VLANs before storage networking and VM networks
     #  6. odf                       — block/file storage layer before anything needing PVCs
-    #  7. virtualization            — requires ODF (live-migration RWX) and NMState (VM networks)
-    #  8. pipelines                 — independent operator
-    #  9. web_terminal              — independent operator
-    # 10. aap                       — heavy; after core infrastructure is stable
-    # 11. netobserv                 — Loki can use ODF storage; after storage layer is up
-    # 12. validation                — always last
+    #  7. keycloak                  — deploy the future OIDC provider after storage exists
+    #  8. oidc_auth                 — broker cluster auth through Keycloak while breakglass remains
+    #  9. ldap_auth                 — group sync / legacy support; can run without owning OAuth
+    # 10. virtualization            — requires ODF (live-migration RWX) and NMState (VM networks)
+    # 11. pipelines                 — independent operator
+    # 12. web_terminal              — independent operator
+    # 13. aap                       — heavy; after core infrastructure is stable
+    # 14. netobserv                 — Loki can use ODF storage; after storage layer is up
+    # 15. validation                — always last
     openshift_post_install_enable_disconnected_operatorhub: true
     openshift_post_install_enable_infra_conversion: true
     openshift_post_install_enable_idm_ingress_certs: true
-    openshift_post_install_enable_ldap_auth: true
+    openshift_post_install_enable_breakglass_auth: true
+    openshift_post_install_enable_ldap_auth: false
     openshift_post_install_enable_nmstate: true
     openshift_post_install_enable_odf: true
+    openshift_post_install_enable_keycloak: true
+    openshift_post_install_enable_oidc_auth: true
     openshift_post_install_enable_virtualization: true
     openshift_post_install_enable_pipelines: true
     openshift_post_install_enable_web_terminal: true
@@ -48,6 +61,9 @@
     openshift_post_install_force_disconnected_operatorhub: false
     openshift_post_install_force_infra_conversion: false
     openshift_post_install_force_idm_ingress_certs: false
+    openshift_post_install_force_breakglass_auth: false
+    openshift_post_install_force_keycloak: false
+    openshift_post_install_force_oidc_auth: false
     openshift_post_install_force_ldap_auth: false
     openshift_post_install_force_nmstate: false
     openshift_post_install_force_odf_rebuild: false
@@ -117,15 +133,15 @@
           openshift_post_install_force_idm_ingress_certs | bool
           or not openshift_post_install_idm_ingress_certs_healthy | bool
 
-    # Phase 4: identity — OAuth callback uses ingress; cert must be stable first
-    - name: Apply LDAP authentication when enabled
+    # Phase 4: local recovery auth — prove a safe local path before touching network auth
+    - name: Apply breakglass authentication when enabled
       ansible.builtin.include_role:
-        name: openshift_post_install_ldap_auth
+        name: openshift_post_install_breakglass_auth
       when:
-        - openshift_post_install_enable_ldap_auth | bool
+        - openshift_post_install_enable_breakglass_auth | bool
         - >-
-          openshift_post_install_force_ldap_auth | bool
-          or not openshift_post_install_ldap_auth_healthy | bool
+          openshift_post_install_force_breakglass_auth | bool
+          or not openshift_post_install_breakglass_auth_healthy | bool
 
     # Phase 5: networking — bridges and VLANs before storage networking and VM networks
     - name: Configure Kubernetes NMState when enabled
@@ -137,7 +153,7 @@
           openshift_post_install_force_nmstate | bool
           or not openshift_post_install_nmstate_healthy | bool
 
-    # Phase 6: storage — block/file PVCs required by Virtualization and NetObserv/Loki
+    # Phase 6: storage — block/file PVCs required by Keycloak, Virtualization, and NetObserv/Loki
     - name: Configure ODF day-2 storage when enabled
       ansible.builtin.include_role:
         name: openshift_post_install_odf
@@ -147,7 +163,37 @@
           openshift_post_install_force_odf_rebuild | bool
           or not openshift_post_install_odf_healthy | bool
 
-    # Phase 7: virtualization — depends on ODF (live-migration RWX) and NMState (VM networks)
+    # Phase 7: future OIDC provider — deploy after storage exists
+    - name: Deploy Keycloak when enabled
+      ansible.builtin.include_role:
+        name: openshift_post_install_keycloak
+      when:
+        - openshift_post_install_enable_keycloak | bool
+        - >-
+          openshift_post_install_force_keycloak | bool
+          or not openshift_post_install_keycloak_healthy | bool
+
+    # Phase 8: identity — broker OpenShift OAuth through Keycloak while preserving breakglass
+    - name: Apply OIDC authentication when enabled
+      ansible.builtin.include_role:
+        name: openshift_post_install_oidc_auth
+      when:
+        - openshift_post_install_enable_oidc_auth | bool
+        - >-
+          openshift_post_install_force_oidc_auth | bool
+          or not openshift_post_install_oidc_auth_healthy | bool
+
+    # Phase 9: identity support — group sync and legacy LDAP support if still desired
+    - name: Apply LDAP authentication when enabled
+      ansible.builtin.include_role:
+        name: openshift_post_install_ldap_auth
+      when:
+        - openshift_post_install_enable_ldap_auth | bool
+        - >-
+          openshift_post_install_force_ldap_auth | bool
+          or not openshift_post_install_ldap_auth_healthy | bool
+
+    # Phase 10: virtualization — depends on ODF (live-migration RWX) and NMState (VM networks)
     - name: Configure OpenShift Virtualization when enabled
       ansible.builtin.include_role:
         name: openshift_post_install_virtualization
@@ -157,7 +203,7 @@
           openshift_post_install_force_virtualization | bool
           or not openshift_post_install_virtualization_healthy | bool
 
-    # Phase 8: pipelines — independent operator
+    # Phase 11: pipelines — independent operator
     - name: Configure OpenShift Pipelines when enabled
       ansible.builtin.include_role:
         name: openshift_post_install_pipelines
@@ -167,7 +213,7 @@
           openshift_post_install_force_pipelines | bool
           or not openshift_post_install_pipelines_healthy | bool
 
-    # Phase 9: web terminal — independent operator
+    # Phase 12: web terminal — independent operator
     - name: Configure Web Terminal when enabled
       ansible.builtin.include_role:
         name: openshift_post_install_web_terminal
@@ -177,7 +223,7 @@
           openshift_post_install_force_web_terminal | bool
           or not openshift_post_install_web_terminal_healthy | bool
 
-    # Phase 10: AAP — heavy; after core infrastructure is stable
+    # Phase 13: AAP — heavy; after core infrastructure is stable
     - name: Configure Ansible Automation Platform when enabled
       ansible.builtin.include_role:
         name: openshift_post_install_aap
@@ -187,7 +233,7 @@
           openshift_post_install_force_aap | bool
           or not openshift_post_install_aap_healthy | bool
 
-    # Phase 11: network observability — Loki storage benefits from ODF being up first
+    # Phase 14: network observability — Loki storage benefits from ODF being up first
     - name: Configure Network Observability when enabled
       ansible.builtin.include_role:
         name: openshift_post_install_netobserv
@@ -197,7 +243,7 @@
           openshift_post_install_force_netobserv | bool
           or not openshift_post_install_netobserv_healthy | bool
 
-    # Phase 12: validation — always last
+    # Phase 15: validation — always last
     - name: Validate post-install state when enabled
       ansible.builtin.include_role:
         name: openshift_post_install_validate

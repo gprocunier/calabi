@@ -1,0 +1,351 @@
+---
+- name: Derive OpenShift Keycloak orchestration context
+  ansible.builtin.set_fact:
+    openshift_post_install_keycloak_oc_local_path: >-
+      {{ lab_execution_tools_root }}/{{ mirror_registry_ocp_release }}/bin/oc
+    openshift_post_install_keycloak_kubeconfig_local_path: >-
+      {{ lab_execution_ocp_generated_root }}/auth/kubeconfig
+    openshift_post_install_keycloak_idm_ca_local_path: >-
+      {{ lab_execution_ocp_generated_root }}/idm-ca.crt
+    openshift_post_install_keycloak_remote_dir: >-
+      /var/tmp/openshift-post-install-keycloak
+    openshift_post_install_keycloak_remote_oc_path: >-
+      /var/tmp/openshift-post-install-keycloak/oc
+    openshift_post_install_keycloak_remote_kubeconfig_path: >-
+      /var/tmp/openshift-post-install-keycloak/kubeconfig
+    openshift_post_install_keycloak_remote_idm_ca_path: >-
+      /var/tmp/openshift-post-install-keycloak/idm-ca.crt
+    openshift_post_install_keycloak_remote_operatorgroup_path: >-
+      /var/tmp/openshift-post-install-keycloak/operatorgroup.yaml
+    openshift_post_install_keycloak_remote_subscription_path: >-
+      /var/tmp/openshift-post-install-keycloak/subscription.yaml
+    openshift_post_install_keycloak_remote_postgres_path: >-
+      /var/tmp/openshift-post-install-keycloak/postgres.yaml
+    openshift_post_install_keycloak_remote_keycloak_path: >-
+      /var/tmp/openshift-post-install-keycloak/keycloak.yaml
+    openshift_post_install_keycloak_remote_ingress_cert_path: >-
+      /var/tmp/openshift-post-install-keycloak/router.crt
+    openshift_post_install_keycloak_remote_ingress_key_path: >-
+      /var/tmp/openshift-post-install-keycloak/router.key
+
+- name: Assert local Keycloak orchestration artifacts exist
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  delegate_to: localhost
+  become: false
+  loop:
+    - "{{ openshift_post_install_keycloak_oc_local_path }}"
+    - "{{ openshift_post_install_keycloak_kubeconfig_local_path }}"
+    - "{{ openshift_post_install_keycloak_idm_ca_local_path }}"
+  register: openshift_post_install_keycloak_local_stats
+
+- name: Fail when required Keycloak orchestration artifacts are missing
+  ansible.builtin.assert:
+    that:
+      - openshift_post_install_keycloak_local_stats.results | map(attribute='stat.exists') | min
+    fail_msg: >-
+      OpenShift Keycloak orchestration requires generated oc, kubeconfig, and
+      idm-ca.crt artifacts.
+
+- name: Create remote Keycloak workspace
+  ansible.builtin.file:
+    path: "{{ openshift_post_install_keycloak_remote_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Copy pinned oc binary to remote Keycloak workspace
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_keycloak_oc_local_path }}"
+    dest: "{{ openshift_post_install_keycloak_remote_oc_path }}"
+    mode: "0755"
+
+- name: Copy generated kubeconfig to remote Keycloak workspace
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_keycloak_kubeconfig_local_path }}"
+    dest: "{{ openshift_post_install_keycloak_remote_kubeconfig_path }}"
+    mode: "0600"
+
+- name: Copy IdM CA to remote Keycloak workspace
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_keycloak_idm_ca_local_path }}"
+    dest: "{{ openshift_post_install_keycloak_remote_idm_ca_path }}"
+    mode: "0644"
+
+- name: Render Keycloak operator group manifest
+  ansible.builtin.template:
+    src: operatorgroup.yaml.j2
+    dest: "{{ openshift_post_install_keycloak_remote_operatorgroup_path }}"
+    mode: "0644"
+
+- name: Render Keycloak subscription manifest
+  ansible.builtin.template:
+    src: subscription.yaml.j2
+    dest: "{{ openshift_post_install_keycloak_remote_subscription_path }}"
+    mode: "0644"
+
+- name: Render lab PostgreSQL manifest for Keycloak
+  ansible.builtin.template:
+    src: postgres.yaml.j2
+    dest: "{{ openshift_post_install_keycloak_remote_postgres_path }}"
+    mode: "0644"
+
+- name: Render Keycloak custom resource manifest
+  ansible.builtin.template:
+    src: keycloak.yaml.j2
+    dest: "{{ openshift_post_install_keycloak_remote_keycloak_path }}"
+    mode: "0644"
+
+- name: Ensure Keycloak namespace exists
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_keycloak_remote_oc_path }}" create namespace \
+      "{{ openshift_keycloak.namespace }}" --dry-run=client -o yaml \
+    | "{{ openshift_post_install_keycloak_remote_oc_path }}" apply -f -
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_keycloak_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Create Keycloak bootstrap admin secret
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_keycloak_remote_oc_path }}" create secret generic \
+      "{{ openshift_keycloak.bootstrap_admin_secret_name }}" \
+      -n "{{ openshift_keycloak.namespace }}" \
+      --from-literal=username='{{ openshift_keycloak.bootstrap_admin_username }}' \
+      --from-literal=password='{{ openshift_keycloak.bootstrap_admin_password }}' \
+      --dry-run=client -o yaml \
+    | "{{ openshift_post_install_keycloak_remote_oc_path }}" apply -f -
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_keycloak_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Create Keycloak database credentials secret
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_keycloak_remote_oc_path }}" create secret generic \
+      "{{ openshift_keycloak.database_secret_name }}" \
+      -n "{{ openshift_keycloak.namespace }}" \
+      --from-literal=username='{{ openshift_keycloak.database_user }}' \
+      --from-literal=password='{{ openshift_keycloak.database_password }}' \
+      --dry-run=client -o yaml \
+    | "{{ openshift_post_install_keycloak_remote_oc_path }}" apply -f -
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_keycloak_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Extract the current ingress wildcard certificate and key
+  ansible.builtin.shell: |
+    set -euo pipefail
+    oc="{{ openshift_post_install_keycloak_remote_oc_path }}"
+    cert_b64="$("${oc}" get secret "{{ openshift_idm_certs.ingress.secret_name }}" \
+      -n openshift-ingress -o jsonpath='{.data.tls\.crt}')"
+    key_b64="$("${oc}" get secret "{{ openshift_idm_certs.ingress.secret_name }}" \
+      -n openshift-ingress -o jsonpath='{.data.tls\.key}')"
+    printf '%s' "${cert_b64}" | base64 -d > "{{ openshift_post_install_keycloak_remote_ingress_cert_path }}"
+    printf '%s' "${key_b64}" | base64 -d > "{{ openshift_post_install_keycloak_remote_ingress_key_path }}"
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_keycloak_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Create the Keycloak TLS secret from the ingress wildcard certificate
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_keycloak_remote_oc_path }}" create secret tls \
+      "{{ openshift_keycloak.tls_secret_name }}" \
+      -n "{{ openshift_keycloak.namespace }}" \
+      --cert="{{ openshift_post_install_keycloak_remote_ingress_cert_path }}" \
+      --key="{{ openshift_post_install_keycloak_remote_ingress_key_path }}" \
+      --dry-run=client -o yaml \
+    | "{{ openshift_post_install_keycloak_remote_oc_path }}" apply -f -
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_keycloak_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Apply Keycloak operator group
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_keycloak_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_keycloak_remote_operatorgroup_path }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_keycloak_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Apply Keycloak subscription
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_keycloak_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_keycloak_remote_subscription_path }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_keycloak_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Wait for Keycloak operator install plan to be created
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_keycloak_remote_oc_path }}"
+      - get
+      - subscription
+      - "{{ openshift_keycloak.subscription_name }}"
+      - -n
+      - "{{ openshift_keycloak.namespace }}"
+      - -o
+      - jsonpath={.status.installplan.name}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_keycloak_remote_kubeconfig_path }}"
+  register: openshift_post_install_keycloak_installplan_name
+  changed_when: false
+  retries: 60
+  delay: 10
+  until: openshift_post_install_keycloak_installplan_name.stdout | length > 0
+
+- name: Approve the Keycloak operator install plan when manual approval is enabled
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_keycloak_remote_oc_path }}"
+      - patch
+      - installplan
+      - "{{ openshift_post_install_keycloak_installplan_name.stdout }}"
+      - -n
+      - "{{ openshift_keycloak.namespace }}"
+      - --type=merge
+      - -p
+      - '{"spec":{"approved":true}}'
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_keycloak_remote_kubeconfig_path }}"
+  changed_when: true
+  when: openshift_keycloak.installplan_approval == 'Manual'
+
+- name: Wait for Keycloak operator CSV to be selected
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_keycloak_remote_oc_path }}"
+      - get
+      - subscription
+      - "{{ openshift_keycloak.subscription_name }}"
+      - -n
+      - "{{ openshift_keycloak.namespace }}"
+      - -o
+      - jsonpath={.status.currentCSV}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_keycloak_remote_kubeconfig_path }}"
+  register: openshift_post_install_keycloak_current_csv
+  changed_when: false
+  retries: 60
+  delay: 10
+  until: openshift_post_install_keycloak_current_csv.stdout | length > 0
+
+- name: Wait for Keycloak operator CSV phase Succeeded
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_keycloak_remote_oc_path }}"
+      - get
+      - csv
+      - "{{ openshift_post_install_keycloak_current_csv.stdout }}"
+      - -n
+      - "{{ openshift_keycloak.namespace }}"
+      - -o
+      - jsonpath={.status.phase}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_keycloak_remote_kubeconfig_path }}"
+  register: openshift_post_install_keycloak_csv_phase
+  changed_when: false
+  retries: 60
+  delay: 10
+  until: openshift_post_install_keycloak_csv_phase.stdout == 'Succeeded'
+
+- name: Apply PostgreSQL for Keycloak
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_keycloak_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_keycloak_remote_postgres_path }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_keycloak_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Apply Keycloak custom resource
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_keycloak_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_keycloak_remote_keycloak_path }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_keycloak_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Wait for the Keycloak custom resource to report Ready
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_keycloak_remote_oc_path }}"
+      - get
+      - keycloak
+      - "{{ openshift_keycloak.instance_name }}"
+      - -n
+      - "{{ openshift_keycloak.namespace }}"
+      - -o
+      - jsonpath={.status.conditions[?(@.type=="Ready")].status}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_keycloak_remote_kubeconfig_path }}"
+  register: openshift_post_install_keycloak_ready
+  changed_when: false
+  retries: 90
+  delay: 10
+  until: (openshift_post_install_keycloak_ready.stdout | trim | lower) == 'true'
+
+- name: Create or update the Keycloak reencrypt route
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_keycloak_remote_oc_path }}" create route reencrypt \
+      "{{ openshift_keycloak.route_name }}" \
+      --service="{{ openshift_keycloak.instance_name }}-service" \
+      --cert="{{ openshift_post_install_keycloak_remote_ingress_cert_path }}" \
+      --key="{{ openshift_post_install_keycloak_remote_ingress_key_path }}" \
+      --dest-ca-cert="{{ openshift_post_install_keycloak_remote_idm_ca_path }}" \
+      --ca-cert="{{ openshift_post_install_keycloak_remote_idm_ca_path }}" \
+      --hostname="{{ openshift_keycloak.route_host }}" \
+      -n "{{ openshift_keycloak.namespace }}" \
+      --dry-run=client -o yaml \
+    | "{{ openshift_post_install_keycloak_remote_oc_path }}" apply -f -
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_keycloak_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Wait for Keycloak OIDC discovery to answer on the route
+  ansible.builtin.command:
+    argv:
+      - curl
+      - -skf
+      - https://{{ openshift_keycloak.route_host }}/realms/{{ openshift_keycloak.discovery_realm }}/.well-known/openid-configuration
+  register: openshift_post_install_keycloak_discovery
+  changed_when: false
+  retries: 60
+  delay: 10
+  until: openshift_post_install_keycloak_discovery.rc == 0
+
+- name: Publish Keycloak deployment result
+  ansible.builtin.debug:
+    msg:
+      - >-
+        Red Hat build of Keycloak is deployed in namespace
+        '{{ openshift_keycloak.namespace }}'.
+      - >-
+        Route '{{ openshift_keycloak.route_host }}' is serving OIDC discovery for
+        realm '{{ openshift_keycloak.discovery_realm }}'.

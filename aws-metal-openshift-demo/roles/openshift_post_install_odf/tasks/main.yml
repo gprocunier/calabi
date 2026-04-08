@@ -47,14 +47,14 @@
   ansible.builtin.stat:
     path: "{{ openshift_post_install_odf_oc_local_path }}"
   delegate_to: localhost
-  become: true
+  become: false
   register: openshift_post_install_odf_oc_local_stat
 
 - name: Assert generated kubeconfig exists for ODF orchestration
   ansible.builtin.stat:
     path: "{{ openshift_post_install_odf_kubeconfig_local_path }}"
   delegate_to: localhost
-  become: true
+  become: false
   register: openshift_post_install_odf_kubeconfig_local_stat
 
 - name: Fail when required local ODF artifacts are missing
@@ -80,7 +80,7 @@
       - >-
         jsonpath={.status.conditions[?(@.type=="Available")].status}|{.status.conditions[?(@.type=="Degraded")].status}|{.metadata.deletionTimestamp}
   delegate_to: localhost
-  become: true
+  become: false
   register: openshift_post_install_odf_existing_storagecluster_health
   changed_when: false
   failed_when: false
@@ -195,7 +195,7 @@
     remote_src: true
     mode: "0644"
   delegate_to: localhost
-  become: true
+  become: false
 
 - name: Copy generated kubeconfig to hypervisor for ODF orchestration
   ansible.builtin.copy:
@@ -213,7 +213,7 @@
       - -o
       - jsonpath={.status.conditions[?(@.type=="Ready")].status}
   delegate_to: localhost
-  become: true
+  become: false
   environment:
     KUBECONFIG: "{{ openshift_post_install_odf_kubeconfig_local_path }}"
   register: openshift_post_install_odf_infra_ready_check

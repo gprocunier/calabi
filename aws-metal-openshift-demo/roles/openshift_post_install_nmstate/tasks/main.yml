@@ -71,14 +71,14 @@
   ansible.builtin.stat:
     path: "{{ openshift_post_install_nmstate_oc_local_path }}"
   delegate_to: localhost
-  become: true
+  become: false
   register: openshift_post_install_nmstate_oc_local_stat
 
 - name: Assert generated kubeconfig exists for NMState orchestration
   ansible.builtin.stat:
     path: "{{ openshift_post_install_nmstate_kubeconfig_local_path }}"
   delegate_to: localhost
-  become: true
+  become: false
   register: openshift_post_install_nmstate_kubeconfig_local_stat
 
 - name: Fail when required local NMState artifacts are missing
@@ -285,36 +285,139 @@
       changed_when: true
 
     - name: Wait for NMState pods to become Ready
-      ansible.builtin.shell: |
-        set -o pipefail
-        "{{ openshift_post_install_nmstate_remote_oc_path }}" get pods \
-          -n "{{ openshift_post_install_nmstate_namespace }}" -o json \
-        | jq -r '
-            [
-              .items[]
-              | select(
-                  (
-                    .status.containerStatuses // []
-                    | map(select(.ready == true))
-                    | length
-                  ) !=
-                  (
-                    .spec.containers // []
-                    | length
-                  )
-                )
-            ] | length
-          '
-      args:
-        executable: /bin/bash
-      environment:
-        KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
-      register: openshift_post_install_nmstate_not_ready_count
-      changed_when: false
-      retries: 30
-      delay: 10
-      until: openshift_post_install_nmstate_not_ready_count.stdout == '0'
+      block:
+        - name: Wait for NMState pods to become Ready
+          ansible.builtin.shell: |
+            set -o pipefail
+            "{{ openshift_post_install_nmstate_remote_oc_path }}" get pods               -n "{{ openshift_post_install_nmstate_namespace }}" -o json             | jq -r '
+                [
+                  .items[]
+                  | select(
+                      (
+                        .status.containerStatuses // []
+                        | map(select(.ready == true))
+                        | length
+                      ) !=
+                      (
+                        .spec.containers // []
+                        | length
+                      )
+                    )
+                ] | length
+              '
+          args:
+            executable: /bin/bash
+          environment:
+            KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+          register: openshift_post_install_nmstate_not_ready_count
+          changed_when: false
+          retries: 30
+          delay: 10
+          until: openshift_post_install_nmstate_not_ready_count.stdout == '0'
+      rescue:
+        - name: Capture NMState handler pod status after readiness wait failure
+          ansible.builtin.command:
+            argv:
+              - "{{ openshift_post_install_nmstate_remote_oc_path }}"
+              - get
+              - pods
+              - -n
+              - "{{ openshift_post_install_nmstate_namespace }}"
+              - -l
+              - name=nmstate-handler
+              - -o
+              - wide
+              - --no-headers
+          environment:
+            KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+          register: openshift_post_install_nmstate_handler_pod_status
+          changed_when: false
+          failed_when: false
 
+        - name: Derive non-ready NMState handler pods after readiness wait failure
+          ansible.builtin.shell: |
+            set -o pipefail
+            "{{ openshift_post_install_nmstate_remote_oc_path }}" get pods               -n "{{ openshift_post_install_nmstate_namespace }}"               -l name=nmstate-handler -o json             | jq -r '
+                [
+                  .items[]
+                  | select(
+                      .metadata.deletionTimestamp == null
+                      and (
+                        (
+                          (.status.containerStatuses // [])
+                          | map(select(.ready == true))
+                          | length
+                        ) !=
+                        (
+                          (.spec.containers // [])
+                          | length
+                        )
+                      )
+                    )
+                  | .metadata.name
+                ] | .[]
+              '
+          args:
+            executable: /bin/bash
+          environment:
+            KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+          register: openshift_post_install_nmstate_non_ready_handler_pods
+          changed_when: false
+          failed_when: false
+
+        - name: Publish NMState handler recovery context after readiness wait failure
+          ansible.builtin.debug:
+            msg:
+              - >-
+                NMState pod readiness timed out. Handler pod status:
+                {{ openshift_post_install_nmstate_handler_pod_status.stdout_lines | default([]) }}
+              - >-
+                Non-ready NMState handler pods selected for bounded recovery:
+                {{ openshift_post_install_nmstate_non_ready_handler_pods.stdout_lines | default([]) }}
+
+        - name: Fail when NMState pod readiness could not be recovered automatically
+          ansible.builtin.fail:
+            msg: >-
+              NMState pods did not become ready and automatic handler recovery
+              was not possible. Handler pod status:
+              {{ openshift_post_install_nmstate_handler_pod_status.stdout_lines | default([]) }}
+          when:
+            - not openshift_post_install_nmstate_handler_recovery_enabled | bool
+              or (openshift_post_install_nmstate_non_ready_handler_pods.stdout_lines | default([]) | length == 0)
+
+        - name: Force-delete non-ready NMState handler pods for bounded recovery
+          ansible.builtin.command:
+            argv:
+              - "{{ openshift_post_install_nmstate_remote_oc_path }}"
+              - delete
+              - pod
+              - "{{ item }}"
+              - -n
+              - "{{ openshift_post_install_nmstate_namespace }}"
+              - --force
+              - --grace-period=0
+          environment:
+            KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+          loop: "{{ openshift_post_install_nmstate_non_ready_handler_pods.stdout_lines | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          changed_when: true
+
+        - name: Wait for NMState handler pods to become Ready after bounded recovery
+          ansible.builtin.command:
+            argv:
+              - "{{ openshift_post_install_nmstate_remote_oc_path }}"
+              - wait
+              - --for=condition=Ready
+              - pod
+              - -n
+              - "{{ openshift_post_install_nmstate_namespace }}"
+              - -l
+              - name=nmstate-handler
+              - --timeout={{ openshift_post_install_nmstate_handler_ready_timeout }}
+          environment:
+            KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+          changed_when: false
     - name: Wait for NMState webhook service endpoints to become Ready
       ansible.builtin.command:
         argv:
@@ -349,24 +452,168 @@
         label: "{{ item.name }}"
 
     - name: Wait for NodeNetworkConfigurationPolicies to become Available
-      ansible.builtin.command:
-        argv:
-          - "{{ openshift_post_install_nmstate_remote_oc_path }}"
-          - get
-          - nncp
-          - "{{ item.name }}"
-          - -o
-          - jsonpath={.status.conditions[?(@.type=="Available")].status}
-      environment:
-        KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
-      register: openshift_post_install_nmstate_nncp_available
-      changed_when: false
-      retries: 30
-      delay: 10
-      until: openshift_post_install_nmstate_nncp_available.stdout == 'True'
-      loop: "{{ openshift_post_install_nmstate_nncp_definitions }}"
-      loop_control:
-        label: "{{ item.name }}"
+      block:
+        - name: Wait for NodeNetworkConfigurationPolicies to become Available
+          ansible.builtin.command:
+            argv:
+              - "{{ openshift_post_install_nmstate_remote_oc_path }}"
+              - get
+              - nncp
+              - "{{ item.name }}"
+              - -o
+              - jsonpath={.status.conditions[?(@.type=="Available")].status}
+          environment:
+            KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+          register: openshift_post_install_nmstate_nncp_available
+          changed_when: false
+          retries: 30
+          delay: 10
+          until: openshift_post_install_nmstate_nncp_available.stdout == 'True'
+          loop: "{{ openshift_post_install_nmstate_nncp_definitions }}"
+          loop_control:
+            label: "{{ item.name }}"
+      rescue:
+        - name: Capture NMState handler pod status after NNCP availability wait failure
+          ansible.builtin.command:
+            argv:
+              - "{{ openshift_post_install_nmstate_remote_oc_path }}"
+              - get
+              - pods
+              - -n
+              - "{{ openshift_post_install_nmstate_namespace }}"
+              - -l
+              - name=nmstate-handler
+              - -o
+              - wide
+              - --no-headers
+          environment:
+            KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+          register: openshift_post_install_nmstate_handler_pod_status_after_nncp_wait
+          changed_when: false
+          failed_when: false
+
+        - name: Capture NNCP summary after availability wait failure
+          ansible.builtin.command:
+            argv:
+              - "{{ openshift_post_install_nmstate_remote_oc_path }}"
+              - get
+              - nncp
+              - -o
+              - custom-columns=NAME:.metadata.name,AVAILABLE:.status.conditions[0].status,PROGRESSING:.status.conditions[2].status,MESSAGE:.status.conditions[2].message
+              - --no-headers
+          environment:
+            KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+          register: openshift_post_install_nmstate_nncp_status_after_wait
+          changed_when: false
+          failed_when: false
+
+        - name: Derive non-ready NMState handler pods after NNCP availability wait failure
+          ansible.builtin.shell: |
+            set -o pipefail
+            "{{ openshift_post_install_nmstate_remote_oc_path }}" get pods               -n "{{ openshift_post_install_nmstate_namespace }}"               -l name=nmstate-handler -o json             | jq -r '
+                [
+                  .items[]
+                  | select(
+                      .metadata.deletionTimestamp == null
+                      and (
+                        (
+                          (.status.containerStatuses // [])
+                          | map(select(.ready == true))
+                          | length
+                        ) !=
+                        (
+                          (.spec.containers // [])
+                          | length
+                        )
+                      )
+                    )
+                  | .metadata.name
+                ] | .[]
+              '
+          args:
+            executable: /bin/bash
+          environment:
+            KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+          register: openshift_post_install_nmstate_non_ready_handler_pods_after_nncp_wait
+          changed_when: false
+          failed_when: false
+
+        - name: Publish NMState recovery context after NNCP availability wait failure
+          ansible.builtin.debug:
+            msg:
+              - >-
+                NMState NNCP availability timed out. Handler pod status:
+                {{ openshift_post_install_nmstate_handler_pod_status_after_nncp_wait.stdout_lines | default([]) }}
+              - >-
+                Current NNCP summary:
+                {{ openshift_post_install_nmstate_nncp_status_after_wait.stdout_lines | default([]) }}
+              - >-
+                Non-ready NMState handler pods selected for bounded recovery:
+                {{ openshift_post_install_nmstate_non_ready_handler_pods_after_nncp_wait.stdout_lines | default([]) }}
+
+        - name: Force-delete non-ready NMState handler pods after NNCP availability wait failure
+          ansible.builtin.command:
+            argv:
+              - "{{ openshift_post_install_nmstate_remote_oc_path }}"
+              - delete
+              - pod
+              - "{{ item }}"
+              - -n
+              - "{{ openshift_post_install_nmstate_namespace }}"
+              - --force
+              - --grace-period=0
+          environment:
+            KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+          loop: "{{ openshift_post_install_nmstate_non_ready_handler_pods_after_nncp_wait.stdout_lines | default([]) }}"
+          loop_control:
+            label: "{{ item }}"
+          changed_when: true
+          when:
+            - openshift_post_install_nmstate_handler_recovery_enabled | bool
+            - openshift_post_install_nmstate_non_ready_handler_pods_after_nncp_wait.stdout_lines | default([]) | length > 0
+
+        - name: Wait for NMState handler pods to become Ready after NNCP recovery
+          ansible.builtin.command:
+            argv:
+              - "{{ openshift_post_install_nmstate_remote_oc_path }}"
+              - wait
+              - --for=condition=Ready
+              - pod
+              - -n
+              - "{{ openshift_post_install_nmstate_namespace }}"
+              - -l
+              - name=nmstate-handler
+              - --timeout={{ openshift_post_install_nmstate_handler_ready_timeout }}
+          environment:
+            KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+          changed_when: false
+          when:
+            - openshift_post_install_nmstate_handler_recovery_enabled | bool
+            - openshift_post_install_nmstate_non_ready_handler_pods_after_nncp_wait.stdout_lines | default([]) | length > 0
+
+        - name: Pause briefly for NMState policy status to settle after bounded recovery
+          ansible.builtin.pause:
+            seconds: "{{ openshift_post_install_nmstate_recovery_settle_seconds | int }}"
+
+        - name: Re-check NodeNetworkConfigurationPolicies after bounded recovery
+          ansible.builtin.command:
+            argv:
+              - "{{ openshift_post_install_nmstate_remote_oc_path }}"
+              - get
+              - nncp
+              - "{{ item.name }}"
+              - -o
+              - jsonpath={.status.conditions[?(@.type=="Available")].status}
+          environment:
+            KUBECONFIG: "{{ openshift_post_install_nmstate_remote_kubeconfig_path }}"
+          register: openshift_post_install_nmstate_nncp_available_recheck
+          changed_when: false
+          retries: 30
+          delay: 10
+          until: openshift_post_install_nmstate_nncp_available_recheck.stdout == 'True'
+          loop: "{{ openshift_post_install_nmstate_nncp_definitions }}"
+          loop_control:
+            label: "{{ item.name }}"
 
 - name: Publish NMState reuse decision
   ansible.builtin.debug:

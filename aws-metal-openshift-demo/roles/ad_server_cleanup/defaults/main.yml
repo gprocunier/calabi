@@ -1,0 +1,4 @@
+---
+ad_server_cleanup_runtime_root: /var/lib/aws-metal-openshift-demo
+ad_server_cleanup_remove_runtime_dir: true
+ad_server_cleanup_wipe_block_device: false

@@ -1,0 +1,67 @@
+---
+- name: Register the existing mirror registry guest for in-place refresh
+  hosts: aws_metal
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/pki.yml
+    - ../../vars/global/rhsm.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/mirror_registry_vm.yml
+    - ../../vars/global/mirror_content.yml
+    - ../../vars/global/lab_switch_ports.yml
+
+  tasks:
+    - name: Wait for the mirror registry guest SSH port from the hypervisor network
+      ansible.builtin.wait_for:
+        host: "{{ mirror_registry_vm.network.ipv4_address }}"
+        port: 22
+        timeout: 900
+        sleep: 10
+
+    - name: Register the mirror registry guest as a temporary Ansible host
+      ansible.builtin.add_host:
+        name: "{{ mirror_registry_vm.name }}.{{ mirror_registry_vm.domain }}"
+        groups:
+          - mirror_registry_guest
+        ansible_host: "{{ mirror_registry_vm.network.ipv4_address }}"
+        ansible_user: "{{ mirror_registry_vm.access.admin_user }}"
+        ansible_ssh_private_key_file: >-
+          {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+        ansible_become: true
+        ansible_ssh_common_args: >-
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          -o ProxyCommand="ssh -i {{
+          hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          {{ hostvars[inventory_hostname].ansible_user }}@{{
+          hostvars[inventory_hostname].ansible_host }} -W %h:%p"
+
+- name: Refresh disconnected content on the existing mirror registry guest
+  hosts: mirror_registry_guest
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/pki.yml
+    - ../../vars/global/rhsm.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/mirror_registry_vm.yml
+    - ../../vars/global/mirror_content.yml
+    - ../../vars/global/lab_switch_ports.yml
+
+  pre_tasks:
+    - name: Reset any cached SSH state before connecting to the mirror registry guest
+      ansible.builtin.meta: reset_connection
+
+    - name: Wait for the mirror registry guest to accept SSH connections
+      ansible.builtin.wait_for_connection:
+        timeout: 900
+        sleep: 10
+
+    - name: Gather facts from the mirror registry guest
+      ansible.builtin.setup:
+
+  roles:
+    - role: mirror_registry_guest

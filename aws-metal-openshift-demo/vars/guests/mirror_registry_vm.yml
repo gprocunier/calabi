@@ -35,7 +35,7 @@ mirror_registry_vm:
       - 8.8.8.8
   access:
     admin_user: cloud-user
-    admin_password: "{{ lab_default_password }}"
+    admin_password: "{{ lab_default_password | default('') }}"
     ssh_private_key_file: >-
       {{ lab_execution_ssh_private_key_file |
       default(lookup('env', 'HOME') + '/.ssh/id_ed25519') }}
@@ -68,10 +68,11 @@ mirror_registry_client:
 mirror_registry_service:
   install_enabled: true
   reset_storage: false
+  mirror_state_dir: /var/lib/mirror-registry/state
   registry_port: 8443
   init_user: init
   init_email: ""
-  init_password: "{{ lab_default_password }}"
+  init_password: "{{ lab_default_password | default('') }}"
   use_idm_cert: true
   quay_root: /opt/quay-install
   workspace_root: /opt/openshift

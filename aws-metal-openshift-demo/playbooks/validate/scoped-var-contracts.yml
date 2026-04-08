@@ -1,0 +1,165 @@
+---
+- name: Validate bastion staging scope contracts
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../../vars/guests/bastion_vm.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/mirror_registry_vm.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/mirror_content.yml
+    - ../../vars/global/name_resolution.yml
+  vars:
+    validate_target_playbook: "{{ validate_target_playbook | default('') }}"
+    validate_bastion_stage_scope: >-
+      {{
+        validate_target_playbook in [
+          '',
+          'playbooks/site-lab.yml',
+          'playbooks/bootstrap/bastion-stage.yml'
+        ]
+      }}
+  tasks:
+    - name: Assert bastion staging name-resolution contracts render in play scope
+      ansible.builtin.assert:
+        that:
+          - lab_name_resolution_bootstrap_hosts | length > 0
+          - lab_name_resolution_bootstrap_targets | length > 0
+          - >-
+            (
+              lab_name_resolution_bootstrap_hosts
+              | map(attribute='ipv4_address')
+              | unique
+              | list
+              | length
+            ) == (lab_name_resolution_bootstrap_hosts | length)
+        fail_msg: >-
+          Bastion staging does not load enough vars_files to render the managed
+          name-resolution contract. Fix the play-local vars scope before relying
+          on resolver fallbacks during staging.
+      when: validate_bastion_stage_scope | bool
+
+- name: Validate IdM guest scope contracts
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/pki.yml
+    - ../../vars/global/rhsm.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/bastion_vm.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/global/name_resolution.yml
+    - ../../vars/global/lab_switch_ports.yml
+  vars:
+    validate_target_playbook: "{{ validate_target_playbook | default('') }}"
+    validate_idm_scope: >-
+      {{
+        validate_target_playbook in [
+          '',
+          'playbooks/site-lab.yml',
+          'playbooks/bootstrap/idm.yml'
+        ]
+      }}
+  tasks:
+    - name: Assert IdM guest name-resolution contracts render in play scope
+      ansible.builtin.assert:
+        that:
+          - lab_name_resolution_bootstrap_hosts | length > 0
+          - lab_name_resolution_bootstrap_targets | length > 0
+        fail_msg: >-
+          The IdM play scope does not render the managed name-resolution
+          contract. A future-phase variable is leaking into bootstrap-time
+          resolution data.
+      when: validate_idm_scope | bool
+
+- name: Validate mirror registry guest scope contracts
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/pki.yml
+    - ../../vars/global/rhsm.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/bastion_vm.yml
+    - ../../vars/guests/mirror_registry_vm.yml
+    - ../../vars/global/mirror_content.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/global/name_resolution.yml
+    - ../../vars/global/lab_switch_ports.yml
+  vars:
+    validate_target_playbook: "{{ validate_target_playbook | default('') }}"
+    validate_mirror_registry_scope: >-
+      {{
+        validate_target_playbook in [
+          '',
+          'playbooks/site-lab.yml',
+          'playbooks/lab/mirror-registry.yml',
+          'playbooks/lab/mirror-registry-refresh.yml'
+        ]
+      }}
+  tasks:
+    - name: Assert mirror registry guest name-resolution contracts render in play scope
+      ansible.builtin.assert:
+        that:
+          - lab_name_resolution_bootstrap_hosts | length > 0
+          - lab_name_resolution_bootstrap_targets | length > 0
+        fail_msg: >-
+          The mirror registry play scope does not render the managed
+          name-resolution contract. Check vars_files coverage before relying on
+          mirror-host resolver fallbacks.
+      when: validate_mirror_registry_scope | bool
+
+- name: Validate OpenShift day-2 OIDC scope contracts
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/mirror_content.yml
+    - ../../vars/global/pki.yml
+    - ../../vars/guests/mirror_registry_vm.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/cluster/openshift_agent_media.yml
+    - ../../vars/guests/openshift_cluster_vm.yml
+    - ../../vars/day2/openshift_breakglass_auth.yml
+    - ../../vars/day2/openshift_keycloak.yml
+    - ../../vars/day2/openshift_oidc_auth.yml
+    - ../../vars/day2/openshift_ldap_auth.yml
+    - ../../vars/day2/openshift_idm_certs.yml
+    - ../../vars/day2/openshift_aap.yml
+    - ../../vars/day2/openshift_pipelines.yml
+  vars:
+    validate_target_playbook: "{{ validate_target_playbook | default('') }}"
+    validate_day2_scope: >-
+      {{
+        validate_target_playbook in [
+          '',
+          'playbooks/site-lab.yml',
+          'playbooks/day2/openshift-post-install.yml',
+          'playbooks/day2/openshift-post-install-oidc-auth.yml'
+        ]
+      }}
+  tasks:
+    - name: Assert OIDC cross-play contracts render in the day-2 play scope
+      ansible.builtin.assert:
+        that:
+          - openshift_keycloak.route_host | length > 0
+          - openshift_oidc_auth.validation.native_test_user | length > 0
+          - openshift_oidc_auth.validation.ad_test_user | length > 0
+          - openshift_oidc_auth.oauth.claims.groups | length > 0
+        fail_msg: >-
+          The OpenShift day-2 play scope does not render the OIDC contracts
+          cleanly. Check vars_files coverage for AD, IdM, and Keycloak before
+          running post-install auth automation.
+      when: validate_day2_scope | bool

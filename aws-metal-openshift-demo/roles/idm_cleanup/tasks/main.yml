@@ -2,7 +2,7 @@
 - name: Derive IDM cleanup facts
   ansible.builtin.set_fact:
     idm_cleanup_vm_fqdn: "{{ idm_vm.name }}.{{ idm_vm.domain }}"
-    idm_cleanup_runtime_dir: "{{ idm_runtime_root }}/{{ idm_vm.name }}"
+    idm_cleanup_runtime_dir: "{{ idm_cleanup_runtime_root }}/{{ idm_vm.name }}"
 
 - name: Check whether the IDM libvirt domain exists
   ansible.builtin.command:

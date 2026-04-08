@@ -1,15 +1,14 @@
 ---
-- import_playbook: bootstrap/site.yml
+- name: Bootstrap the outer hypervisor host
+  import_playbook: bootstrap/site.yml
   tags:
     - bootstrap-host
-- import_playbook: bootstrap/idm.yml
-  tags:
-    - idm
-    - support-vms
-- import_playbook: bootstrap/bastion.yml
+- name: Build or refresh the bastion support VM
+  import_playbook: bootstrap/bastion.yml
   tags:
     - bastion
     - support-vms
-- import_playbook: bootstrap/bastion-stage.yml
+- name: Stage the project onto the bastion
+  import_playbook: bootstrap/bastion-stage.yml
   tags:
     - bastion-stage

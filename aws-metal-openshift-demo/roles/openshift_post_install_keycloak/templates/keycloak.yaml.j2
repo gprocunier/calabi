@@ -1,0 +1,29 @@
+apiVersion: k8s.keycloak.org/v2alpha1
+kind: Keycloak
+metadata:
+  name: {{ openshift_keycloak.instance_name }}
+  namespace: {{ openshift_keycloak.namespace }}
+spec:
+  instances: 1
+  bootstrapAdmin:
+    user:
+      secret: {{ openshift_keycloak.bootstrap_admin_secret_name }}
+  db:
+    vendor: postgres
+    host: {{ openshift_keycloak.database_host }}
+    port: {{ openshift_keycloak.database_port }}
+    database: {{ openshift_keycloak.database_name }}
+    usernameSecret:
+      name: {{ openshift_keycloak.database_secret_name }}
+      key: username
+    passwordSecret:
+      name: {{ openshift_keycloak.database_secret_name }}
+      key: password
+  http:
+    tlsSecret: {{ openshift_keycloak.tls_secret_name }}
+  hostname:
+    hostname: https://{{ openshift_keycloak.route_host }}
+  ingress:
+    enabled: false
+  proxy:
+    headers: xforwarded

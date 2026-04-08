@@ -1,2 +1,2 @@
 ---
-idm_runtime_root: /var/lib/aws-metal-openshift-demo
+idm_cleanup_runtime_root: /var/lib/aws-metal-openshift-demo

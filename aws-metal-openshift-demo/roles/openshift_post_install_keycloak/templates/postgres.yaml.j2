@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-db
+  namespace: {{ openshift_keycloak.namespace }}
+spec:
+  serviceName: postgres-db
+  selector:
+    matchLabels:
+      app: postgres-db
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: postgres-db
+    spec:
+      containers:
+        - name: postgres-db
+          image: {{ openshift_keycloak.database_image }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRESQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ openshift_keycloak.database_secret_name }}
+                  key: username
+            - name: POSTGRESQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ openshift_keycloak.database_secret_name }}
+                  key: password
+            - name: POSTGRESQL_DATABASE
+              value: {{ openshift_keycloak.database_name }}
+          ports:
+            - containerPort: {{ openshift_keycloak.database_port }}
+              name: postgres
+          volumeMounts:
+            - mountPath: /var/lib/pgsql/data
+              name: pgdata
+  volumeClaimTemplates:
+    - metadata:
+        name: pgdata
+      spec:
+        storageClassName: {{ openshift_keycloak.database_storage_class }}
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: {{ openshift_keycloak.database_storage_size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-db
+  namespace: {{ openshift_keycloak.namespace }}
+spec:
+  selector:
+    app: postgres-db
+  ports:
+    - port: {{ openshift_keycloak.database_port }}
+      targetPort: {{ openshift_keycloak.database_port }}
+      name: postgres

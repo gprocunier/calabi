@@ -87,22 +87,6 @@
       vars/guests/idm_vm.yml is missing required IDM VM settings. Populate the guest
       identity, disk path, and network/access data before running this role.
 
-- name: Validate RHSM data when guest registration is enabled
-  ansible.builtin.assert:
-    that:
-      - >-
-        (
-          idm_vm.subscription.activation_key | length > 0 and
-          idm_vm.subscription.organization_id | length > 0
-        ) or (
-          idm_vm.subscription.username | length > 0 and
-          idm_vm.subscription.password | length > 0
-        )
-    fail_msg: >-
-      IDM subscription enablement requires either activation_key +
-      organization_id or username + password in vars/guests/idm_vm.yml.
-  when: idm_vm.subscription.enabled | bool
-
 - name: Install packages needed for the IDM VM build workflow
   ansible.builtin.package:
     name:
@@ -147,6 +131,24 @@
         (idm_vm.provisioning.rebuild_disk_from_image | bool) or
         (idm_role_disk_pttype.stdout | trim | length == 0)
       }}
+
+- name: Validate RHSM data when IDM guest registration is required
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          idm_vm.subscription.activation_key | length > 0 and
+          idm_vm.subscription.organization_id | length > 0
+        ) or (
+          idm_vm.subscription.username | length > 0 and
+          idm_vm.subscription.password | length > 0
+        )
+    fail_msg: >-
+      IDM subscription enablement requires either activation_key +
+      organization_id or username + password in vars/guests/idm_vm.yml.
+  when:
+    - idm_vm.subscription.enabled | bool
+    - idm_role_seed_disk_from_image | bool
 
 - name: Fail when the base QCOW2 image is missing
   ansible.builtin.assert:

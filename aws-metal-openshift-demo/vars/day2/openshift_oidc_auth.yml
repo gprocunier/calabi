@@ -1,0 +1,67 @@
+---
+openshift_oidc_auth:
+  identity_provider_name: "Keycloak"
+  realm_name: openshift
+  client_id: openshift
+  client_secret: "{{ lab_default_password | default('') }}"
+  client_secret_name: oidc-client-secret
+  ca_configmap_name: oidc-ca
+  remove_ldap_identity_provider: true
+  ldap_federation:
+    provider_name: idm-compat
+    group_mapper_name: idm-compat-group-mapper
+    connection_url: "ldap://{{ idm_vm.name }}.{{ idm_vm.domain }}"
+    bind_dn: "cn=Directory Manager"
+    bind_password: "{{ idm_server.ds_password }}"
+    users_dn: ""
+    groups_dn: ""
+    search_scope: "2"
+    username_ldap_attribute: uid
+    rdn_ldap_attribute: uid
+    uuid_ldap_attribute: uid
+    user_object_classes: posixAccount
+    vendor: other
+    group_name_ldap_attribute: cn
+    group_object_classes: posixGroup
+    group_membership_ldap_attribute: memberUid
+    group_membership_attribute_type: UID
+    group_mapper_mode: LDAP_ONLY
+    group_mapper_preserve_inheritance: false
+    group_mapper_drop_non_existing_groups_during_sync: false
+    group_mapper_user_roles_retrieve_strategy: LOAD_GROUPS_BY_MEMBER_ATTRIBUTE
+  oauth:
+    mapping_method: claim
+    extra_scopes:
+      - email
+      - profile
+    protocol_mappers:
+      groups:
+        name: groups
+        claim_name: groups
+        full_path: false
+    claims:
+      preferred_username:
+        - preferred_username
+      name:
+        - name
+        - preferred_username
+      email:
+        - email
+        - preferred_username
+      groups:
+        - groups
+  authorization:
+    cluster_admin_group: access-openshift-admin
+  validation:
+    native_test_user: >-
+      {{
+        idm_server.identity_users
+        | selectattr('groups', 'contains', 'access-openshift-admin')
+        | map(attribute='name')
+        | first
+        | default('')
+      }}
+    native_test_password: "{{ lab_default_password | default('') }}"
+    include_ad_trusted_user: "{{ lab_configure_ad_trust | default(false) | bool }}"
+    ad_test_user: "ad-ocpadmin@{{ ad_server.domain_name }}"
+    ad_test_password: "{{ lab_default_password | default('') }}"

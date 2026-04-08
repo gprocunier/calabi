@@ -173,3 +173,160 @@
   loop: "{{ idm_openshift_dns_node_records }}"
   loop_control:
     label: "{{ item.label }}"
+
+- name: Build authoritative DNS validation targets for OpenShift A records
+  ansible.builtin.set_fact:
+    idm_openshift_dns_authoritative_a_targets: >-
+      {%- set targets = [] -%}
+      {%- set _ = targets.append({
+            'fqdn': 'api.' ~ idm_openshift_dns_zone ~ '.',
+            'expected_ipv4': openshift_install_cluster.network.api_vip,
+            'label': 'api.' ~ idm_openshift_dns_zone
+          }) -%}
+      {%- set _ = targets.append({
+            'fqdn': 'api-int.' ~ idm_openshift_dns_zone ~ '.',
+            'expected_ipv4': openshift_install_cluster.network.api_vip,
+            'label': 'api-int.' ~ idm_openshift_dns_zone
+          }) -%}
+      {%- set _ = targets.append({
+            'fqdn': idm_openshift_dns_ingress_record ~ '.' ~ idm_openshift_dns_zone ~ '.',
+            'expected_ipv4': openshift_install_cluster.network.ingress_vip,
+            'label': idm_openshift_dns_ingress_record ~ '.' ~ idm_openshift_dns_zone
+          }) -%}
+      {%- set _ = targets.append({
+            'fqdn': 'dns-validation.apps.' ~ idm_openshift_dns_zone ~ '.',
+            'expected_ipv4': openshift_install_cluster.network.ingress_vip,
+            'label': 'dns-validation.apps.' ~ idm_openshift_dns_zone
+          }) -%}
+      {%- for node in openshift_install_cluster.nodes -%}
+      {%- set machine_name = (
+        node.fqdn | regex_replace('\\.' ~ idm_openshift_dns_zone ~ '$', '')
+      ) -%}
+      {%- set storage_name = node.name ~ idm_openshift_dns_storage_suffix -%}
+      {%- set _ = targets.append({
+            'fqdn': machine_name ~ '.' ~ idm_openshift_dns_zone ~ '.',
+            'expected_ipv4': node.machine_network.ipv4_address,
+            'label': node.fqdn
+          }) -%}
+      {%- set _ = targets.append({
+            'fqdn': storage_name ~ '.' ~ idm_openshift_dns_zone ~ '.',
+            'expected_ipv4': node.storage_network.ipv4_address,
+            'label': storage_name ~ '.' ~ idm_openshift_dns_zone
+          }) -%}
+      {%- endfor -%}
+      {{ targets }}
+
+- name: Query authoritative IdM DNS for OpenShift A records
+  ansible.builtin.command:
+    argv:
+      - dig
+      - +short
+      - "@{{ idm_vm.network.ipv4_address }}"
+      - "{{ item.fqdn }}"
+      - A
+  loop: "{{ idm_openshift_dns_authoritative_a_targets }}"
+  loop_control:
+    label: "{{ item.label }}"
+  register: idm_openshift_dns_authoritative_a_responses
+  changed_when: false
+  retries: 12
+  delay: 5
+  until: >-
+    (
+      idm_openshift_dns_authoritative_a_responses.stdout_lines
+      | default([])
+      | map('trim')
+      | reject('equalto', '')
+      | list
+    ) == [item.expected_ipv4]
+
+- name: Assert authoritative IdM DNS matches OpenShift A records
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          item.stdout_lines
+          | map('trim')
+          | reject('equalto', '')
+          | list
+        ) == [item.item.expected_ipv4]
+    fail_msg: >-
+      Authoritative IdM DNS did not resolve {{ item.item.fqdn }}
+      to {{ item.item.expected_ipv4 }}.
+  loop: "{{ idm_openshift_dns_authoritative_a_responses.results }}"
+  loop_control:
+    label: "{{ item.item.label }}"
+
+- name: Build authoritative DNS validation targets for OpenShift PTR records
+  ansible.builtin.set_fact:
+    idm_openshift_dns_authoritative_ptr_targets: >-
+      {%- set targets = [] -%}
+      {%- set _ = targets.append({
+            'ipv4': openshift_install_cluster.network.api_vip,
+            'expected_fqdn': 'api.' ~ idm_openshift_dns_zone ~ '.',
+            'label': openshift_install_cluster.network.api_vip
+          }) -%}
+      {%- set _ = targets.append({
+            'ipv4': openshift_install_cluster.network.ingress_vip,
+            'expected_fqdn': idm_openshift_dns_ingress_record ~ '.'
+                              ~ idm_openshift_dns_zone ~ '.',
+            'label': openshift_install_cluster.network.ingress_vip
+          }) -%}
+      {%- for node in openshift_install_cluster.nodes -%}
+      {%- set machine_name = (
+        node.fqdn | regex_replace('\\.' ~ idm_openshift_dns_zone ~ '$', '')
+      ) -%}
+      {%- set storage_name = node.name ~ idm_openshift_dns_storage_suffix -%}
+      {%- set _ = targets.append({
+            'ipv4': node.machine_network.ipv4_address,
+            'expected_fqdn': node.fqdn ~ '.',
+            'label': node.machine_network.ipv4_address
+          }) -%}
+      {%- set _ = targets.append({
+            'ipv4': node.storage_network.ipv4_address,
+            'expected_fqdn': storage_name ~ '.' ~ idm_openshift_dns_zone ~ '.',
+            'label': node.storage_network.ipv4_address
+          }) -%}
+      {%- endfor -%}
+      {{ targets }}
+
+- name: Query authoritative IdM DNS for OpenShift PTR records
+  ansible.builtin.command:
+    argv:
+      - dig
+      - +short
+      - "@{{ idm_vm.network.ipv4_address }}"
+      - -x
+      - "{{ item.ipv4 }}"
+  loop: "{{ idm_openshift_dns_authoritative_ptr_targets }}"
+  loop_control:
+    label: "{{ item.label }}"
+  register: idm_openshift_dns_authoritative_ptr_responses
+  changed_when: false
+  retries: 12
+  delay: 5
+  until: >-
+    (
+      idm_openshift_dns_authoritative_ptr_responses.stdout_lines
+      | default([])
+      | map('trim')
+      | reject('equalto', '')
+      | list
+    ) == [item.expected_fqdn]
+
+- name: Assert authoritative IdM DNS matches OpenShift PTR records
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          item.stdout_lines
+          | map('trim')
+          | reject('equalto', '')
+          | list
+        ) == [item.item.expected_fqdn]
+    fail_msg: >-
+      Authoritative IdM DNS did not resolve {{ item.item.ipv4 }}
+      to {{ item.item.expected_fqdn }}.
+  loop: "{{ idm_openshift_dns_authoritative_ptr_responses.results }}"
+  loop_control:
+    label: "{{ item.item.label }}"

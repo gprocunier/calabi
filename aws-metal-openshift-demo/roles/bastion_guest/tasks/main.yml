@@ -2,7 +2,8 @@
 - name: Derive bastion guest facts
   ansible.builtin.set_fact:
     bastion_guest_vm_fqdn: "{{ bastion_vm.name }}.{{ bastion_vm.domain }}"
-    bastion_guest_hypervisor_host: "{{ groups['aws_metal'] | first }}"
+    bastion_guest_hypervisor_host: >-
+      {{ (groups['aws_metal'] | default([])) | first | default('') }}
     bastion_guest_cloudinit_iso: >-
       /var/lib/aws-metal-openshift-demo/{{ bastion_vm.name }}/{{
       bastion_vm.name }}-cidata.iso
@@ -15,6 +16,34 @@
         else bastion_client.admin_principal ~ '@' ~ idm_server.realm
       }}
     bastion_guest_idm_ca_path: /etc/ipa/ca.crt
+    bastion_guest_ipv4_address: >-
+      {{ bastion_vm.network.ipv4_address | regex_replace('/.*$', '') }}
+    bastion_guest_reverse_zone: >-
+      {{
+        (bastion_vm.network.ipv4_address | regex_replace('/.*$', '')).split('.')[2]
+        ~ '.'
+        ~ (bastion_vm.network.ipv4_address | regex_replace('/.*$', '')).split('.')[1]
+        ~ '.'
+        ~ (bastion_vm.network.ipv4_address | regex_replace('/.*$', '')).split('.')[0]
+        ~ '.in-addr.arpa'
+      }}
+
+- name: Derive whether IdM enrollment work is enabled for the bastion guest
+  ansible.builtin.set_fact:
+    bastion_guest_join_idm_enabled: "{{ bastion_guest_join_idm | default(false) | bool }}"
+
+- name: Derive whether bastion guest package updates are enabled
+  ansible.builtin.set_fact:
+    bastion_guest_manage_package_updates: >-
+      {{ bastion_guest_manage_updates | default(false) | bool }}
+
+- name: Validate bastion guest hypervisor inventory is present
+  ansible.builtin.assert:
+    that:
+      - bastion_guest_hypervisor_host | length > 0
+    fail_msg: >-
+      bastion guest configuration requires an aws_metal hypervisor inventory
+      host.
 
 - name: Ensure insights-client is installed on the bastion guest
   ansible.builtin.package:
@@ -44,8 +73,12 @@
     state: latest
     update_cache: true
   register: bastion_guest_package_update
+  when: bastion_guest_manage_package_updates | bool
+  # noqa: package-latest
 
 - name: Power-cycle the bastion domain after guest updates so persistent XML changes take effect
+  when: bastion_guest_package_update.changed
+  # noqa: no-handler
   block:
     - name: Request a bastion guest poweroff after updates
       ansible.builtin.shell: |
@@ -118,13 +151,13 @@
           - "{{ bastion_guest_vm_fqdn }}"
       changed_when: true
       delegate_to: "{{ bastion_guest_hypervisor_host }}"
-  when: bastion_guest_package_update.changed
 
 - name: Wait for the bastion guest after the optional domain restart
   ansible.builtin.wait_for_connection:
     timeout: 1800
     sleep: 10
   when: bastion_guest_package_update.changed
+  # noqa: no-handler
 
 - name: Refresh facts after the optional bastion power-cycle
   ansible.builtin.setup:
@@ -188,119 +221,212 @@
     - "{{ bastion_client.cluster_artifact_root }}"
     - "{{ bastion_client.tools_root }}"
 
-- name: Check whether the bastion guest is already enrolled in IdM
-  ansible.builtin.stat:
-    path: /etc/ipa/default.conf
-  register: bastion_guest_ipa_default_conf
+- name: Enroll the bastion guest into IdM when requested
+  when: bastion_guest_join_idm_enabled | bool
+  block:
+    - name: Check whether the bastion guest is already enrolled in IdM
+      ansible.builtin.stat:
+        path: /etc/ipa/default.conf
+      register: bastion_guest_ipa_default_conf
 
-- name: Refresh the local IdM CA file from the active IdM server before bastion enrollment checks
-  ansible.builtin.get_url:
-    url: "http://{{ bastion_guest_ipa_server }}/ipa/config/ca.crt"
-    dest: "{{ bastion_guest_idm_ca_path }}"
-    mode: "0644"
+    - name: Refresh the local IdM CA file from the active IdM server before bastion enrollment checks
+      ansible.builtin.get_url:
+        url: "http://{{ bastion_guest_ipa_server }}/ipa/config/ca.crt"
+        dest: "{{ bastion_guest_idm_ca_path }}"
+        mode: "0644"
 
-- name: Trust the active IdM CA before bastion enrollment checks
-  ansible.builtin.copy:
-    src: "{{ bastion_guest_idm_ca_path }}"
-    dest: /etc/pki/ca-trust/source/anchors/idm-rootCA.pem
-    remote_src: true
-    owner: root
-    group: root
-    mode: "0644"
+    - name: Trust the active IdM CA before bastion enrollment checks
+      ansible.builtin.copy:
+        src: "{{ bastion_guest_idm_ca_path }}"
+        dest: /etc/pki/ca-trust/source/anchors/idm-rootCA.pem
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0644"
 
-- name: Refresh the guest CA trust before bastion enrollment checks
-  ansible.builtin.command:
-    argv:
-      - update-ca-trust
-      - extract
-  changed_when: false
+    - name: Refresh the guest CA trust before bastion enrollment checks
+      ansible.builtin.command:
+        argv:
+          - update-ca-trust
+          - extract
+      changed_when: false
 
-- name: Acquire an IPA admin ticket before validating bastion host state
-  ansible.builtin.command:
-    argv:
-      - kinit
-      - "{{ bastion_guest_ipa_admin_principal }}"
-    stdin: "{{ bastion_guest_ipa_admin_password }}\n"
-  changed_when: true
+    - name: Acquire an IPA admin ticket before validating bastion host state
+      ansible.builtin.command:
+        argv:
+          - kinit
+          - "{{ bastion_guest_ipa_admin_principal }}"
+        stdin: "{{ bastion_guest_ipa_admin_password }}\n"
+      changed_when: true
 
-- name: Check whether the bastion host object already exists in IdM
-  ansible.builtin.command:
-    argv:
-      - ipa
-      - host-show
-      - "{{ bastion_guest_vm_fqdn }}"
-  register: bastion_guest_ipa_host_show
-  changed_when: false
-  failed_when: false
+    - name: Check whether the bastion host object already exists in IdM
+      ansible.builtin.command:
+        argv:
+          - ipa
+          - host-show
+          - "{{ bastion_guest_vm_fqdn }}"
+      register: bastion_guest_ipa_host_show
+      changed_when: false
+      failed_when: false
 
-- name: Determine whether the bastion guest must rejoin IdM
-  ansible.builtin.set_fact:
-    bastion_guest_ipa_rejoin_required: >-
-      {{
-        (not bastion_guest_ipa_default_conf.stat.exists)
-        or bastion_guest_ipa_host_show.rc != 0
-      }}
+    - name: Determine whether the bastion guest must rejoin IdM
+      ansible.builtin.set_fact:
+        bastion_guest_ipa_rejoin_required: >-
+          {{
+            (not bastion_guest_ipa_default_conf.stat.exists)
+            or bastion_guest_ipa_host_show.rc != 0
+          }}
 
-- name: Prepare FreeIPA client role variables for bastion enrollment
-  ansible.builtin.set_fact:
-    ipaclient_install_packages: false
-    ipaclient_force_join: true
-    ipaclient_domain: "{{ idm_vm.domain }}"
-    ipaclient_realm: "{{ idm_server.realm }}"
-    ipaclient_servers:
-      - "{{ idm_vm.name }}.{{ idm_vm.domain }}"
-    ipaclient_hostname: "{{ bastion_vm.name }}.{{ bastion_vm.domain }}"
-    ipaclient_no_dns_lookup: true
-    ipasssd_enable_dns_updates: true
-    ipaadmin_principal: "{{ bastion_client.admin_principal }}"
-    ipaadmin_password: "{{ idm_server.admin_password }}"
-  when: bastion_guest_ipa_rejoin_required
+    - name: Uninstall the stale bastion IPA client before rejoining
+      ansible.builtin.command:
+        argv:
+          - ipa-client-install
+          - --uninstall
+          - -U
+      when:
+        - bastion_guest_ipa_rejoin_required
+        - bastion_guest_ipa_default_conf.stat.exists
+      changed_when: true
 
-- name: Uninstall the stale bastion IPA client before rejoining
-  ansible.builtin.command:
-    argv:
-      - ipa-client-install
-      - --uninstall
-      - -U
-  when:
-    - bastion_guest_ipa_rejoin_required
-    - bastion_guest_ipa_default_conf.stat.exists
-  changed_when: true
+    - name: Join the bastion guest to IdM with the FreeIPA client role
+      ansible.builtin.include_role:
+        name: freeipa.ansible_freeipa.ipaclient
+      vars:
+        state: present
+        ipaclient_install_packages: false
+        ipaclient_force_join: true
+        ipaclient_domain: "{{ idm_vm.domain }}"
+        ipaclient_realm: "{{ idm_server.realm }}"
+        ipaclient_servers:
+          - "{{ idm_vm.name }}.{{ idm_vm.domain }}"
+        ipaclient_hostname: "{{ bastion_vm.name }}.{{ bastion_vm.domain }}"
+        ipaclient_no_dns_lookup: true
+        ipasssd_enable_dns_updates: false
+        ipaadmin_principal: "{{ bastion_client.admin_principal }}"
+        ipaadmin_password: "{{ idm_server.admin_password }}"
+      no_log: true
+      when: bastion_guest_ipa_rejoin_required
 
-- name: Join the bastion guest to IdM with the FreeIPA client role
-  ansible.builtin.include_role:
-    name: freeipa.ansible_freeipa.ipaclient
-  vars:
-    state: present
-  no_log: true
-  when: bastion_guest_ipa_rejoin_required
+    - name: Wait for bastion SSH to settle after IdM enrollment
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+      when: bastion_guest_ipa_rejoin_required
+      # noqa: no-handler
 
-- name: Wait for bastion SSH to settle after IdM enrollment
-  ansible.builtin.wait_for_connection:
-    timeout: 300
-  when: bastion_guest_ipa_rejoin_required
+    - name: Reacquire an IPA admin ticket after the optional bastion rejoin
+      ansible.builtin.command:
+        argv:
+          - kinit
+          - "{{ bastion_guest_ipa_admin_principal }}"
+        stdin: "{{ bastion_guest_ipa_admin_password }}\n"
+      when: bastion_guest_ipa_rejoin_required
+      changed_when: true
 
-- name: Reacquire an IPA admin ticket after the optional bastion rejoin
-  ansible.builtin.command:
-    argv:
-      - kinit
-      - "{{ bastion_guest_ipa_admin_principal }}"
-    stdin: "{{ bastion_guest_ipa_admin_password }}\n"
-  when: bastion_guest_ipa_rejoin_required
-  changed_when: true
+    - name: Confirm bastion IdM enrollment completed
+      ansible.builtin.command:
+        argv:
+          - ipa
+          - host-show
+          - "{{ bastion_guest_vm_fqdn }}"
+      register: bastion_guest_ipa_host_show_after_join
+      changed_when: false
+      until: bastion_guest_ipa_host_show_after_join.rc == 0
+      retries: 20
+      delay: 15
+      when: bastion_guest_ipa_rejoin_required
 
-- name: Confirm bastion IdM enrollment completed
-  ansible.builtin.command:
-    argv:
-      - ipa
-      - host-show
-      - "{{ bastion_guest_vm_fqdn }}"
-  register: bastion_guest_ipa_host_show_after_join
-  changed_when: false
-  until: bastion_guest_ipa_host_show_after_join.rc == 0
-  retries: 20
-  delay: 15
-  when: bastion_guest_ipa_rejoin_required
+    - name: Reassert the bastion A record in authoritative IdM DNS
+      ansible.builtin.shell: |
+        set -euo pipefail
+        add_output="$(
+          ipa dnsrecord-add "{{ bastion_vm.domain }}" "{{ bastion_vm.name }}" \
+            --a-rec="{{ bastion_guest_ipv4_address }}" 2>&1
+        )" || add_rc=$?
+        add_rc="${add_rc:-0}"
+        if [ "${add_rc}" -eq 0 ]; then
+          printf '%s\n' "${add_output}"
+          exit 0
+        fi
+
+        mod_output="$(
+          ipa dnsrecord-mod "{{ bastion_vm.domain }}" "{{ bastion_vm.name }}" \
+            --a-rec="{{ bastion_guest_ipv4_address }}" 2>&1
+        )" || mod_rc=$?
+        mod_rc="${mod_rc:-0}"
+        if [ "${mod_rc}" -eq 0 ] || grep -q 'no modifications to be performed' <<<"${mod_output}"; then
+          printf '%s\n' "${mod_output}"
+          exit 0
+        fi
+
+        printf '%s\n' "${add_output}" >&2
+        printf '%s\n' "${mod_output}" >&2
+        exit 1
+      args:
+        executable: /bin/bash
+      register: bastion_guest_dns_a_record
+      changed_when: >-
+        'Added DNS resource record' in (bastion_guest_dns_a_record.stdout | default(''))
+        or 'Modified DNS resource record' in (bastion_guest_dns_a_record.stdout | default(''))
+
+    - name: Reassert the bastion PTR record in authoritative IdM DNS
+      ansible.builtin.shell: |
+        set -euo pipefail
+        add_output="$(
+          ipa dnsrecord-add "{{ bastion_guest_reverse_zone }}" "{{ bastion_guest_ipv4_address.split('.')[-1] }}" \
+            --ptr-rec="{{ bastion_guest_vm_fqdn }}." 2>&1
+        )" || add_rc=$?
+        add_rc="${add_rc:-0}"
+        if [ "${add_rc}" -eq 0 ]; then
+          printf '%s\n' "${add_output}"
+          exit 0
+        fi
+
+        mod_output="$(
+          ipa dnsrecord-mod "{{ bastion_guest_reverse_zone }}" "{{ bastion_guest_ipv4_address.split('.')[-1] }}" \
+            --ptr-rec="{{ bastion_guest_vm_fqdn }}." 2>&1
+        )" || mod_rc=$?
+        mod_rc="${mod_rc:-0}"
+        if [ "${mod_rc}" -eq 0 ] || grep -q 'no modifications to be performed' <<<"${mod_output}"; then
+          printf '%s\n' "${mod_output}"
+          exit 0
+        fi
+
+        printf '%s\n' "${add_output}" >&2
+        printf '%s\n' "${mod_output}" >&2
+        exit 1
+      args:
+        executable: /bin/bash
+      register: bastion_guest_dns_ptr_record
+      changed_when: >-
+        'Added DNS resource record' in (bastion_guest_dns_ptr_record.stdout | default(''))
+        or 'Modified DNS resource record' in (bastion_guest_dns_ptr_record.stdout | default(''))
+
+    - name: Assert authoritative IdM DNS resolves the bastion host
+      ansible.builtin.command:
+        argv:
+          - dig
+          - +short
+          - "@{{ idm_vm.network.ipv4_address }}"
+          - "{{ bastion_guest_vm_fqdn }}"
+          - A
+      register: bastion_guest_authoritative_dns
+      changed_when: false
+      retries: 12
+      delay: 5
+      until: >-
+        (
+          bastion_guest_authoritative_dns.stdout_lines
+          | map('trim')
+          | reject('equalto', '')
+          | list
+        ) == [bastion_guest_ipv4_address]
+      failed_when: >-
+        (
+          bastion_guest_authoritative_dns.stdout_lines
+          | map('trim')
+          | reject('equalto', '')
+          | list
+        ) != [bastion_guest_ipv4_address]
 
 - name: Check the current authselect profile on the bastion guest
   ansible.builtin.command:

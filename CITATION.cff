@@ -6,6 +6,7 @@ license: GPL-3.0
 repository-code: https://github.com/gprocunier/calabi
 version: 1.0.0
 date-released: 2026-04-05
+url: https://github.com/gprocunier/calabi
 authors:
   - family-names: Procunier
     given-names: Greg
@@ -21,12 +22,17 @@ keywords:
   - openvswitch
   - cloudformation
   - rhel
+  - freeipa
+  - keycloak
+  - active-directory
+  - identity-management
   - cgroup
   - infrastructure-as-code
   - kubernetes
   - homelab
 abstract: >-
   Ansible-driven automation that deploys a full 9-node disconnected OpenShift 4
-  cluster on a single bare-metal host using nested KVM, Open vSwitch VLAN
-  segmentation, cgroup-based CPU performance domains, and day-2 operator
-  management.
+  cluster on a single AWS bare-metal host using nested KVM, Open vSwitch VLAN
+  segmentation, deterministic IdM-backed DNS publication, disconnected content
+  mirroring, Keycloak plus IdM based cluster authentication, cgroup-based CPU
+  performance domains, and day-2 operator management.

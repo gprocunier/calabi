@@ -13,8 +13,8 @@ openshift_cluster_vm_defaults:
     libvirt_portgroup: ocp-trunk
   provisioning:
     recreate_domain: false
-    reinitialize_root_disk: true
-    wipe_additional_disks: true
+    reinitialize_root_disk: false
+    wipe_additional_disks: false
   performance_domain:
     tier: bronze
     iothreads: 0

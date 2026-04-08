@@ -1,0 +1,69 @@
+---
+- name: Register the bastion guest as a temporary Ansible host for join operations
+  hosts: aws_metal
+  become: false
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/bastion.yml
+    - ../../vars/global/rhsm.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/pki.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/bastion_vm.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+
+  tasks:
+    - name: Register the bastion guest as a temporary Ansible host
+      ansible.builtin.add_host:
+        name: "{{ bastion_vm.name }}.{{ bastion_vm.domain }}"
+        groups:
+          - openshift_bastion
+        ansible_host: "{{ bastion_vm.network.ipv4_address }}"
+        ansible_user: "{{ bastion_vm.access.admin_user }}"
+        ansible_ssh_private_key_file: >-
+          {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+        ansible_ssh_common_args: >-
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          -o ProxyCommand="ssh -i {{
+          hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          {{ hostvars[inventory_hostname].ansible_user }}@{{
+          hostvars[inventory_hostname].ansible_host }} -W %h:%p"
+
+- name: Join the bastion guest to IdM after identity services are available
+  hosts: openshift_bastion
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/bastion.yml
+    - ../../vars/global/rhsm.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/pki.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/bastion_vm.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+
+  pre_tasks:
+    - name: Wait for the IdM guest SSH port from the bastion network
+      ansible.builtin.wait_for:
+        host: "{{ idm_vm.network.ipv4_address }}"
+        port: 22
+        timeout: 900
+        sleep: 10
+
+    - name: Wait for the bastion guest to accept SSH connections
+      ansible.builtin.wait_for_connection:
+        timeout: 900
+        sleep: 10
+
+    - name: Gather facts from the bastion guest
+      ansible.builtin.setup:
+
+  tasks:
+    - name: Run bastion guest configuration in join mode
+      ansible.builtin.include_role:
+        name: bastion_guest
+      vars:
+        bastion_guest_join_idm: true

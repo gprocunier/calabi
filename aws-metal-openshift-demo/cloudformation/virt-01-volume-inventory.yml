@@ -15,6 +15,16 @@ virt_host:
     throughput_mbps: 125
 
 guest_volumes:
+  - name: ad-01
+    purpose: ad_server_root
+    volume_id: vol-0e65ffd882fc572b5
+    aws_device_name: /dev/sdj
+    guest_symlink: /dev/ebs/ad-01
+    size_gib: 60
+    volume_type: gp3
+    iops: 3000
+    throughput_mbps: 125
+
   - name: idm-01
     purpose: support_vm_root
     volume_id: vol-08d2ae1a613ce847c

@@ -2,7 +2,7 @@
 - name: Derive bastion cleanup facts
   ansible.builtin.set_fact:
     bastion_cleanup_vm_fqdn: "{{ bastion_vm.name }}.{{ bastion_vm.domain }}"
-    bastion_cleanup_runtime_dir: "{{ bastion_runtime_root }}/{{ bastion_vm.name }}"
+    bastion_cleanup_runtime_dir: "{{ bastion_cleanup_runtime_root }}/{{ bastion_vm.name }}"
 
 - name: Check whether the bastion libvirt domain exists
   ansible.builtin.command:

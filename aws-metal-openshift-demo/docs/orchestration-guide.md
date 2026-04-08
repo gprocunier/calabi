@@ -4,6 +4,9 @@ Nearby docs:
 
 <a href="./prerequisites.md"><kbd>&nbsp;&nbsp;PREREQUISITES&nbsp;&nbsp;</kbd></a>
 <a href="./automation-flow.md"><kbd>&nbsp;&nbsp;AUTOMATION FLOW&nbsp;&nbsp;</kbd></a>
+<a href="./orchestration-plumbing.md"><kbd>&nbsp;&nbsp;ORCHESTRATION PLUMBING&nbsp;&nbsp;</kbd></a>
+<a href="./authentication-model.md"><kbd>&nbsp;&nbsp;AUTH MODEL&nbsp;&nbsp;</kbd></a>
+<a href="./ad-idm-policy-model.md"><kbd>&nbsp;&nbsp;AD / IDM POLICY MODEL&nbsp;&nbsp;</kbd></a>
 <a href="./manual-process.md"><kbd>&nbsp;&nbsp;MANUAL PROCESS&nbsp;&nbsp;</kbd></a>
 <a href="./investigating.md"><kbd>&nbsp;&nbsp;INVESTIGATING&nbsp;&nbsp;</kbd></a>
 <a href="./secrets-and-sanitization.md"><kbd>&nbsp;&nbsp;SECRETS&nbsp;&nbsp;</kbd></a>
@@ -22,6 +25,9 @@ preparation.
 Keep these nearby while you use this page:
 
 - <a href="./automation-flow.md"><kbd>AUTOMATION FLOW</kbd></a> for run order and lifecycle
+- <a href="./orchestration-plumbing.md"><kbd>ORCHESTRATION PLUMBING</kbd></a> for workstation-to-bastion handoff, runner files, and dashboard telemetry
+- <a href="./authentication-model.md"><kbd>AUTH MODEL</kbd></a> for the formal current-state identity and authorization architecture
+- <a href="./ad-idm-policy-model.md"><kbd>AD / IDM POLICY MODEL</kbd></a> for the planned future AD-source-of-truth authorization model
 - <a href="./iaas-resource-model.md"><kbd>IAAS MODEL</kbd></a> for AWS and cloud-init design
 - <a href="./host-resource-management.md"><kbd>RESOURCE MANAGEMENT</kbd></a> for guest tiers and CPU pools
 - <a href="./openshift-cluster-matrix.md"><kbd>CLUSTER MATRIX</kbd></a> for per-node identities and sizing
@@ -35,6 +41,7 @@ Use this when you need to answer "where should I look" before you answer
 - [Data Files](#data-files)
 - [Project Dependencies](#project-dependencies)
 - [Host Roles](#host-roles)
+- [AD Roles](#ad-roles)
 - [IDM Roles](#idm-roles)
 - [OpenShift Cluster Roles](#openshift-cluster-roles)
 - [Mirror Registry Roles](#mirror-registry-roles)
@@ -63,7 +70,6 @@ Execution model:
 
 - imports:
   - `playbooks/bootstrap/site.yml`
-  - `playbooks/bootstrap/idm.yml`
   - `playbooks/bootstrap/bastion.yml`
   - `playbooks/bootstrap/bastion-stage.yml`
 
@@ -76,6 +82,10 @@ Purpose:
 Execution model:
 
 - imports:
+  - `playbooks/bootstrap/ad-server.yml`
+  - `playbooks/bootstrap/idm.yml`
+  - `playbooks/bootstrap/idm-ad-trust.yml`
+  - `playbooks/bootstrap/bastion-join.yml`
   - `playbooks/lab/mirror-registry.yml`
   - `playbooks/lab/openshift-dns.yml`
   - `playbooks/cluster/openshift-installer-binaries.yml`
@@ -83,18 +93,29 @@ Execution model:
   - `playbooks/cluster/openshift-agent-media.yml`
   - `playbooks/cluster/openshift-cluster.yml`
   - `playbooks/cluster/openshift-install-wait.yml`
+  - `playbooks/day2/openshift-post-install-validate.yml`
+  - `playbooks/day2/openshift-post-install.yml`
 - intended to run on `bastion-01`, not on the operator workstation
+- `playbooks/bootstrap/ad-server.yml` is optional and exits early unless
+  `lab_build_ad_server=true`
 - for resilient long-running execution, the project provides:
   - `scripts/run_bastion_playbook.sh`
   - which writes PID, log, and exit-code state under
     `/var/tmp/bastion-playbooks/`
-- support VMs (`idm-01`, `bastion-01`, and `mirror-registry`) default to
+- support VMs (`ad-01`, `idm-01`, `bastion-01`, and `mirror-registry`) default to
   preserving existing disks and libvirt domains on rerun
-- after a successful mirror phase, the preferred resume point for a fresh
-  cluster rebuild is:
-  - `./scripts/run_remote_bastion_playbook.sh playbooks/site-lab.yml --skip-tags mirror-registry`
+- a true fresh support-services rebuild now means both removing the support VMs
+  and wiping their backing block devices before replaying `site-bootstrap.yml`
+- the mirror-registry phase now caches successful mirror completion for the
+  rendered content set and skips the expensive `oc-mirror` work on rerun unless
+  forced
+- the cluster VMs now default to reuse on rerun; destructive cluster rebuilds
+  are an explicit cleanup action rather than the normal replay path
 - bastion staging ensures the staged `generated/` workspace is writable by
   `cloud-user` so repeated installer renders do not fail on ownership drift
+- bastion staging also seeds a small managed `/etc/hosts` fallback for the
+  bootstrap-critical support hostnames and cluster API endpoints, then verifies
+  those names with `getent` before the long-running orchestration starts
 - the guest-build playbooks later in this phase consume the same
   `host_resource_management` data loaded during bootstrap
 
@@ -131,6 +152,43 @@ Important behavior:
   `IRQBALANCE_BANNED_CPULIST` by default
 - defines the CPU-pool data later consumed by `virt-install` guest definitions
 
+### `playbooks/bootstrap/ad-server.yml`
+
+Purpose:
+
+- provision `ad-01.corp.lan`
+- configure the guest as the optional lab AD DS / AD CS server
+
+Execution model:
+
+- first play runs on the hypervisor and creates the Windows guest with
+  `ad_server`
+- second play waits for the first WinRM listener
+- third play configures the guest with `ad_server_guest`
+- final play removes installation media from persistent XML
+- in the validated flow, bastion reaches the Windows guest directly on VLAN 100
+  with WinRM; it does not proxy back through the operator workstation
+
+Important behavior:
+
+- default-disabled behind `lab_build_ad_server: false`
+- uses an EBS-backed system disk at `/dev/ebs/ad-01`
+- uses Windows Server 2025 media plus `virtio-win.iso`
+- loads only the boot-critical storage and network drivers during Setup
+- installs the remaining virtio drivers and `virtio-win-gt-x64.msi`
+  post-install over WinRM
+- configures:
+  - AD DS
+  - AD CS
+  - Web Enrollment
+  - demo users and groups for the trust-oriented identity story
+- exports the AD root CA after successful configuration
+
+> [!NOTE]
+> The bastion-first AD build is validated. The deeper IdM trust and
+> AD-root/IdM-intermediate PKI path is still follow-on work, not the default
+> documented golden path.
+
 ### `playbooks/bootstrap/idm.yml`
 
 Purpose:
@@ -143,6 +201,8 @@ Execution model:
 - first play runs on the hypervisor and creates the VM with the `idm` role
 - then `add_host` registers the guest dynamically
 - second play waits for SSH and configures the guest with `idm_guest`
+- in the validated bastion-first flow, this playbook runs from the bastion
+  after bastion staging and after the optional AD build when enabled
 
 Important behavior:
 
@@ -158,6 +218,32 @@ Important behavior:
   - `with-mkhomedir`
   - `with-sudo`
 - enables `oddjobd` so domain-user home directories are created on first login
+
+### `playbooks/bootstrap/idm-ad-trust.yml`
+
+Purpose:
+
+- configure the optional IdM to AD trust after `idm-01` and the optional AD VM
+  are both available
+
+Execution model:
+
+- first registers the IdM guest and AD guest as temporary inventory hosts
+- configures the AD conditional forwarder for `workshop.lan` from the Windows
+  side before touching the IdM trust path
+- then runs the `idm_ad_trust` role on `idm-01` from the bastion-side flow
+- exits early unless both `lab_build_ad_server=true` and the AD-trust feature
+  are enabled
+
+Important behavior:
+
+- enables IdM AD-trust server support and the IPA forward zone for the AD
+  domain
+- validates both host and LDAP SRV lookups through the new forward zone before
+  creating the trust
+- creates the AD trust with bounded retry around transient oddjob/cache issues
+- creates the configured IdM external groups and nests them into the target
+  local IdM policy groups
 
 ### `playbooks/bootstrap/bastion.yml`
 
@@ -192,14 +278,10 @@ Important behavior:
   - `pmcd`
   - `pmlogger`
   - `pmproxy`
-- joins the bastion to IdM when needed
-- uses the FreeIPA client role for enrollment
 - enables `oddjobd`
-- enables `authselect` with:
-  - `with-mkhomedir`
-  - `with-sudo`
-- leaves the bastion ready for IdM users to receive home directories and SSSD
-  sudo policy on first login
+- intentionally does not join IdM during the initial bastion build
+- leaves IdM enrollment to `playbooks/bootstrap/bastion-join.yml` after IdM is
+  available
 
 ### `playbooks/bootstrap/bastion-stage.yml`
 
@@ -217,6 +299,8 @@ Execution model:
   - stages the pull secret and hypervisor SSH key
   - renders a bastion-local inventory for `172.16.0.1`
   - installs Ansible collections
+  - installs pip requirements such as `pywinrm` so bastion-native Windows
+    orchestration can talk to `ad-01`
   - installs `/etc/profile.d/openshift-bastion.sh`
   - publishes a stable `generated/tools/current` symlink
   - creates `$HOME/bin` and `$HOME/etc` link sets for `cloud-user` and current
@@ -226,12 +310,25 @@ Execution model:
 
 Operator helper:
 
+- `scripts/run_local_playbook.sh`
+  - launches workstation-side playbooks with tracked PID, log, and exit-code
+    state under `~/.local/state/calabi-playbooks/`
+  - this is the preferred way to track `site-bootstrap.yml` from the operator
+    workstation
 - `scripts/run_remote_bastion_playbook.sh`
   - refreshes bastion staging by running `playbooks/bootstrap/bastion-stage.yml`
-  - then invokes the staged `scripts/run_bastion_playbook.sh` helper on the
-    bastion
+  - records the workstation-side validation and bastion-staging phase under
+    `~/.local/state/calabi-playbooks/`, then invokes the staged
+    `scripts/run_bastion_playbook.sh` helper on the bastion
   - this is the preferred way to rerun bastion-native playbooks after local
     repository changes
+- `scripts/lab-dashboard.sh`
+  - runs on either the operator workstation or bastion
+  - on the workstation, it reads local tracked state first and then switches to
+    bastion-side runner state after handoff metadata appears
+  - if `site-lab.yml` is still in local validation or `bastion-stage.yml`, the
+    bastion dashboard will correctly show nothing yet because the bastion-side
+    runner does not exist until after handoff
 
 Day-2 rerun behavior:
 
@@ -242,9 +339,12 @@ Day-2 rerun behavior:
   - disconnected OperatorHub
   - infra conversion
   - IdM ingress certs
-  - LDAP auth and group sync
+  - breakglass auth
   - NMState
   - ODF
+  - Keycloak
+  - OIDC auth
+  - optional LDAP auth and group sync
   - OpenShift Virtualization
   - Pipelines
   - Web Terminal
@@ -257,9 +357,69 @@ Day-2 rerun behavior:
 The shell profile installed by bastion-stage:
 
 - prepends `$HOME/bin` and `generated/tools/current/bin` to `PATH`
-- exports `KUBECONFIG=$HOME/etc/kubeconfig` only when that file exists and is
-  readable
+- exports `KUBECONFIG_ADMIN=$HOME/etc/kubeconfig.local`
+- exports `KUBECONFIG=$HOME/etc/kubeconfig` when that writable working copy
+  exists, otherwise falls back to `KUBECONFIG_ADMIN`
+- keeps the generated cluster artifact kubeconfig as the source snapshot rather
+  than the default mutable login target
 - leaves early bastion logins clean even before OpenShift auth artifacts exist
+
+### `playbooks/bootstrap/bastion-join.yml`
+
+Purpose:
+
+- join the already-built bastion to IdM after identity services are available
+
+Execution model:
+
+- runs directly on `openshift_bastion`
+- waits for the IdM guest to answer on SSH first
+- reuses the existing `bastion_guest` role in join mode rather than creating a
+  second bastion-enrollment implementation
+
+Important behavior:
+
+- refreshes the active IdM CA before enrollment
+- runs the FreeIPA client role only when enrollment is required
+- does not perform a general guest `dnf update` or reboot; that behavior now
+  stays in the initial `site-bootstrap.yml` provisioning path so `site-lab.yml`
+  does not power off its own control host mid-run
+- enables `authselect` with:
+  - `with-mkhomedir`
+  - `with-sudo`
+- leaves the bastion ready for IdM-backed operator access before
+  `mirror-registry` and cluster work begin
+
+## AD Roles
+
+### `roles/ad_server`
+
+Purpose:
+
+- create, reset, and boot the Windows AD VM on the hypervisor
+
+Important behavior:
+
+- stages the Windows ISO, `virtio-win.iso`, and generated unattend media under
+  `/var/lib/aws-metal-openshift-demo/ad-01/`
+- uses `/dev/ebs/ad-01` for the system disk
+- keeps the Windows install path deterministic enough for reruns by isolating
+  boot-critical drivers from later guest-driver work
+
+### `roles/ad_server_guest`
+
+Purpose:
+
+- configure Windows after the first WinRM listener is available
+
+Important behavior:
+
+- installs remaining virtio drivers after the OS is reachable
+- installs and starts the QEMU guest agent
+- promotes the server to a DC
+- configures AD CS and Web Enrollment
+- seeds demo users and groups
+- exports the root CA
 
 ### `playbooks/lab/mirror-registry.yml`
 
@@ -283,9 +443,15 @@ Important behavior:
 
 - applies the Bronze guest policy described in
   <a href="./host-resource-management.md"><kbd>RESOURCE MANAGEMENT</kbd></a>
+- joins IdM without relying on client-driven dynamic DNS updates for the
+  guest's static address
+- reasserts the mirror-registry A/PTR records in authoritative IdM DNS after
+  enrollment and validates that `dig @idm-01` returns the expected address
 - default disconnected mode is portable:
   - `m2d` archive build
   - followed automatically by `d2m` import into Quay
+- writes a success marker tied to the rendered image-set checksum so reruns can
+  skip the expensive mirror step when the content has not changed
 
 ### `playbooks/lab/openshift-dns.yml`
 
@@ -297,6 +463,8 @@ Execution model:
 - first play registers `idm-01` dynamically from the hypervisor side
 - the bastion reaches `idm-01` directly on VLAN 100 for DNS management tasks
 - second play connects to the IdM guest and applies `idm_openshift_dns`
+- the publish step now validates authoritative IdM resolution for the newly
+  added OpenShift A and PTR records before the play exits
 
 ### `playbooks/lab/openshift-dns-cleanup.yml`
 
@@ -369,19 +537,52 @@ Execution model:
 - the resulting overlay is loaded automatically by `playbooks/cluster/openshift-cluster.yml`
   when present
 
+### `playbooks/cluster/openshift-install-wait.yml`
+
+Purpose:
+
+- wait for the agent-based OpenShift install to complete
+- recover fresh-install control-plane nodes that stay attached to the agent ISO
+  instead of pivoting to disk
+
+Execution model:
+
+- runs locally on the current execution host, typically bastion
+- uses the rendered installer directory and pinned `openshift-install` binary
+- polls assisted-service from the rendezvous host during bootstrap when
+  `/etc/assisted/rendezvous-host.env` is still present; if that bootstrap-only
+  metadata is already gone, the assisted-service probe degrades cleanly rather
+  than failing the play
+- detects control-plane nodes stuck in `installing-pending-user-action`
+- on those nodes it:
+  - ejects the agent ISO from libvirt
+  - restores disk-first boot order
+  - power-cycles the affected domains
+- waits for `bootstrap-complete`
+- if the first `bootstrap-complete` wait fails, probes the control-plane nodes
+  for `agent.service`, `kubelet.service`, and `bootkube.service`, recovers any
+  node still stuck in agent mode, and retries `bootstrap-complete` once
+- then probes the control-plane nodes again and recovers any node still stuck in
+  `agent.service` without `kubelet.service`
+- only after those checks does it wait for `install-complete`
+
 ### `playbooks/maintenance/cleanup.yml`
 
 Purpose:
 
-- remove the IDM VM
-- remove the mirror-registry VM
-- tear down the OVS/libvirt lab networking
+- aggregate destructive cleanup workflows
+- support cluster-only cleanup without destroying healthy support services
+- optionally remove support guests, IdM ingress cert state, and lab networking
 
 Execution model:
 
 - one play runs `idm_cleanup`
 - one play runs `mirror_registry_cleanup`
+- one play runs `bastion_cleanup`
 - one play runs `openshift_cluster_cleanup`
+- one play removes stale bastion-side tracked state and generated cluster
+  artifacts when the cluster is being rebuilt
+- one play runs `openshift_post_install_idm_certs_cleanup`
 - one play runs `lab_cleanup`
 
 ### `playbooks/day2/openshift-post-install-idm-certs.yml`
@@ -417,7 +618,7 @@ Execution model:
   - disconnected OperatorHub pivot
   - infra node conversion
   - IdM ingress certificate integration
-  - LDAP/IdM authentication
+  - `HTPasswd` breakglass authentication
   - Kubernetes NMState deployment
   - ODF declarative deployment
     - destructive recovery is skipped on a healthy rerun unless explicitly
@@ -430,12 +631,18 @@ Execution model:
       subscription to avoid OLM `MultipleOperatorGroupsFound` blocks
     - defaults to the pod network in this nested lab
     - does not assume ODF public-network Multus/macvlan is viable by default
+  - Keycloak deployment after ODF storage is available
+  - OpenShift OIDC auth through Keycloak while preserving breakglass access
+  - optional legacy LDAP auth and group sync, disabled by default
   - OpenShift Virtualization deployment
   - OpenShift Pipelines and Windows image-build lane setup
   - Web Terminal installation
-  - AAP deployment and LDAP integration
+  - AAP deployment and Keycloak OIDC integration
   - Network Observability and Loki deployment
   - validation
+- the disconnected OperatorHub phase also checks that every cluster node can
+  resolve `mirror-registry.workshop.lan` before the mirrored CatalogSource pods
+  are applied, so registry DNS failures surface before the pull attempt
 
 ### `playbooks/day2/openshift-post-install-pipelines.yml`
 
@@ -517,10 +724,15 @@ Execution model:
 - installs `kubernetes-nmstate-operator` in `openshift-nmstate`
 - creates `NMState/nmstate`
 - waits for the NMState namespace pods to become ready
+- if the `nmstate-handler` daemonset is not fully ready, captures diagnostics,
+  recycles only the non-ready handler pods, and retries once
 - applies NodeNetworkConfigurationPolicies for:
   - VLAN `202` as the OpenShift Virtualization live-migration network
   - VLANs `300`, `301`, and `302` as VM data networks
 - currently uses interface-name matching with `enp1s0` as the parent uplink
+- if the NodeNetworkConfigurationPolicies stay `Progressing`, captures
+  daemonset and policy diagnostics, recycles only the non-ready handler pods,
+  and rechecks policy availability once before failing
 - is intended to run after LDAP/infra conversion and before ODF or later
   networking day-2 work
 
@@ -536,7 +748,8 @@ Design note:
 
 Purpose:
 
-- install Red Hat Ansible Automation Platform and integrate it with IdM
+- install Red Hat Ansible Automation Platform and integrate it with the
+  Keycloak/IdM auth path
 
 Execution model:
 
@@ -545,16 +758,22 @@ Execution model:
 - keeps controller enabled and hub, EDA, and Lightspeed disabled
 - uses `ocs-storagecluster-ceph-rbd` for the embedded PostgreSQL storage
 - creates an IdM CA bundle secret using the required key name `bundle-ca.crt`
-- creates the `Red Hat Identity Management` LDAP authenticator in the gateway
-- creates the `openshift-admin AAP superuser` authenticator map
-- validates LDAP login with the configured test user after the gateway rollout
+- creates or updates the Keycloak `aap` client in the existing realm
+- creates or updates the Keycloak `groups` and `aap-audience` protocol mappers
+- creates the `Red Hat build of Keycloak` gateway authenticator
+- creates the `access-openshift-admin AAP superuser` authenticator map
+- removes the legacy direct-LDAP authenticator when present
+- validates AD-backed OIDC login after the gateway rollout when trust is
+  enabled, otherwise validates the native IdM user path
 
 Validated live result:
 
 - route `https://aap.apps.ocp.workshop.lan`
-- login page shows `Red Hat Identity Management`
-- `sysop` authenticates through IdM
-- the AAP user for `sysop` has `is_superuser: true`
+- login page shows `Red Hat build of Keycloak`
+- `ad-ocpadmin@corp.lan` authenticates through Keycloak/IdM on the live trust
+  path
+- the resulting AAP user has `is_superuser: true`
+- a clean AAP teardown and redeploy was revalidated on the same OIDC path
 
 ### `playbooks/day2/openshift-post-install-virtualization.yml`
 
@@ -633,6 +852,11 @@ Execution model:
 - stages the pinned `oc` binary and the generated kubeconfig on `virt-01`
 - runs cluster checks there instead of on the outside control node
 - verifies node, operator, CSR, and cluster version state
+- refreshes the bastion helper kubeconfigs from the current generated cluster
+  kubeconfig after validation succeeds
+- exports `configmap/kube-root-ca.crt` from the live cluster and installs that
+  bundle into bastion system trust so `oc login` works without
+  `--insecure-skip-tls-verify`
 
 ## Data Files
 
@@ -1086,6 +1310,9 @@ Critical tasks, phase by phase:
 - updates the guest and reboots if needed
 - installs client and registry packages
 - ensures firewalld is enabled
+- on RHEL 10, creates `/etc/containers/containers.conf.d/` and forces root
+  Podman to use `cgroupfs` before the Quay appliance install so the registry
+  containers do not stall under the default `systemd` cgroup manager
 
 #### 2. IdM integration
 
@@ -1208,8 +1435,29 @@ The project has been routinely checked with:
 - `ansible-lint`
 - `yamllint`
 - `shellcheck` where appropriate
+- `make validate` / `scripts/validate-orchestration.sh`
+
+The validation lane now also includes scoped play-contract checks so
+cross-play variable leaks are caught before runtime, especially in the
+workstation-to-bastion handoff and support-service phases.
 
 The host prep, IdM build, mirror-registry build, and OpenShift DNS populate/cleanup workflows have all been exercised on a real AWS metal host.
+
+The recent orchestration hardening also moved several late failures forward:
+
+- support-service DNS publication is now validated authoritatively from IdM
+- disconnected OperatorHub checks node-side resolution of
+  `mirror-registry.workshop.lan` before mirrored catalogs are applied
+- fresh-install control-plane bootstrap recovery is codified in
+  `playbooks/cluster/openshift-install-wait.yml`
+
+The current cluster/auth proof points are stronger than the original docs used
+to claim:
+
+- the default cluster auth baseline is now `HTPasswd` breakglass plus Keycloak
+  OIDC, not direct OpenShift LDAP
+- the post-install replay path has completed cleanly on the current cluster
+- repo-wide `ansible-lint -p` is clean
 
 ## Known Gaps
 
@@ -1218,4 +1466,6 @@ The host prep, IdM build, mirror-registry build, and OpenShift DNS populate/clea
 > so contributors know where the automation stops and manual decisions begin.
 
 - In-place migration of an already-running self-signed registry to IdM-issued certs is only partially automated. Clean installs that start on the IdM-cert path are not the gap.
-- The project is still run as a sequence of focused playbooks. A top-level master scaffolding orchestrator that runs phases in order and gates on validation checkpoints is still a planned improvement.
+- The final certification bar is still outstanding: one uninterrupted
+  `playbooks/site-lab.yml` run from a deliberate teardown boundary on the
+  current codebase, without live repair work during the attempt.

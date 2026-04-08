@@ -1,4 +1,4 @@
 ---
-bastion_runtime_root: /var/lib/aws-metal-openshift-demo
+bastion_cleanup_runtime_root: /var/lib/aws-metal-openshift-demo
 bastion_cleanup_remove_runtime_dir: true
 bastion_cleanup_wipe_block_device: false

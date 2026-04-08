@@ -1,0 +1,530 @@
+---
+- name: Validate optional AD trust input data
+  ansible.builtin.assert:
+    that:
+      - idm_ad_trust.enabled | bool
+      - idm_ad_trust.ad_domain | length > 0
+      - idm_ad_trust.ad_realm | length > 0
+      - idm_ad_trust.ad_server | length > 0
+      - idm_ad_trust.ad_server_ip | length > 0
+      - idm_ad_trust.ad_admin_user | length > 0
+      - idm_ad_trust.ad_admin_password | length > 0
+      - idm_ad_trust.idm_netbios_name | length > 0
+      - idm_server.admin_password | length > 0
+    fail_msg: >-
+      vars/global/ad_integration.yml is missing required AD trust settings.
+
+- name: Wait for AD LDAP to answer before configuring trust
+  ansible.builtin.wait_for:
+    host: "{{ idm_ad_trust.ad_server_ip }}"
+    port: 389
+    timeout: 900
+    sleep: 10
+
+- name: Ensure IdM named disables DNSSEC validation for the private AD trust zone
+  ansible.builtin.lineinfile:
+    path: /etc/named/ipa-options-ext.conf
+    regexp: '^dnssec-validation\s+'
+    line: 'dnssec-validation no;'
+  when: idm_ad_trust.disable_dnssec_validation | bool
+  register: idm_ad_trust_dnssec_config
+
+- name: Validate the named configuration after the AD trust DNSSEC change
+  ansible.builtin.command:
+    argv:
+      - named-checkconf
+      - /etc/named.conf
+  changed_when: false
+  when:
+    - idm_ad_trust.disable_dnssec_validation | bool
+    - idm_ad_trust_dnssec_config.changed
+
+- name: Restart named after the AD trust DNSSEC change
+  ansible.builtin.systemd_service:
+    name: named
+    state: restarted
+  when:
+    - idm_ad_trust.disable_dnssec_validation | bool
+    - idm_ad_trust_dnssec_config.changed
+
+- name: Configure IdM AD trust support on the server
+  freeipa.ansible_freeipa.ipaserver_setup_adtrust:
+    setup_adtrust: true
+    hostname: "{{ idm_vm.name }}.{{ idm_vm.domain }}"
+    adtrust_netbios_name: "{{ idm_ad_trust.idm_netbios_name }}"
+    adtrust_reset_netbios_name: false
+    enable_compat: "{{ idm_ad_trust.enable_compat | bool }}"
+
+- name: Ensure the AD DNS forward zone exists in IPA
+  freeipa.ansible_freeipa.ipadnsforwardzone:
+    ipaadmin_password: "{{ idm_server.admin_password }}"
+    ipaapi_context: server
+    state: present
+    name:
+      - "{{ idm_ad_trust.ad_domain }}"
+    forwarders:
+      - ip_address: "{{ idm_ad_trust.ad_server_ip }}"
+    forwardpolicy: only
+
+- name: Wait for the IdM DNS service to resolve the AD host through the forward zone
+  ansible.builtin.command:
+    argv:
+      - host
+      - "{{ idm_ad_trust.ad_dns_probe_fqdn }}"
+      - "127.0.0.1"
+  register: idm_ad_trust_forward_zone_host_lookup
+  changed_when: false
+  retries: 12
+  delay: 5
+  until: idm_ad_trust_forward_zone_host_lookup.rc == 0
+
+- name: Wait for the IdM DNS service to resolve AD LDAP SRV records through the forward zone
+  ansible.builtin.command:
+    argv:
+      - host
+      - -t
+      - SRV
+      - "_ldap._tcp.dc._msdcs.{{ idm_ad_trust.ad_domain }}"
+      - "127.0.0.1"
+  register: idm_ad_trust_forward_zone_srv_lookup
+  changed_when: false
+  retries: 12
+  delay: 5
+  until: idm_ad_trust_forward_zone_srv_lookup.rc == 0
+
+- name: Derive the SAM-compatible AD admin username for trust readiness checks
+  ansible.builtin.set_fact:
+    idm_ad_trust_ad_admin_sam: >-
+      {{ idm_ad_trust.ad_admin_user | regex_replace('^.*[\\\\/@]', '') }}
+
+- name: Wait for AD SMB/RPC trust authentication to succeed before creating the AD trust
+  ansible.builtin.command:
+    argv:
+      - net
+      - rpc
+      - info
+      - -S
+      - "{{ idm_ad_trust.ad_server }}"
+      - -U
+      - "{{ idm_ad_trust_ad_admin_sam }}%{{ idm_ad_trust.ad_admin_password }}"
+      - -W
+      - "{{ idm_ad_trust.ad_netbios_name }}"
+      - --use-kerberos=off
+  register: idm_ad_trust_rpc_info
+  changed_when: false
+  retries: 18
+  delay: 10
+  until:
+    - idm_ad_trust_rpc_info.rc == 0
+    - "'Domain Name:' in idm_ad_trust_rpc_info.stdout"
+    - "idm_ad_trust.ad_netbios_name in idm_ad_trust_rpc_info.stdout"
+  no_log: true
+
+- name: Check whether the AD trust already exists
+  ansible.builtin.command:
+    argv:
+      - ipa
+      - trust-show
+      - "{{ idm_ad_trust.ad_domain }}"
+  register: idm_ad_trust_existing_trust
+  changed_when: false
+  failed_when: false
+
+- name: Check whether a stale AD trust ID range exists
+  ansible.builtin.command:
+    argv:
+      - ipa
+      - idrange-show
+      - "{{ idm_ad_trust.ad_realm }}_id_range"
+  register: idm_ad_trust_existing_range
+  changed_when: false
+  failed_when: false
+
+- name: Delete the stale AD trust ID range when the trust is absent
+  ansible.builtin.command:
+    argv:
+      - ipa
+      - idrange-del
+      - "{{ idm_ad_trust.ad_realm }}_id_range"
+  when:
+    - idm_ad_trust_existing_trust.rc != 0
+    - idm_ad_trust_existing_range.rc == 0
+
+- name: Clear stale oddjob trust credential cache before creating the AD trust
+  ansible.builtin.file:
+    path: /run/ipa/krb5cc_oddjob_trusts_fetch
+    state: absent
+
+- name: Restart oddjobd before creating the AD trust
+  ansible.builtin.systemd_service:
+    name: oddjobd
+    state: restarted
+
+- name: Ensure the AD trust exists with bounded retry for transient oddjob cache failures
+  block:
+    - name: Ensure the AD trust exists on the first attempt
+      freeipa.ansible_freeipa.ipatrust:
+        ipaadmin_password: "{{ idm_server.admin_password }}"
+        ipaapi_context: server
+        state: present
+        realm: "{{ idm_ad_trust.ad_realm }}"
+        trust_type: ad
+        admin: "{{ idm_ad_trust.ad_admin_user }}"
+        password: "{{ idm_ad_trust.ad_admin_password }}"
+        server: "{{ idm_ad_trust.ad_server }}"
+        range_type: "{{ idm_ad_trust.range_type }}"
+  rescue:
+    - name: Record the first AD trust creation failure
+      ansible.builtin.set_fact:
+        idm_ad_trust_create_error: "{{ ansible_failed_result.msg | default(ansible_failed_result | to_nice_json) }}"
+        idm_ad_trust_create_retryable: >-
+          {{
+            '3221225581' in (ansible_failed_result.msg | default(''))
+            or
+            'cifs server communication error' in ((ansible_failed_result.msg | default('')) | lower)
+            or
+            'attempted logon is invalid' in ((ansible_failed_result.msg | default('')) | lower)
+          }}
+
+    - name: Fail immediately on non-retryable AD trust creation errors
+      ansible.builtin.fail:
+        msg: "{{ idm_ad_trust_create_error }}"
+      when: not idm_ad_trust_create_retryable | bool
+
+    - name: Clear stale oddjob trust credential cache before the second AD trust attempt
+      ansible.builtin.file:
+        path: /run/ipa/krb5cc_oddjob_trusts_fetch
+        state: absent
+
+    - name: Restart oddjobd before the second AD trust attempt
+      ansible.builtin.systemd_service:
+        name: oddjobd
+        state: restarted
+
+    - name: Pause briefly before retrying AD trust creation
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Ensure the AD trust exists on the second attempt
+      block:
+        - name: Create the AD trust on the second attempt
+          freeipa.ansible_freeipa.ipatrust:
+            ipaadmin_password: "{{ idm_server.admin_password }}"
+            ipaapi_context: server
+            state: present
+            realm: "{{ idm_ad_trust.ad_realm }}"
+            trust_type: ad
+            admin: "{{ idm_ad_trust.ad_admin_user }}"
+            password: "{{ idm_ad_trust.ad_admin_password }}"
+            server: "{{ idm_ad_trust.ad_server }}"
+            range_type: "{{ idm_ad_trust.range_type }}"
+      rescue:
+        - name: Record the second AD trust creation failure
+          ansible.builtin.set_fact:
+            idm_ad_trust_create_error: "{{ ansible_failed_result.msg | default(ansible_failed_result | to_nice_json) }}"
+            idm_ad_trust_create_retryable: >-
+              {{
+                '3221225581' in (ansible_failed_result.msg | default(''))
+                or
+                'cifs server communication error' in ((ansible_failed_result.msg | default('')) | lower)
+                or
+                'attempted logon is invalid' in ((ansible_failed_result.msg | default('')) | lower)
+              }}
+
+        - name: Fail immediately on non-retryable second-attempt trust errors
+          ansible.builtin.fail:
+            msg: "{{ idm_ad_trust_create_error }}"
+          when: not idm_ad_trust_create_retryable | bool
+
+        - name: Clear stale oddjob trust credential cache before the final AD trust attempt
+          ansible.builtin.file:
+            path: /run/ipa/krb5cc_oddjob_trusts_fetch
+            state: absent
+
+        - name: Restart oddjobd before the final AD trust attempt
+          ansible.builtin.systemd_service:
+            name: oddjobd
+            state: restarted
+
+        - name: Pause briefly before the final AD trust attempt
+          ansible.builtin.pause:
+            seconds: 5
+
+        - name: Create the AD trust on the final attempt
+          freeipa.ansible_freeipa.ipatrust:
+            ipaadmin_password: "{{ idm_server.admin_password }}"
+            ipaapi_context: server
+            state: present
+            realm: "{{ idm_ad_trust.ad_realm }}"
+            trust_type: ad
+            admin: "{{ idm_ad_trust.ad_admin_user }}"
+            password: "{{ idm_ad_trust.ad_admin_password }}"
+            server: "{{ idm_ad_trust.ad_server }}"
+            range_type: "{{ idm_ad_trust.range_type }}"
+
+- name: Clear cached SSSD data after trust changes
+  ansible.builtin.command:
+    argv:
+      - sss_cache
+      - -E
+  changed_when: true
+
+- name: Restart SSSD so trust data is picked up immediately
+  ansible.builtin.systemd_service:
+    name: sssd
+    state: restarted
+
+- name: Validate that the AD trust exists
+  ansible.builtin.command:
+    argv:
+      - ipa
+      - trust-show
+      - "{{ idm_ad_trust.ad_domain }}"
+  register: idm_ad_trust_validation
+  changed_when: false
+
+- name: Validate that SSSD sees the trusted AD domain on the IdM guest
+  ansible.builtin.command:
+    argv:
+      - sssctl
+      - domain-list
+  register: idm_ad_trust_domain_list
+  changed_when: false
+  failed_when: idm_ad_trust.ad_domain not in idm_ad_trust_domain_list.stdout_lines
+
+- name: Build the effective AD-to-IdM policy bridge mappings
+  ansible.builtin.set_fact:
+    idm_ad_trust_policy_mappings: >-
+      {{
+        (ad_group_policy.mappings | default([]))
+        if (ad_group_policy.enabled | default(false) | bool)
+        else []
+      }}
+
+- name: Assert IdM local policy groups exist for the configured AD bridge mappings
+  ansible.builtin.assert:
+    that:
+      - item.idm_local_group in idm_server.identity_groups
+    fail_msg: >-
+      AD group bridge mapping {{ item.name }} targets local IdM group
+      {{ item.idm_local_group }}, but that group is not defined in
+      vars/guests/idm_vm.yml.
+  loop: "{{ idm_ad_trust_policy_mappings }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: (idm_ad_trust_policy_mappings | length) > 0
+
+- name: Acquire an IPA admin ticket for AD bridge reconciliation
+  ansible.builtin.command:
+    argv:
+      - kinit
+      - admin
+    stdin: "{{ idm_server.admin_password }}\n"
+  changed_when: false
+  no_log: true
+  when: (idm_ad_trust_policy_mappings | length) > 0
+
+- name: Ensure the configured IdM external groups exist for trusted AD mappings
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if ipa group-show {{ item.idm_external_group | quote }} >/dev/null 2>&1; then
+      exit 0
+    fi
+    ipa group-add {{ item.idm_external_group | quote }} \
+      --external \
+      --desc={{ (
+        ad_group_policy.description_templates.external
+        | default('AD source group: {domain}/{group}')
+        | replace('{domain}', idm_ad_trust.ad_domain)
+        | replace('{group}', item.ad_group)
+      ) | quote }}
+    echo changed
+  args:
+    executable: /bin/bash
+  loop: "{{ idm_ad_trust_policy_mappings }}"
+  loop_control:
+    label: "{{ item.idm_external_group }}"
+  register: idm_ad_trust_external_group_create
+  changed_when: "'changed' in idm_ad_trust_external_group_create.stdout"
+  when: (idm_ad_trust_policy_mappings | length) > 0
+
+- name: Validate the configured IdM external groups exist
+  ansible.builtin.command:
+    argv:
+      - ipa
+      - group-show
+      - "{{ item.idm_external_group }}"
+      - --all
+  register: idm_ad_trust_external_group_validation
+  changed_when: false
+  loop: "{{ idm_ad_trust_policy_mappings }}"
+  loop_control:
+    label: "{{ item.idm_external_group }}"
+  when: (idm_ad_trust_policy_mappings | length) > 0
+
+- name: Assert each bridge group is present as an IdM external group
+  ansible.builtin.assert:
+    that:
+      - "'ipaexternalgroup' in item.stdout"
+    fail_msg: >-
+      External bridge group {{ item.item.idm_external_group }} was not present
+      as an IdM external group after reconciliation.
+  loop: "{{ idm_ad_trust_external_group_validation.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.idm_external_group }}"
+  when: (idm_ad_trust_policy_mappings | length) > 0
+
+- name: Resolve each trusted AD source group to its SID
+  ansible.builtin.shell: |
+    set -euo pipefail
+    ldap_output="$(
+      LDAPTLS_REQCERT=never ldapsearch \
+        -LLL \
+        -x \
+        -H "ldaps://{{ idm_ad_trust.ad_server_ip }}" \
+        -D "{{ idm_ad_trust.ad_admin_user }}@{{ idm_ad_trust.ad_domain }}" \
+        -w "{{ idm_ad_trust.ad_admin_password }}" \
+        -b "{{ idm_ad_trust.ad_domain.split('.') | map('regex_replace', '^', 'DC=') | join(',') }}" \
+        "(sAMAccountName={{ item.ad_group }})" \
+        objectSid
+    )"
+    sid_b64="$(
+      printf '%s\n' "${ldap_output}" | awk '/^objectSid:: / { print $2; exit }'
+    )"
+    if [[ -z "${sid_b64}" ]]; then
+      echo "Missing objectSid for trusted AD group {{ item.ad_group }}" >&2
+      exit 1
+    fi
+    python3 -c "import base64,struct,sys; blob=base64.b64decode(sys.argv[1]); revision=blob[0]; subauth_count=blob[1]; authority=int.from_bytes(blob[2:8], 'big'); subauth=[struct.unpack('<I', blob[8 + (idx * 4):12 + (idx * 4)])[0] for idx in range(subauth_count)]; print('S-%d-%d-%s' % (revision, authority, '-'.join(map(str, subauth))))" "${sid_b64}"
+  args:
+    executable: /bin/bash
+  loop: "{{ idm_ad_trust_policy_mappings }}"
+  loop_control:
+    label: "{{ item.ad_group }}"
+  register: idm_ad_trust_ad_group_sid_lookup
+  changed_when: false
+  no_log: true
+  when: (idm_ad_trust_policy_mappings | length) > 0
+
+- name: Assert each trusted AD source group SID resolved
+  ansible.builtin.assert:
+    that:
+      - "(item.stdout | trim) is match('^S-1-')"
+    fail_msg: >-
+      Could not resolve a trusted AD SID for source group
+      {{ item.item.ad_group }}.
+  loop: "{{ idm_ad_trust_ad_group_sid_lookup.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.ad_group }}"
+  when: (idm_ad_trust_policy_mappings | length) > 0
+
+- name: Build the trusted AD source group SID map
+  ansible.builtin.set_fact:
+    idm_ad_trust_ad_group_sids: >-
+      {{
+        (idm_ad_trust_ad_group_sids | default({}))
+        | combine({item.item.ad_group: (item.stdout | trim)})
+      }}
+  loop: "{{ idm_ad_trust_ad_group_sid_lookup.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.ad_group }}"
+  when: (idm_ad_trust_policy_mappings | length) > 0
+
+- name: Ensure each IdM external group contains the trusted AD source group
+  ansible.builtin.shell: |
+    set -euo pipefail
+    python3 - "{{ item.idm_external_group }}" "{{ idm_ad_trust_ad_group_sids[item.ad_group] }}" <<'PY'
+    import sys
+    from ipalib import api
+
+    group = sys.argv[1]
+    sid = sys.argv[2]
+
+    api.bootstrap(context="cli")
+    api.finalize()
+    api.Backend.rpcclient.connect()
+    try:
+        result = api.Command.group_show(group, all=True, raw=True)["result"]
+        current_external = {
+            str(value) for value in result.get("ipaexternalmember", ())
+        }
+        if sid in current_external:
+            print("nochange")
+        else:
+            api.Command.group_add_member(group, ipaexternalmember=[sid])
+            print("changed")
+    finally:
+        api.Backend.rpcclient.disconnect()
+    PY
+  args:
+    executable: /bin/bash
+  loop: "{{ idm_ad_trust_policy_mappings }}"
+  loop_control:
+    label: "{{ item.idm_external_group }} <- {{ item.ad_group }}"
+  register: idm_ad_trust_external_member_add
+  changed_when: "'changed' in idm_ad_trust_external_member_add.stdout"
+  when: (idm_ad_trust_policy_mappings | length) > 0
+
+- name: Ensure each IdM local policy group nests the mapped external group
+  ansible.builtin.shell: |
+    set -euo pipefail
+    output="$(
+      ipa group-add-member {{ item.idm_local_group | quote }} \
+        --groups {{ item.idm_external_group | quote }} 2>&1
+    )" && {
+      printf '%s\n' "$output"
+      echo changed
+      exit 0
+    }
+    printf '%s\n' "$output" >&2
+    if printf '%s\n' "$output" | grep -Eiq 'already.*member|already exists|no modifications'; then
+      exit 0
+    fi
+    exit 1
+  args:
+    executable: /bin/bash
+  loop: "{{ idm_ad_trust_policy_mappings }}"
+  loop_control:
+    label: "{{ item.idm_local_group }} <- {{ item.idm_external_group }}"
+  register: idm_ad_trust_local_group_nest
+  changed_when: "'changed' in idm_ad_trust_local_group_nest.stdout"
+  when: (idm_ad_trust_policy_mappings | length) > 0
+
+- name: Clear cached SSSD data after bridge membership changes
+  ansible.builtin.command:
+    argv:
+      - sss_cache
+      - -E
+  changed_when: true
+  when: (idm_ad_trust_policy_mappings | length) > 0
+
+- name: Restart SSSD after bridge membership changes
+  ansible.builtin.systemd_service:
+    name: sssd
+    state: restarted
+  when: (idm_ad_trust_policy_mappings | length) > 0
+
+- name: Validate the bridged IdM local policy groups
+  ansible.builtin.command:
+    argv:
+      - ipa
+      - group-show
+      - "{{ item.idm_local_group }}"
+      - --all
+  register: idm_ad_trust_local_group_validation
+  changed_when: false
+  loop: "{{ idm_ad_trust_policy_mappings }}"
+  loop_control:
+    label: "{{ item.idm_local_group }}"
+  when: (idm_ad_trust_policy_mappings | length) > 0
+
+- name: Assert the expected external group is nested into the local IdM policy group
+  ansible.builtin.assert:
+    that:
+      - item.item.idm_external_group in item.stdout
+    fail_msg: >-
+      Local IdM policy group {{ item.item.idm_local_group }} did not show
+      expected nested external group {{ item.item.idm_external_group }}.
+  loop: "{{ idm_ad_trust_local_group_validation.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.idm_local_group }}"

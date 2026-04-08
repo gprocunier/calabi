@@ -3,14 +3,29 @@
   ansible.builtin.set_fact:
     idm_guest_vm_fqdn: "{{ idm_vm.name }}.{{ idm_vm.domain }}"
     idm_guest_admin_email: "hostmaster.{{ idm_vm.domain }}"
-    idm_guest_hypervisor_host: "{{ groups['aws_metal'] | first }}"
+    idm_guest_hypervisor_host: >-
+      {{ (groups['aws_metal'] | default([])) | first | default('') }}
     idm_guest_cloudinit_iso: >-
       /var/lib/aws-metal-openshift-demo/{{ idm_vm.name }}/{{
       idm_vm.name }}-cidata.iso
+    idm_guest_external_ca_enabled: >-
+      {{ idm_server.pki.mode | default('idm-root') == 'ad-root-idm-intermediate' }}
+
+- name: Derive IDM guest external CA paths
+  ansible.builtin.set_fact:
+    idm_guest_external_ca_controller_workdir: >-
+      {{ idm_server.pki.controller_work_root | default(lookup('env', 'HOME') + '/.local/state/calabi-pki') }}/{{ idm_guest_vm_fqdn }}
+    idm_guest_external_ca_csr_local_path: >-
+      {{ (idm_server.pki.controller_work_root | default(lookup('env', 'HOME') + '/.local/state/calabi-pki')) ~ '/' ~ idm_guest_vm_fqdn }}/{{ idm_guest_vm_fqdn }}-ipa.csr
+    idm_guest_external_ca_signed_cert_local_path: >-
+      {{ (idm_server.pki.controller_work_root | default(lookup('env', 'HOME') + '/.local/state/calabi-pki')) ~ '/' ~ idm_guest_vm_fqdn }}/{{ idm_guest_vm_fqdn }}-ipa.pem
+    idm_guest_external_ca_root_cert_local_path: >-
+      {{ (idm_server.pki.controller_work_root | default(lookup('env', 'HOME') + '/.local/state/calabi-pki')) ~ '/' ~ idm_guest_vm_fqdn }}/{{ idm_guest_vm_fqdn }}-root-ca.pem
 
 - name: Validate the IDM guest configuration data
   ansible.builtin.assert:
     that:
+      - idm_guest_hypervisor_host | length > 0
       - idm_server.realm | length > 0
       - idm_server.ds_password | length > 0
       - idm_server.admin_password | length > 0
@@ -53,7 +68,8 @@
     update_only: true
   register: idm_guest_package_update
 
-- name: Power-cycle the IDM domain after guest updates so persistent XML changes take effect
+- name: Power-cycle the IDM domain after guest updates so persistent XML changes take effect # noqa no-handler
+  when: idm_guest_package_update.changed
   block:
     - name: Request an IDM guest poweroff after updates
       ansible.builtin.shell: |
@@ -126,9 +142,7 @@
           - "{{ idm_guest_vm_fqdn }}"
       changed_when: true
       delegate_to: "{{ idm_guest_hypervisor_host }}"
-  when: idm_guest_package_update.changed
-
-- name: Wait for the IDM guest after the optional domain restart
+- name: Wait for the IDM guest after the optional domain restart # noqa no-handler
   ansible.builtin.wait_for_connection:
     timeout: 1800
     sleep: 10
@@ -230,6 +244,15 @@
     )
   changed_when: true
 
+- name: Ensure the controller-side PKI working directory exists
+  ansible.builtin.file:
+    path: "{{ idm_guest_external_ca_controller_workdir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+  when: idm_guest_external_ca_enabled | bool
+
 - name: Install and configure the IdM server with integrated KRA
   ansible.builtin.include_role:
     name: freeipa.ansible_freeipa.ipaserver
@@ -249,6 +272,124 @@
     ipaserver_forwarders: "{{ idm_server.dns_forwarders }}"
     ipaserver_no_forwarders: "{{ (idm_server.dns_forwarders | length) == 0 }}"
     ipaserver_setup_kra: true
+  when: not (idm_guest_external_ca_enabled | bool)
+
+- name: Generate the FreeIPA external-CA signing request
+  ansible.builtin.include_role:
+    name: freeipa.ansible_freeipa.ipaserver
+  vars:
+    state: present
+    ipaserver_install_packages: false
+    ipaserver_setup_firewalld: false
+    ipaserver_no_host_dns: true
+    ipaserver_hostname: "{{ idm_guest_vm_fqdn }}"
+    ipaserver_ip_addresses:
+      - "{{ idm_vm.network.ipv4_address }}"
+    ipaserver_domain: "{{ idm_vm.domain }}"
+    ipaserver_realm: "{{ idm_server.realm }}"
+    ipadm_password: "{{ idm_server.ds_password }}"
+    ipaadmin_password: "{{ idm_server.admin_password }}"
+    ipaserver_setup_dns: "{{ idm_server.setup_dns | bool }}"
+    ipaserver_forwarders: "{{ idm_server.dns_forwarders }}"
+    ipaserver_no_forwarders: "{{ (idm_server.dns_forwarders | length) == 0 }}"
+    ipaserver_setup_kra: true
+    ipaserver_external_ca: true
+    ipaserver_external_ca_type: "{{ idm_server.pki.external_ca_type | default('ms-cs') }}"
+    ipaserver_external_ca_profile: "{{ idm_server.pki.external_ca_profile | default('SubCA') }}"
+  when: idm_guest_external_ca_enabled | bool
+
+- name: Fetch the generated FreeIPA external-CA CSR to the controller
+  ansible.builtin.fetch:
+    src: /root/ipa.csr
+    dest: "{{ idm_guest_external_ca_csr_local_path }}"
+    flat: true
+  when: idm_guest_external_ca_enabled | bool
+
+- name: Copy the FreeIPA external-CA CSR to the AD CS host
+  ansible.windows.win_copy:
+    src: "{{ idm_guest_external_ca_csr_local_path }}"
+    dest: C:\Windows\Temp\calabi-idm-ipa.csr
+  delegate_to: adcs_ca
+  when: idm_guest_external_ca_enabled | bool
+
+- name: Sign the FreeIPA CA request and export the AD CS root certificate
+  ansible.windows.win_shell: |
+    $signedDer = 'C:\Windows\Temp\calabi-idm-ipa.cer'
+    $signedPem = 'C:\Windows\Temp\calabi-idm-ipa.pem'
+    $rootDer = 'C:\Windows\Temp\calabi-root-ca.cer'
+    $rootPem = 'C:\Windows\Temp\calabi-root-ca.pem'
+    certreq -submit -q -f `
+      -config ".\{{ ad_server.ca_common_name }}" `
+      -attrib "CertificateTemplate:{{ idm_server.pki.external_ca_profile | default('SubCA') }}" `
+      C:\Windows\Temp\calabi-idm-ipa.csr `
+      $signedDer
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $signedDer)) {
+      Write-Error "AD CS did not return a signed subordinate CA certificate"
+      exit 1
+    }
+    certutil -f -encode $signedDer $signedPem | Out-Null
+    certutil -ca.cert $rootDer | Out-Null
+    certutil -f -encode $rootDer $rootPem | Out-Null
+  delegate_to: adcs_ca
+  when: idm_guest_external_ca_enabled | bool
+
+- name: Read the signed FreeIPA CA certificate from the AD CS host
+  ansible.windows.win_shell: |
+    Get-Content -Raw C:\Windows\Temp\calabi-idm-ipa.pem
+  register: idm_guest_external_ca_signed_cert
+  delegate_to: adcs_ca
+  changed_when: false
+  when: idm_guest_external_ca_enabled | bool
+
+- name: Read the AD CS root CA certificate from the AD CS host
+  ansible.windows.win_shell: |
+    Get-Content -Raw C:\Windows\Temp\calabi-root-ca.pem
+  register: idm_guest_external_ca_root_cert
+  delegate_to: adcs_ca
+  changed_when: false
+  when: idm_guest_external_ca_enabled | bool
+
+- name: Persist the signed FreeIPA CA certificate on the controller
+  ansible.builtin.copy:
+    dest: "{{ idm_guest_external_ca_signed_cert_local_path }}"
+    content: "{{ idm_guest_external_ca_signed_cert.stdout }}"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  when: idm_guest_external_ca_enabled | bool
+
+- name: Persist the AD CS root CA certificate on the controller
+  ansible.builtin.copy:
+    dest: "{{ idm_guest_external_ca_root_cert_local_path }}"
+    content: "{{ idm_guest_external_ca_root_cert.stdout }}"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  when: idm_guest_external_ca_enabled | bool
+
+- name: Complete the FreeIPA installation with the signed external CA chain
+  ansible.builtin.include_role:
+    name: freeipa.ansible_freeipa.ipaserver
+  vars:
+    state: present
+    ipaserver_install_packages: false
+    ipaserver_setup_firewalld: false
+    ipaserver_no_host_dns: true
+    ipaserver_hostname: "{{ idm_guest_vm_fqdn }}"
+    ipaserver_ip_addresses:
+      - "{{ idm_vm.network.ipv4_address }}"
+    ipaserver_domain: "{{ idm_vm.domain }}"
+    ipaserver_realm: "{{ idm_server.realm }}"
+    ipadm_password: "{{ idm_server.ds_password }}"
+    ipaadmin_password: "{{ idm_server.admin_password }}"
+    ipaserver_setup_dns: "{{ idm_server.setup_dns | bool }}"
+    ipaserver_forwarders: "{{ idm_server.dns_forwarders }}"
+    ipaserver_no_forwarders: "{{ (idm_server.dns_forwarders | length) == 0 }}"
+    ipaserver_setup_kra: true
+    ipaserver_external_cert_files_from_controller:
+      - "{{ idm_guest_external_ca_signed_cert_local_path }}"
+      - "{{ idm_guest_external_ca_root_cert_local_path }}"
+  when: idm_guest_external_ca_enabled | bool
 
 - name: Check whether Kerberos admin credentials are already cached
   ansible.builtin.command:
@@ -324,12 +465,69 @@
   loop_control:
     label: "{{ item.label | default(item.name) }}"
 
+- name: Build authoritative DNS validation targets for static infrastructure A records
+  ansible.builtin.set_fact:
+    idm_guest_static_dns_authoritative_targets: >-
+      {%- set targets = [] -%}
+      {%- for record in idm_server.static_dns_records | default([]) -%}
+      {%- if record.record_type == 'A' -%}
+      {%- set _ = targets.append({
+            'fqdn': record.name ~ '.' ~ record.zone_name ~ '.',
+            'expected_ipv4': record.record_value,
+            'label': record.label | default(record.name ~ '.' ~ record.zone_name)
+          }) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ targets }}
+
+- name: Query authoritative IdM DNS for static infrastructure A records
+  ansible.builtin.command:
+    argv:
+      - dig
+      - +short
+      - "@{{ idm_vm.network.ipv4_address }}"
+      - "{{ item.fqdn }}"
+      - A
+  loop: "{{ idm_guest_static_dns_authoritative_targets }}"
+  loop_control:
+    label: "{{ item.label }}"
+  register: idm_guest_static_dns_authoritative_responses
+  changed_when: false
+  retries: 12
+  delay: 5
+  until: >-
+    (
+      idm_guest_static_dns_authoritative_responses.stdout_lines
+      | default([])
+      | map('trim')
+      | reject('equalto', '')
+      | list
+    ) == [item.expected_ipv4]
+
+- name: Assert authoritative IdM DNS matches static infrastructure A records
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          item.stdout_lines
+          | map('trim')
+          | reject('equalto', '')
+          | list
+        ) == [item.item.expected_ipv4]
+    fail_msg: >-
+      Authoritative IdM DNS did not resolve {{ item.item.fqdn }}
+      to {{ item.item.expected_ipv4 }}.
+  loop: "{{ idm_guest_static_dns_authoritative_responses.results }}"
+  loop_control:
+    label: "{{ item.item.label }}"
+
 - name: Ensure the requested IPA groups exist
   freeipa.ansible_freeipa.ipagroup:
     ipaadmin_password: "{{ idm_server.admin_password }}"
     ipaapi_context: server
     name:
       - "{{ item }}"
+    description: "{{ idm_server.identity_group_descriptions[item] | default(omit) }}"
     state: present
   loop: "{{ idm_server.identity_groups }}"
 

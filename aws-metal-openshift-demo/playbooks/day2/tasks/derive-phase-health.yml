@@ -11,6 +11,44 @@
       console-openshift-console.apps.{{ openshift_install_cluster.name }}.{{ openshift_install_cluster.base_domain }}
     openshift_post_install_probe_api_url: >-
       https://api.{{ openshift_install_cluster.name }}.{{ openshift_install_cluster.base_domain }}:6443
+    openshift_post_install_probe_breakglass_user: >-
+      {{ openshift_breakglass_auth.username | default('') }}
+    openshift_post_install_probe_keycloak_namespace: >-
+      {{ openshift_keycloak.namespace | default('keycloak') }}
+    openshift_post_install_probe_keycloak_subscription_name: >-
+      {{ openshift_keycloak.subscription_name | default('rhbk-operator') }}
+    openshift_post_install_probe_keycloak_instance_name: >-
+      {{ openshift_keycloak.instance_name | default('workshop-keycloak') }}
+    openshift_post_install_probe_keycloak_route_host: >-
+      {{ openshift_keycloak.route_host | default('') }}
+    openshift_post_install_probe_keycloak_discovery_realm: >-
+      {{ openshift_keycloak.discovery_realm | default('master') }}
+    openshift_post_install_probe_oidc_provider_name: >-
+      {{ openshift_oidc_auth.identity_provider_name | default('Keycloak') }}
+    openshift_post_install_probe_oidc_issuer_url: >-
+      https://{{ openshift_keycloak.route_host }}/realms/{{ openshift_oidc_auth.realm_name | default('openshift') }}
+    openshift_post_install_probe_oidc_client_id: >-
+      {{ openshift_oidc_auth.client_id | default('openshift') }}
+    openshift_post_install_probe_oidc_client_secret: >-
+      {{ openshift_oidc_auth.client_secret | default('') }}
+    openshift_post_install_probe_oidc_native_test_user: >-
+      {{ openshift_oidc_auth.validation.native_test_user | default('') }}
+    openshift_post_install_probe_oidc_native_test_password: >-
+      {{ openshift_oidc_auth.validation.native_test_password | default('') }}
+    openshift_post_install_probe_oidc_include_ad_test: >-
+      {{ openshift_oidc_auth.validation.include_ad_trusted_user | default(false) }}
+    openshift_post_install_probe_oidc_ad_test_user: >-
+      {{ openshift_oidc_auth.validation.ad_test_user | default('') }}
+    openshift_post_install_probe_oidc_ad_test_password: >-
+      {{ openshift_oidc_auth.validation.ad_test_password | default('') }}
+    openshift_post_install_probe_aap_auth_mode: >-
+      {{ openshift_aap.authentication.mode | default('keycloak') }}
+    openshift_post_install_probe_aap_authenticator_name: >-
+      {{
+        openshift_aap.keycloak.authenticator_name
+        if (openshift_aap.authentication.mode | default('keycloak')) == 'keycloak'
+        else openshift_aap.ldap.authenticator_name
+      }}
     openshift_post_install_probe_infra_nodes: >-
       {{
         openshift_install_cluster.nodes
@@ -21,7 +59,7 @@
     openshift_post_install_probe_ldap_test_user: >-
       {{
         idm_server.identity_users
-        | selectattr('groups', 'contains', 'openshift-admin')
+        | selectattr('groups', 'contains', 'access-openshift-admin')
         | map(attribute='name')
         | first
         | default('')
@@ -233,6 +271,154 @@
   changed_when: false
   no_log: true
 
+- name: Probe Keycloak health
+  ansible.builtin.shell: |
+    set -euo pipefail
+    oc="{{ openshift_post_install_probe_oc_path }}"
+    namespace="{{ openshift_post_install_probe_keycloak_namespace }}"
+    subscription_name="{{ openshift_post_install_probe_keycloak_subscription_name }}"
+    instance_name="{{ openshift_post_install_probe_keycloak_instance_name }}"
+    route_host="{{ openshift_post_install_probe_keycloak_route_host }}"
+    discovery_realm="{{ openshift_post_install_probe_keycloak_discovery_realm }}"
+    csv_name="$("${oc}" get subscription "${subscription_name}" -n "${namespace}" -o jsonpath='{.status.currentCSV}' 2>/dev/null || true)"
+    csv_phase=""
+    ready=""
+    if [[ -n "${csv_name}" ]]; then
+      csv_phase="$("${oc}" get csv "${csv_name}" -n "${namespace}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+    fi
+    ready="$("${oc}" get keycloak "${instance_name}" -n "${namespace}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
+    if [[ -z "${route_host}" || "${csv_phase}" != "Succeeded" || "${ready,,}" != "true" ]]; then
+      echo false
+      exit 0
+    fi
+    curl -skf "https://${route_host}/realms/${discovery_realm}/.well-known/openid-configuration" >/dev/null 2>&1 || { echo false; exit 0; }
+    echo true
+  args:
+    executable: /bin/bash
+  delegate_to: localhost
+  become: false
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_probe_kubeconfig_path }}"
+  register: openshift_post_install_probe_keycloak
+  changed_when: false
+
+- name: Probe OIDC auth health
+  ansible.builtin.shell: |
+    set -euo pipefail
+    oc="{{ openshift_post_install_probe_oc_path }}"
+    oauth_host="$("${oc}" get route oauth-openshift -n openshift-authentication -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+    idps="$("${oc}" get oauth cluster -o jsonpath='{.spec.identityProviders[*].name}' 2>/dev/null || true)"
+    auth_health="$("${oc}" get clusteroperator authentication -o jsonpath='{.status.conditions[?(@.type=="Available")].status},{.status.conditions[?(@.type=="Progressing")].status},{.status.conditions[?(@.type=="Degraded")].status}' 2>/dev/null || true)"
+    issuer="{{ openshift_post_install_probe_oidc_issuer_url }}"
+    native_user="{{ openshift_post_install_probe_oidc_native_test_user }}"
+    native_password={{ openshift_post_install_probe_oidc_native_test_password | quote }}
+    ad_user="{{ openshift_post_install_probe_oidc_ad_test_user }}"
+    ad_password={{ openshift_post_install_probe_oidc_ad_test_password | quote }}
+    client_id="{{ openshift_post_install_probe_oidc_client_id }}"
+    client_secret={{ openshift_post_install_probe_oidc_client_secret | quote }}
+    provider_name="{{ openshift_post_install_probe_oidc_provider_name }}"
+    idm_ca="{{ openshift_post_install_probe_idm_ca_path }}"
+    cluster_admin_group="{{ openshift_oidc_auth.authorization.cluster_admin_group | default('access-openshift-admin') }}"
+    [[ " ${idps} " == *" ${provider_name} "* ]] || { echo false; exit 0; }
+    [[ "${auth_health}" == "True,False,False" ]] || { echo false; exit 0; }
+    curl --cacert "${idm_ca}" -sf "${issuer}/.well-known/openid-configuration" >/dev/null 2>&1 || { echo false; exit 0; }
+    curl -skf "https://${oauth_host}/healthz" >/dev/null 2>&1 || { echo false; exit 0; }
+    native_token_json="$(
+      curl --cacert "${idm_ca}" -sf \
+      -d "client_id=${client_id}" \
+      -d "client_secret=${client_secret}" \
+      -d "grant_type=password" \
+      -d "username=${native_user}" \
+      -d "password=${native_password}" \
+      -d "scope=openid" \
+      "${issuer}/protocol/openid-connect/token"
+    )" || { echo false; exit 0; }
+    python3 - "${native_token_json}" <<'PY' || { echo false; exit 0; }
+    import base64
+    import json
+    import sys
+
+    cluster_admin_group = "{{ openshift_oidc_auth.authorization.cluster_admin_group | default('access-openshift-admin') }}"
+    data = json.loads(sys.argv[1])
+    token = data["access_token"]
+    payload = token.split(".")[1]
+    payload += "=" * (-len(payload) % 4)
+    claims = json.loads(base64.urlsafe_b64decode(payload).decode("utf-8"))
+    groups = claims.get("groups", [])
+    if cluster_admin_group not in groups:
+        raise SystemExit(1)
+    PY
+    if [[ {{ openshift_post_install_probe_oidc_include_ad_test | ternary('true', 'false') }} == true ]]; then
+      ad_token_json="$(
+        curl --cacert "${idm_ca}" -sf \
+        -d "client_id=${client_id}" \
+        -d "client_secret=${client_secret}" \
+        -d "grant_type=password" \
+        -d "username=${ad_user}" \
+        -d "password=${ad_password}" \
+        -d "scope=openid" \
+        "${issuer}/protocol/openid-connect/token"
+      )" || { echo false; exit 0; }
+      python3 - "${ad_token_json}" <<'PY' || { echo false; exit 0; }
+    import base64
+    import json
+    import sys
+
+    cluster_admin_group = "{{ openshift_oidc_auth.authorization.cluster_admin_group | default('access-openshift-admin') }}"
+    data = json.loads(sys.argv[1])
+    token = data["access_token"]
+    payload = token.split(".")[1]
+    payload += "=" * (-len(payload) % 4)
+    claims = json.loads(base64.urlsafe_b64decode(payload).decode("utf-8"))
+    groups = claims.get("groups", [])
+    if cluster_admin_group not in groups:
+        raise SystemExit(1)
+    PY
+    fi
+    echo true
+  args:
+    executable: /bin/bash
+  delegate_to: localhost
+  become: false
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_probe_kubeconfig_path }}"
+  register: openshift_post_install_probe_oidc_auth
+  changed_when: false
+  no_log: true
+
+- name: Probe breakglass auth health
+  ansible.builtin.shell: |
+    set -euo pipefail
+    trap 'rm -f "${test_kubeconfig:-}"' EXIT
+    oc="{{ openshift_post_install_probe_oc_path }}"
+    api_url="{{ openshift_post_install_probe_api_url }}"
+    test_user="{{ openshift_post_install_probe_breakglass_user }}"
+    idps="$("${oc}" get oauth cluster -o jsonpath='{.spec.identityProviders[*].name}' 2>/dev/null || true)"
+    auth_health="$("${oc}" get clusteroperator authentication -o jsonpath='{.status.conditions[?(@.type=="Available")].status},{.status.conditions[?(@.type=="Progressing")].status},{.status.conditions[?(@.type=="Degraded")].status}' 2>/dev/null || true)"
+    oauth_host="$("${oc}" get route oauth-openshift -n openshift-authentication -o jsonpath='{.spec.host}' 2>/dev/null || true)"
+    if [[ -z "${test_user}" || "${auth_health}" != "True,False,False" ]]; then
+      echo false
+      exit 0
+    fi
+    [[ " ${idps} " == *" {{ openshift_breakglass_auth.identity_provider_name }} "* ]] || { echo false; exit 0; }
+    curl -skf "https://${oauth_host}/healthz" >/dev/null 2>&1 || { echo false; exit 0; }
+    test_kubeconfig="$(mktemp)"
+    "${oc}" login "${api_url}" --username="${test_user}" --password={{ openshift_breakglass_auth.password | quote }} --insecure-skip-tls-verify --kubeconfig="${test_kubeconfig}" >/dev/null 2>&1 || { echo false; exit 0; }
+    [[ "$("${oc}" whoami --kubeconfig="${test_kubeconfig}" 2>/dev/null || true)" == "${test_user}" ]] || { echo false; exit 0; }
+    if {{ openshift_breakglass_auth.validation.remove_kubeadmin_after_success | ternary('true', 'false') }}; then
+      "${oc}" get secret kubeadmin -n kube-system >/dev/null 2>&1 && { echo false; exit 0; }
+    fi
+    echo true
+  args:
+    executable: /bin/bash
+  delegate_to: localhost
+  become: false
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_probe_kubeconfig_path }}"
+  register: openshift_post_install_probe_breakglass_auth
+  changed_when: false
+  no_log: true
+
 - name: Probe NMState health
   ansible.builtin.shell: |
     set -euo pipefail
@@ -375,11 +561,14 @@
     "${oc}" get ansibleautomationplatform "{{ openshift_aap.instance_name }}" -n "{{ openshift_aap.namespace }}" >/dev/null 2>&1 || { echo false; exit 0; }
     "${oc}" get automationcontroller "{{ openshift_aap.controller.name }}" -n "{{ openshift_aap.namespace }}" >/dev/null 2>&1 || { echo false; exit 0; }
     curl -skf "https://{{ openshift_aap.route_host }}/api/gateway/v1/ui_auth/" >/dev/null 2>&1 || { echo false; exit 0; }
+    ui_json="$(mktemp)"
     auth_json="$(mktemp)"
-    trap 'rm -f "${auth_json}"' EXIT
+    trap 'rm -f "${auth_json}" "${ui_json}"' EXIT
+    curl -sk "https://{{ openshift_aap.route_host }}/api/gateway/v1/ui_auth/" -o "${ui_json}" >/dev/null 2>&1 || { echo false; exit 0; }
     curl -sk -u "{{ openshift_aap.admin_username }}:{{ openshift_aap.admin_password }}" "https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticators/" -o "${auth_json}" >/dev/null 2>&1 || { echo false; exit 0; }
-    auth_present="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); name=sys.argv[2]; print("true" if any(item.get("name")==name for item in data.get("results", [])) else "false")' "${auth_json}" {{ openshift_aap.ldap.authenticator_name | quote }})"
-    if [[ "${csv_phase}" == "Succeeded" && "${auth_present}" == "true" ]]; then
+    auth_present="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); name=sys.argv[2]; print("true" if any(item.get("name")==name for item in data.get("results", [])) else "false")' "${auth_json}" {{ openshift_post_install_probe_aap_authenticator_name | quote }})"
+    sso_present="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); name=sys.argv[2]; print("true" if any(item.get("name")==name for item in data.get("ssos", [])) else "false")' "${ui_json}" {{ openshift_post_install_probe_aap_authenticator_name | quote }})"
+    if [[ "${csv_phase}" == "Succeeded" && "${auth_present}" == "true" && ( "{{ openshift_post_install_probe_aap_auth_mode }}" != "keycloak" || "${sso_present}" == "true" ) ]]; then
       echo true
     else
       echo false
@@ -440,6 +629,9 @@
     openshift_post_install_disconnected_operatorhub_healthy: "{{ openshift_post_install_probe_disconnected_operatorhub.stdout == 'true' }}"
     openshift_post_install_infra_conversion_healthy: "{{ openshift_post_install_probe_infra.stdout == 'true' }}"
     openshift_post_install_idm_ingress_certs_healthy: "{{ openshift_post_install_probe_idm_certs.stdout == 'true' }}"
+    openshift_post_install_breakglass_auth_healthy: "{{ openshift_post_install_probe_breakglass_auth.stdout == 'true' }}"
+    openshift_post_install_keycloak_healthy: "{{ openshift_post_install_probe_keycloak.stdout == 'true' }}"
+    openshift_post_install_oidc_auth_healthy: "{{ openshift_post_install_probe_oidc_auth.stdout == 'true' }}"
     openshift_post_install_ldap_auth_healthy: "{{ openshift_post_install_probe_ldap_auth.stdout == 'true' }}"
     openshift_post_install_nmstate_healthy: "{{ openshift_post_install_probe_nmstate.stdout == 'true' }}"
     openshift_post_install_odf_healthy: "{{ openshift_post_install_probe_odf.stdout == 'true' }}"
@@ -484,6 +676,15 @@
       idm_ingress_certs:
         healthy: "{{ openshift_post_install_idm_ingress_certs_healthy }}"
         forced: "{{ openshift_post_install_force_idm_ingress_certs }}"
+      breakglass_auth:
+        healthy: "{{ openshift_post_install_breakglass_auth_healthy }}"
+        forced: "{{ openshift_post_install_force_breakglass_auth }}"
+      keycloak:
+        healthy: "{{ openshift_post_install_keycloak_healthy }}"
+        forced: "{{ openshift_post_install_force_keycloak }}"
+      oidc_auth:
+        healthy: "{{ openshift_post_install_oidc_auth_healthy }}"
+        forced: "{{ openshift_post_install_force_oidc_auth }}"
       ldap_auth:
         healthy: "{{ openshift_post_install_ldap_auth_healthy }}"
         forced: "{{ openshift_post_install_force_ldap_auth }}"

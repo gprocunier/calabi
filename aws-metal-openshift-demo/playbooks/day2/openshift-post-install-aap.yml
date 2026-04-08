@@ -5,7 +5,11 @@
   vars_files:
     - ../../vars/global/execution_environment.yml
     - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
     - ../../vars/guests/idm_vm.yml
+    - ../../vars/day2/openshift_keycloak.yml
+    - ../../vars/day2/openshift_oidc_auth.yml
     - ../../vars/day2/openshift_aap.yml
     - ../../vars/global/mirror_content.yml
   tasks:

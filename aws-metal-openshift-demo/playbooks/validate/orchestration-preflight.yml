@@ -1,0 +1,322 @@
+---
+- name: Validate orchestration contracts before execution
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/rhsm.yml
+    - ../../vars/global/pki.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+    - ../../vars/guests/bastion_vm.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/mirror_registry_vm.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/global/name_resolution.yml
+    - ../../vars/cluster/openshift_agent_media.yml
+    - ../../vars/guests/openshift_cluster_vm.yml
+    - ../../vars/day2/openshift_breakglass_auth.yml
+    - ../../vars/day2/openshift_keycloak.yml
+    - ../../vars/day2/openshift_oidc_auth.yml
+  vars:
+    validate_target_playbook: "{{ validate_target_playbook | default('') }}"
+    validate_project_lab_credentials_path: >-
+      {{ lab_execution_project_root }}/inventory/group_vars/all/lab_credentials.yml
+    validate_manager_lab_credentials_path: >-
+      {{ lookup('env', 'HOME') }}/.local/state/calabi-manager/secrets/lab_credentials.yml
+    validate_controller_ssh_public_key_path: >-
+      {{ bastion_client.controller_ssh_public_key_file }}
+
+  tasks:
+    - name: Validate requested playbook path exists when provided
+      ansible.builtin.stat:
+        path: "{{ lab_execution_project_root }}/{{ validate_target_playbook }}"
+      register: validate_target_playbook_stat
+      when: validate_target_playbook | length > 0
+
+    - name: Fail when the requested validation target playbook is missing
+      ansible.builtin.assert:
+        that:
+          - validate_target_playbook_stat.stat.exists
+        fail_msg: >-
+          Validation target {{ validate_target_playbook }} was not found under
+          {{ lab_execution_project_root }}.
+      when: validate_target_playbook | length > 0
+
+    - name: Load optional project-local lab credentials for validation
+      ansible.builtin.set_fact:
+        validate_project_lab_credentials: >-
+          {{
+            (
+              lookup(
+                'file',
+                validate_project_lab_credentials_path,
+                errors='ignore'
+              )
+              | default('', true)
+              | trim
+            ) | from_yaml
+          }}
+      when:
+        - >-
+          (
+            lookup(
+              'file',
+              validate_project_lab_credentials_path,
+              errors='ignore'
+            )
+            | default('', true)
+            | trim
+          ) | length > 0
+
+    - name: Load optional calabi-manager lab credentials for validation
+      ansible.builtin.set_fact:
+        validate_manager_lab_credentials: >-
+          {{
+            (
+              lookup(
+                'file',
+                validate_manager_lab_credentials_path,
+                errors='ignore'
+              )
+              | default('', true)
+              | trim
+            ) | from_yaml
+          }}
+      when:
+        - >-
+          (
+            lookup(
+              'file',
+              validate_manager_lab_credentials_path,
+              errors='ignore'
+            )
+            | default('', true)
+            | trim
+          ) | length > 0
+
+    - name: Derive normalized validation credentials and play requirements
+      ansible.builtin.set_fact:
+        validate_rendered_lab_default_password: >-
+          {{
+            lab_default_password
+            | default(
+              validate_project_lab_credentials.lab_default_password
+              | default(
+                validate_manager_lab_credentials.lab_default_password
+                | default('', true),
+                true
+              ),
+              true
+            )
+          }}
+        validate_rendered_lab_rhsm_activation_key: >-
+          {{
+            lab_rhsm_activation_key
+            | default(
+              validate_project_lab_credentials.lab_rhsm_activation_key
+              | default(
+                validate_manager_lab_credentials.lab_rhsm.activation_key
+                | default('', true),
+                true
+              ),
+              true
+            )
+          }}
+        validate_rendered_lab_rhsm_organization_id: >-
+          {{
+            lab_rhsm_organization_id
+            | default(
+              validate_project_lab_credentials.lab_rhsm_organization_id
+              | default(
+                validate_manager_lab_credentials.lab_rhsm.organization_id
+                | default('', true),
+                true
+              ),
+              true
+            )
+          }}
+        validate_rendered_lab_rhsm_username: >-
+          {{
+            lab_rhsm_username
+            | default(
+              validate_project_lab_credentials.lab_rhsm_username
+              | default(
+                validate_manager_lab_credentials.lab_rhsm.username
+                | default('', true),
+                true
+              ),
+              true
+            )
+          }}
+        validate_rendered_lab_rhsm_password: >-
+          {{
+            lab_rhsm_password
+            | default(
+              validate_project_lab_credentials.lab_rhsm_password
+              | default(
+                validate_manager_lab_credentials.lab_rhsm.password
+                | default('', true),
+                true
+              ),
+              true
+            )
+          }}
+        validate_rendered_lab_operator_ssh_public_key: >-
+          {{
+            lab_operator_ssh_public_key
+            | default(
+              validate_project_lab_credentials.lab_operator_ssh_public_key
+              | default(
+                validate_manager_lab_credentials.lab_operator_ssh_public_key
+                | default(
+                  (
+                    lookup(
+                      'file',
+                      validate_controller_ssh_public_key_path,
+                      errors='ignore'
+                    )
+                    | default('', true)
+                    | trim
+                  ),
+                  true
+                ),
+                true
+              ),
+              true
+            )
+          }}
+        validate_require_lab_default_password: >-
+          {{
+            (
+              validate_target_playbook == 'playbooks/site-lab.yml'
+            ) or (
+              (
+                validate_target_playbook
+                | regex_search('^playbooks/day2/openshift-post-install')
+              ) is not none
+            )
+          }}
+        validate_require_support_service_rhsm: >-
+          {{
+            validate_target_playbook in [
+              'playbooks/site-lab.yml',
+              'playbooks/bootstrap/bastion.yml',
+              'playbooks/bootstrap/idm.yml',
+              'playbooks/lab/mirror-registry.yml',
+              'playbooks/lab/mirror-registry-refresh.yml'
+            ]
+          }}
+        validate_require_operator_ssh_public_key: >-
+          {{
+            validate_target_playbook in [
+              'playbooks/site-lab.yml',
+              'playbooks/bootstrap/bastion.yml',
+              'playbooks/bootstrap/bastion-join.yml',
+              'playbooks/bootstrap/idm.yml',
+              'playbooks/bootstrap/idm-ad-trust.yml',
+              'playbooks/lab/mirror-registry.yml',
+              'playbooks/lab/mirror-registry-refresh.yml',
+              'playbooks/lab/openshift-dns.yml',
+              'playbooks/lab/openshift-dns-cleanup.yml'
+            ]
+          }}
+
+    - name: Render cross-play orchestration contract values
+      ansible.builtin.set_fact:
+        validate_contract_values:
+          ad_domain_name: "{{ ad_server.domain_name }}"
+          ad_vm_domain: "{{ ad_vm.domain }}"
+          idm_vm_fqdn: "{{ idm_vm.name }}.{{ idm_vm.domain }}"
+          mirror_registry_fqdn: "{{ mirror_registry_vm.name }}.{{ mirror_registry_vm.domain }}"
+          bastion_fqdn: "{{ bastion_vm.name }}.{{ bastion_vm.domain }}"
+          cluster_api_fqdn: "api.{{ openshift_install_cluster.name }}.{{ openshift_install_cluster.base_domain }}"
+          keycloak_route_host: "{{ openshift_keycloak.route_host }}"
+          oidc_issuer_url: >-
+            https://{{ openshift_keycloak.route_host }}/realms/{{ openshift_oidc_auth.realm_name }}
+          oidc_native_test_user: "{{ openshift_oidc_auth.validation.native_test_user }}"
+          oidc_ad_test_user: "{{ openshift_oidc_auth.validation.ad_test_user }}"
+          breakglass_user: "{{ openshift_breakglass_auth.username }}"
+          pki_mode: "{{ lab_pki_mode }}"
+
+    - name: Assert rendered orchestration contracts are non-empty
+      ansible.builtin.assert:
+        that:
+          - validate_contract_values.ad_domain_name | length > 0
+          - validate_contract_values.ad_vm_domain | length > 0
+          - validate_contract_values.idm_vm_fqdn | length > 0
+          - validate_contract_values.mirror_registry_fqdn | length > 0
+          - validate_contract_values.bastion_fqdn | length > 0
+          - validate_contract_values.cluster_api_fqdn | length > 0
+          - validate_contract_values.keycloak_route_host | length > 0
+          - validate_contract_values.oidc_issuer_url | length > 0
+          - validate_contract_values.oidc_native_test_user | length > 0
+          - validate_contract_values.oidc_ad_test_user | length > 0
+          - validate_contract_values.breakglass_user | length > 0
+          - validate_contract_values.pki_mode | length > 0
+        fail_msg: >-
+          One or more cross-play orchestration contracts did not render. Check
+          vars_files coverage and hidden variable dependencies before running
+          the requested playbook.
+
+    - name: Assert the managed bastion resolution contract renders cleanly
+      ansible.builtin.assert:
+        that:
+          - lab_name_resolution_bootstrap_hosts | length > 0
+          - lab_name_resolution_bootstrap_targets | length > 0
+          - >-
+            (
+              lab_name_resolution_bootstrap_hosts
+              | map(attribute='ipv4_address')
+              | unique
+              | list
+              | length
+            ) == (lab_name_resolution_bootstrap_hosts | length)
+        fail_msg: >-
+          The managed bastion resolution contract did not render cleanly. Check
+          vars_files coverage before relying on bootstrap host fallback entries.
+
+    - name: Assert a lab default password is available when the target playbook requires it
+      ansible.builtin.assert:
+        that:
+          - validate_rendered_lab_default_password | length > 0
+        fail_msg: >-
+          {{ validate_target_playbook }} requires lab_default_password, but no
+          value was supplied via -e, project lab_credentials.yml, or
+          calabi-manager lab credentials.
+      when: validate_require_lab_default_password | bool
+
+    - name: Assert RHSM credentials are available when the target playbook requires support service rebuilds
+      ansible.builtin.assert:
+        that:
+          - >-
+            (
+              validate_rendered_lab_rhsm_activation_key | length > 0 and
+              validate_rendered_lab_rhsm_organization_id | length > 0
+            ) or (
+              validate_rendered_lab_rhsm_username | length > 0 and
+              validate_rendered_lab_rhsm_password | length > 0
+            )
+        fail_msg: >-
+          {{ validate_target_playbook }} requires support-service RHSM
+          credentials, but no valid activation-key/org-id or username/password
+          combination was available from the current local credential sources.
+      when:
+        - validate_require_support_service_rhsm | bool
+        - >-
+          bastion_vm.subscription.enabled | bool or
+          idm_vm.subscription.enabled | bool or
+          mirror_registry_vm.subscription.enabled | bool
+
+    - name: Assert an operator SSH public key is available when the target playbook requires guest SSH bootstrap
+      ansible.builtin.assert:
+        that:
+          - validate_rendered_lab_operator_ssh_public_key | length > 0
+        fail_msg: >-
+          {{ validate_target_playbook }} requires lab_operator_ssh_public_key
+          for guest SSH bootstrap, but no value was supplied via -e, project
+          lab_credentials.yml, calabi-manager lab credentials, or
+          {{ validate_controller_ssh_public_key_path }}.
+      when: validate_require_operator_ssh_public_key | bool

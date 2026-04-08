@@ -12,8 +12,14 @@ fi
 
 export PATH
 
-if [ -z "${KUBECONFIG:-}" ] && [ -r "$HOME/etc/kubeconfig" ]; then
-  export KUBECONFIG="$HOME/etc/kubeconfig"
+export KUBECONFIG_ADMIN="$HOME/etc/kubeconfig.local"
+
+if [ -z "${KUBECONFIG:-}" ]; then
+  if [ -r "$HOME/etc/kubeconfig" ]; then
+    export KUBECONFIG="$HOME/etc/kubeconfig"
+  elif [ -r "$KUBECONFIG_ADMIN" ]; then
+    export KUBECONFIG="$KUBECONFIG_ADMIN"
+  fi
 fi
 
 export LAB_PROJECT_ROOT="{{ bastion_stage_remote_project_root }}"

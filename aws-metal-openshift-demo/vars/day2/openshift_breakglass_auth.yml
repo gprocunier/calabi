@@ -1,0 +1,15 @@
+---
+openshift_breakglass_auth:
+  identity_provider_name: "Breakglass HTPasswd"
+  secret_name: "breakglass-htpasswd"
+  username: "breakglass-admin"
+  password: "{{ lab_default_password }}"
+  htpasswd_package_name: "httpd-tools"
+  htpasswd_cost: 12
+  oauth:
+    mapping_method: claim
+  authorization:
+    grant_cluster_admin: true
+    binding_name: breakglass-admin-cluster-admin
+  validation:
+    remove_kubeadmin_after_success: true

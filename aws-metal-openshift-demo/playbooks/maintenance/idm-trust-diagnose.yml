@@ -1,0 +1,105 @@
+---
+- name: Register the IDM guest for trust diagnostics
+  hosts: aws_metal
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/pki.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/ad_integration.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+    - ../../vars/guests/idm_vm.yml
+
+  tasks:
+    - name: Register the IDM guest as a temporary Ansible host
+      ansible.builtin.add_host:
+        name: "{{ idm_vm.name }}.{{ idm_vm.domain }}"
+        groups:
+          - idm_trust_diag
+        ansible_host: "{{ idm_vm.network.ipv4_address }}"
+        ansible_user: "{{ idm_vm.access.admin_user }}"
+        ansible_ssh_private_key_file: >-
+          {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+        ansible_become: true
+        ansible_ssh_common_args: >-
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+
+- name: Collect live trust and compat diagnostics from the IDM guest
+  hosts: idm_trust_diag
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/pki.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/ad_integration.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+    - ../../vars/guests/idm_vm.yml
+
+  pre_tasks:
+    - name: Wait for the IDM guest to accept SSH connections
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+        sleep: 5
+
+  tasks:
+    - name: Run trust diagnostics
+      ansible.builtin.shell: |
+        set -o pipefail
+        echo '=== hostname ==='
+        hostnamectl --static
+        echo '=== allow_all ==='
+        ipa hbacrule-show allow_all || true
+        echo '=== trust-show ==='
+        ipa trust-show corp.lan --all --raw || true
+        echo '=== trustdomain-find ==='
+        ipa trustdomain-find corp.lan --all --raw || true
+        echo '=== idrange-find ==='
+        ipa idrange-find --all --raw | sed -n '1,260p' || true
+        echo '=== sssctl domain-status ==='
+        sssctl domain-status corp.lan || true
+        echo '=== sssd.conf ==='
+        sed -n '1,240p' /etc/sssd/sssd.conf || true
+        echo '=== sssd conf.d ==='
+        ls -la /etc/sssd/conf.d || true
+        for f in /etc/sssd/conf.d/*; do
+          [ -f "$f" ] || continue
+          echo "--- $f ---"
+          sed -n '1,240p' "$f" || true
+        done
+        echo '=== systemctl sssd-ifp ==='
+        systemctl status sssd-ifp --no-pager || true
+        echo '=== schema compatibility config ==='
+        ldapsearch -LLL -Y GSSAPI \
+          -b 'cn=Schema Compatibility,cn=plugins,cn=config' \
+          '(objectClass=*)' \
+          dn cn objectClass nsslapd-pluginEnabled schema-compat-lookup-nsswitch schema-compat-entry-attribute || true
+        echo '=== getent ad-ocpadmin ==='
+        getent passwd ad-ocpadmin@corp.lan || true
+        echo '=== id ad-ocpadmin ==='
+        id ad-ocpadmin@corp.lan || true
+        echo '=== getent trusted groups ==='
+        getent group 'domain users@corp.lan' || true
+        getent group 'ad-corp-developers@corp.lan' || true
+        getent group 'ad-corp-openshift-admins@corp.lan' || true
+        echo '=== default trust view ==='
+        ipa idview-show 'Default Trust View' || true
+        echo '=== idoverrideuser-find default trust view ==='
+        ipa idoverrideuser-find 'Default Trust View' --all || true
+        echo '=== compat users matching ad ==='
+        ldapsearch -LLL -Y GSSAPI -b 'cn=users,cn=compat,dc=workshop,dc=lan' '(uid=*ad*)' dn uid cn mail memberUid || true
+        echo '=== compat groups with ad/admin ==='
+        ldapsearch -LLL -Y GSSAPI -b 'cn=groups,cn=compat,dc=workshop,dc=lan' '(|(memberUid=*corp.lan)(cn=*admin*))' dn cn memberUid || true
+        echo '=== local objects using 1164400000 ==='
+        ldapsearch -LLL -Y GSSAPI -b 'dc=workshop,dc=lan' '(|(uidNumber=1164400000)(gidNumber=1164400000))' dn uid cn uidNumber gidNumber objectClass || true
+        echo '=== sssd journal tail ==='
+        journalctl -u sssd -n 120 --no-pager || true
+      args:
+        executable: /bin/bash
+      register: idm_trust_diag
+      changed_when: false
+
+    - name: Show trust diagnostics
+      ansible.builtin.debug:
+        msg: "{{ idm_trust_diag.stdout_lines }}"

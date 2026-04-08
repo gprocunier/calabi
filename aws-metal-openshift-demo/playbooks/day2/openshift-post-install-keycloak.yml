@@ -1,0 +1,12 @@
+---
+- name: Deploy Red Hat build of Keycloak on OpenShift
+  hosts: aws_metal
+  gather_facts: true
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/mirror_content.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/day2/openshift_keycloak.yml
+    - ../../vars/day2/openshift_idm_certs.yml
+  roles:
+    - role: openshift_post_install_keycloak

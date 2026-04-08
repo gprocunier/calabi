@@ -1,0 +1,86 @@
+---
+- name: Register the IDM guest for trust override testing
+  hosts: aws_metal
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/pki.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/ad_integration.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+    - ../../vars/guests/idm_vm.yml
+
+  tasks:
+    - name: Register the IDM guest as a temporary Ansible host
+      ansible.builtin.add_host:
+        name: "{{ idm_vm.name }}.{{ idm_vm.domain }}"
+        groups:
+          - idm_trust_override_test
+        ansible_host: "{{ idm_vm.network.ipv4_address }}"
+        ansible_user: "{{ idm_vm.access.admin_user }}"
+        ansible_ssh_private_key_file: >-
+          {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+        ansible_become: true
+        ansible_ssh_common_args: >-
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+
+- name: Test a single Default Trust View override on the IDM guest
+  hosts: idm_trust_override_test
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/pki.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/ad_integration.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+    - ../../vars/guests/idm_vm.yml
+
+  pre_tasks:
+    - name: Wait for the IDM guest to accept SSH connections
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+        sleep: 5
+
+  tasks:
+    - name: Create a test ID override for ad-ocpadmin in Default Trust View
+      ansible.builtin.shell: |
+        set -o pipefail
+        ipa idoverrideuser-add 'Default Trust View' 'ad-ocpadmin@corp.lan' \
+          --login=ad-ocpadmin \
+          --uid=1897401101 || true
+        ipa idoverrideuser-show 'Default Trust View' 'ad-ocpadmin@corp.lan' --all || true
+      args:
+        executable: /bin/bash
+      register: idm_override_add
+      changed_when: "'Added User ID override' in idm_override_add.stdout"
+
+    - name: Restart SSSD after the override test
+      ansible.builtin.service:
+        name: sssd
+        state: restarted
+
+    - name: Wait for SSSD to settle
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Check user resolution and compat exposure after the override
+      ansible.builtin.shell: |
+        set -o pipefail
+        echo '=== idoverrideuser-show ==='
+        ipa idoverrideuser-show 'Default Trust View' 'ad-ocpadmin@corp.lan' --all || true
+        echo '=== getent ==='
+        getent passwd ad-ocpadmin@corp.lan || true
+        echo '=== id ==='
+        id ad-ocpadmin@corp.lan || true
+        echo '=== compat user ==='
+        ldapsearch -LLL -Y GSSAPI -b 'cn=users,cn=compat,dc=workshop,dc=lan' '(uid=ad-ocpadmin*)' dn uid cn mail memberUid uidNumber gidNumber || true
+      args:
+        executable: /bin/bash
+      register: idm_override_results
+      changed_when: false
+
+    - name: Show override test results
+      ansible.builtin.debug:
+        msg: "{{ idm_override_results.stdout_lines }}"

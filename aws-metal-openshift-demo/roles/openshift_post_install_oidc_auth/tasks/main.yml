@@ -1,0 +1,950 @@
+---
+- name: Derive IdM base DN for OIDC federation
+  ansible.builtin.set_fact:
+    openshift_post_install_oidc_auth_base_dn: >-
+      {{
+        idm_vm.domain.split('.')
+        | map('regex_replace', '^', 'dc=')
+        | join(',')
+      }}
+
+- name: Derive OIDC auth paths, URLs, and payloads
+  ansible.builtin.set_fact:
+    openshift_post_install_oidc_auth_oc_local_path: >-
+      {{ lab_execution_tools_root }}/{{ mirror_registry_ocp_release }}/bin/oc
+    openshift_post_install_oidc_auth_kubeconfig_local_path: >-
+      {{ lab_execution_ocp_generated_root }}/auth/kubeconfig
+    openshift_post_install_oidc_auth_idm_ca_local_path: >-
+      {{ lab_execution_ocp_generated_root }}/idm-ca.crt
+    openshift_post_install_oidc_auth_remote_dir: >-
+      /var/tmp/openshift-post-install-oidc-auth
+    openshift_post_install_oidc_auth_remote_oc_path: >-
+      /var/tmp/openshift-post-install-oidc-auth/oc
+    openshift_post_install_oidc_auth_remote_kubeconfig_path: >-
+      /var/tmp/openshift-post-install-oidc-auth/kubeconfig
+    openshift_post_install_oidc_auth_remote_idm_ca_path: >-
+      /var/tmp/openshift-post-install-oidc-auth/idm-ca.crt
+    openshift_post_install_oidc_auth_oauth_host: >-
+      oauth-openshift.apps.{{ openshift_install_cluster.name }}.{{ openshift_install_cluster.base_domain }}
+    openshift_post_install_oidc_auth_issuer_url: >-
+      https://{{ openshift_keycloak.route_host }}/realms/{{ openshift_oidc_auth.realm_name }}
+    openshift_post_install_oidc_auth_master_token_url: >-
+      https://{{ openshift_keycloak.route_host }}/realms/master/protocol/openid-connect/token
+    openshift_post_install_oidc_auth_realm_token_url: >-
+      https://{{ openshift_keycloak.route_host }}/realms/{{ openshift_oidc_auth.realm_name }}/protocol/openid-connect/token
+    openshift_post_install_oidc_auth_admin_api_base_url: >-
+      https://{{ openshift_keycloak.route_host }}/admin/realms
+
+- name: Derive dependent OIDC auth URLs and DNs
+  ansible.builtin.set_fact:
+    openshift_post_install_oidc_auth_redirect_uri: >-
+      https://{{ openshift_post_install_oidc_auth_oauth_host }}/oauth2callback/{{ openshift_oidc_auth.identity_provider_name }}
+    openshift_post_install_oidc_auth_users_dn: >-
+      {{
+        openshift_oidc_auth.ldap_federation.users_dn
+        if openshift_oidc_auth.ldap_federation.users_dn | length > 0
+        else 'cn=users,cn=compat,' ~ openshift_post_install_oidc_auth_base_dn
+      }}
+    openshift_post_install_oidc_auth_groups_dn: >-
+      {{
+        openshift_oidc_auth.ldap_federation.groups_dn
+        if openshift_oidc_auth.ldap_federation.groups_dn | length > 0
+        else 'cn=groups,cn=compat,' ~ openshift_post_install_oidc_auth_base_dn
+      }}
+
+- name: Derive OIDC provider and Keycloak payloads
+  ansible.builtin.set_fact:
+    openshift_post_install_oidc_auth_provider: >-
+      {{
+        {
+          'name': openshift_oidc_auth.identity_provider_name,
+          'mappingMethod': openshift_oidc_auth.oauth.mapping_method,
+          'type': 'OpenID',
+          'openID': {
+            'clientID': openshift_oidc_auth.client_id,
+            'clientSecret': {'name': openshift_oidc_auth.client_secret_name},
+            'issuer': openshift_post_install_oidc_auth_issuer_url,
+            'ca': {'name': openshift_oidc_auth.ca_configmap_name},
+            'claims': {
+              'preferredUsername': openshift_oidc_auth.oauth.claims.preferred_username,
+              'name': openshift_oidc_auth.oauth.claims.name,
+              'email': openshift_oidc_auth.oauth.claims.email,
+              'groups': openshift_oidc_auth.oauth.claims.groups
+            },
+            'extraScopes': openshift_oidc_auth.oauth.extra_scopes
+          }
+        }
+      }}
+    openshift_post_install_oidc_auth_client_representation: >-
+      {{
+        {
+          'clientId': openshift_oidc_auth.client_id,
+          'name': 'OpenShift',
+          'enabled': True,
+          'protocol': 'openid-connect',
+          'publicClient': False,
+          'secret': openshift_oidc_auth.client_secret,
+          'standardFlowEnabled': True,
+          'directAccessGrantsEnabled': True,
+          'serviceAccountsEnabled': False,
+          'frontchannelLogout': True,
+          'redirectUris': [openshift_post_install_oidc_auth_redirect_uri],
+          'webOrigins': ['+'],
+          'defaultClientScopes': ['profile', 'email', 'roles', 'web-origins']
+        }
+      }}
+    openshift_post_install_oidc_auth_realm_representation: >-
+      {{
+        {
+          'realm': openshift_oidc_auth.realm_name,
+          'enabled': True,
+          'displayName': 'OpenShift',
+          'sslRequired': 'external',
+          'registrationAllowed': False,
+          'resetPasswordAllowed': False,
+          'rememberMe': False,
+          'loginWithEmailAllowed': False
+        }
+      }}
+    openshift_post_install_oidc_auth_ldap_component_config: >-
+      {{
+        {
+          'enabled': ['true'],
+          'priority': ['0'],
+          'fullSyncPeriod': ['-1'],
+          'changedSyncPeriod': ['-1'],
+          'cachePolicy': ['DEFAULT'],
+          'batchSizeForSync': ['1000'],
+          'importEnabled': ['true'],
+          'syncRegistrations': ['false'],
+          'editMode': ['READ_ONLY'],
+          'vendor': [openshift_oidc_auth.ldap_federation.vendor],
+          'usernameLDAPAttribute': [openshift_oidc_auth.ldap_federation.username_ldap_attribute],
+          'rdnLDAPAttribute': [openshift_oidc_auth.ldap_federation.rdn_ldap_attribute],
+          'uuidLDAPAttribute': [openshift_oidc_auth.ldap_federation.uuid_ldap_attribute],
+          'userObjectClasses': [openshift_oidc_auth.ldap_federation.user_object_classes],
+          'connectionUrl': [openshift_oidc_auth.ldap_federation.connection_url],
+          'usersDn': [openshift_post_install_oidc_auth_users_dn],
+          'authType': ['simple'],
+          'bindDn': [openshift_oidc_auth.ldap_federation.bind_dn],
+          'bindCredential': [openshift_oidc_auth.ldap_federation.bind_password],
+          'searchScope': [openshift_oidc_auth.ldap_federation.search_scope],
+          'validatePasswordPolicy': ['false'],
+          'trustEmail': ['false'],
+          'connectionPooling': ['true'],
+          'pagination': ['true'],
+          'startTls': ['false']
+        }
+      }}
+    openshift_post_install_oidc_auth_ldap_group_component_config: >-
+      {{
+        {
+          'enabled': ['true'],
+          'priority': ['0'],
+          'fullSyncPeriod': ['-1'],
+          'changedSyncPeriod': ['-1'],
+          'cachePolicy': ['DEFAULT'],
+          'batchSizeForSync': ['1000'],
+          'mode': [openshift_oidc_auth.ldap_federation.group_mapper_mode],
+          'groups.dn': [openshift_post_install_oidc_auth_groups_dn],
+          'group.name.ldap.attribute': [openshift_oidc_auth.ldap_federation.group_name_ldap_attribute],
+          'group.object.classes': [openshift_oidc_auth.ldap_federation.group_object_classes],
+          'preserve.group.inheritance': [
+            openshift_oidc_auth.ldap_federation.group_mapper_preserve_inheritance
+            | ternary('true', 'false')
+          ],
+          'membership.ldap.attribute': [openshift_oidc_auth.ldap_federation.group_membership_ldap_attribute],
+          'membership.attribute.type': [openshift_oidc_auth.ldap_federation.group_membership_attribute_type],
+          'groups.ldap.filter': [''],
+          'user.roles.retrieve.strategy': [openshift_oidc_auth.ldap_federation.group_mapper_user_roles_retrieve_strategy],
+          'drop.non.existing.groups.during.sync': [
+            openshift_oidc_auth.ldap_federation.group_mapper_drop_non_existing_groups_during_sync
+            | ternary('true', 'false')
+          ]
+        }
+      }}
+    openshift_post_install_oidc_auth_oauth_group_protocol_mapper: >-
+      {{
+        {
+          'name': openshift_oidc_auth.oauth.protocol_mappers.groups.name,
+          'protocol': 'openid-connect',
+          'protocolMapper': 'oidc-group-membership-mapper',
+          'config': {
+            'full.path': openshift_oidc_auth.oauth.protocol_mappers.groups.full_path | ternary('true', 'false'),
+            'id.token.claim': 'true',
+            'access.token.claim': 'true',
+            'userinfo.token.claim': 'true',
+            'claim.name': openshift_oidc_auth.oauth.protocol_mappers.groups.claim_name,
+            'multivalued': 'true'
+          }
+        }
+      }}
+    openshift_post_install_oidc_auth_cluster_admin_binding_name: >-
+      {{ openshift_oidc_auth.authorization.cluster_admin_group }}-cluster-admin
+
+- name: Assert local OIDC auth artifacts exist
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  delegate_to: localhost
+  become: false
+  loop:
+    - "{{ openshift_post_install_oidc_auth_oc_local_path }}"
+    - "{{ openshift_post_install_oidc_auth_kubeconfig_local_path }}"
+    - "{{ openshift_post_install_oidc_auth_idm_ca_local_path }}"
+  register: openshift_post_install_oidc_auth_local_stats
+
+- name: Fail when required local OIDC auth artifacts are missing
+  ansible.builtin.assert:
+    that:
+      - >-
+        openshift_post_install_oidc_auth_local_stats.results
+        | map(attribute='stat.exists')
+        | min
+    fail_msg: >-
+      Expected local OIDC auth artifacts were not found. Ensure generated oc,
+      kubeconfig, and idm-ca.crt exist first.
+
+- name: Create remote OIDC auth workspace
+  ansible.builtin.file:
+    path: "{{ openshift_post_install_oidc_auth_remote_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Copy pinned oc binary to remote OIDC workspace
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_oidc_auth_oc_local_path }}"
+    dest: "{{ openshift_post_install_oidc_auth_remote_oc_path }}"
+    mode: "0755"
+
+- name: Copy generated kubeconfig to remote OIDC workspace
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_oidc_auth_kubeconfig_local_path }}"
+    dest: "{{ openshift_post_install_oidc_auth_remote_kubeconfig_path }}"
+    mode: "0600"
+
+- name: Copy IdM CA to remote OIDC workspace
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_oidc_auth_idm_ca_local_path }}"
+    dest: "{{ openshift_post_install_oidc_auth_remote_idm_ca_path }}"
+    mode: "0644"
+
+- name: Obtain a Keycloak admin token for OIDC configuration
+  ansible.builtin.uri:
+    url: "{{ openshift_post_install_oidc_auth_master_token_url }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      client_id: admin-cli
+      grant_type: password
+      username: "{{ openshift_keycloak.bootstrap_admin_username }}"
+      password: "{{ openshift_keycloak.bootstrap_admin_password }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_oidc_auth_remote_idm_ca_path }}"
+    status_code: 200
+    return_content: true
+  register: openshift_post_install_oidc_auth_admin_token
+  no_log: true
+
+- name: Capture the current OpenShift realm from Keycloak
+  ansible.builtin.uri:
+    url: "{{ openshift_post_install_oidc_auth_admin_api_base_url }}/{{ openshift_oidc_auth.realm_name }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_oidc_auth_admin_token.json.access_token }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_oidc_auth_remote_idm_ca_path }}"
+    status_code: [200, 404]
+    return_content: true
+  register: openshift_post_install_oidc_auth_realm_get
+  no_log: true
+
+- name: Create the OpenShift realm in Keycloak when missing
+  ansible.builtin.uri:
+    url: "{{ openshift_post_install_oidc_auth_admin_api_base_url }}"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_oidc_auth_admin_token.json.access_token }}"
+    body_format: json
+    body: "{{ openshift_post_install_oidc_auth_realm_representation }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_oidc_auth_remote_idm_ca_path }}"
+    status_code: [201, 409]
+  when: openshift_post_install_oidc_auth_realm_get.status == 404
+  changed_when: true
+  no_log: true
+
+- name: Refresh the current OpenShift realm after ensuring it exists
+  ansible.builtin.uri:
+    url: "{{ openshift_post_install_oidc_auth_admin_api_base_url }}/{{ openshift_oidc_auth.realm_name }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_oidc_auth_admin_token.json.access_token }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_oidc_auth_remote_idm_ca_path }}"
+    status_code: 200
+    return_content: true
+  register: openshift_post_install_oidc_auth_realm_refresh
+  no_log: true
+
+- name: Capture the current OpenShift OAuth client in Keycloak
+  ansible.builtin.uri:
+    url: "{{ openshift_post_install_oidc_auth_admin_api_base_url }}/{{ openshift_oidc_auth.realm_name }}/clients?clientId={{ openshift_oidc_auth.client_id }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_oidc_auth_admin_token.json.access_token }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_oidc_auth_remote_idm_ca_path }}"
+    status_code: 200
+    return_content: true
+  register: openshift_post_install_oidc_auth_client_get
+  no_log: true
+
+- name: Create the OpenShift OAuth client in Keycloak when missing
+  ansible.builtin.uri:
+    url: "{{ openshift_post_install_oidc_auth_admin_api_base_url }}/{{ openshift_oidc_auth.realm_name }}/clients"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_oidc_auth_admin_token.json.access_token }}"
+    body_format: json
+    body: "{{ openshift_post_install_oidc_auth_client_representation }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_oidc_auth_remote_idm_ca_path }}"
+    status_code: [201, 409]
+  when: (openshift_post_install_oidc_auth_client_get.json | length) == 0
+  changed_when: true
+  no_log: true
+
+- name: Refresh the current OpenShift OAuth client state
+  ansible.builtin.uri:
+    url: "{{ openshift_post_install_oidc_auth_admin_api_base_url }}/{{ openshift_oidc_auth.realm_name }}/clients?clientId={{ openshift_oidc_auth.client_id }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_oidc_auth_admin_token.json.access_token }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_oidc_auth_remote_idm_ca_path }}"
+    status_code: 200
+    return_content: true
+  register: openshift_post_install_oidc_auth_client_refresh
+  no_log: true
+
+- name: Update the OpenShift OAuth client in Keycloak
+  ansible.builtin.uri:
+    url: >-
+      {{ openshift_post_install_oidc_auth_admin_api_base_url }}/{{ openshift_oidc_auth.realm_name }}/clients/{{
+      (openshift_post_install_oidc_auth_client_refresh.json | first).id }}
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_oidc_auth_admin_token.json.access_token }}"
+    body_format: json
+    body: >-
+      {{
+        openshift_post_install_oidc_auth_client_representation
+        | combine({'id': (openshift_post_install_oidc_auth_client_refresh.json | first).id})
+      }}
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_oidc_auth_remote_idm_ca_path }}"
+    status_code: 204
+  changed_when: true
+  no_log: true
+
+- name: Capture current Keycloak OAuth client protocol mappers
+  ansible.builtin.uri:
+    url: >-
+      {{ openshift_post_install_oidc_auth_admin_api_base_url }}/{{ openshift_oidc_auth.realm_name }}/clients/{{
+      (openshift_post_install_oidc_auth_client_refresh.json | first).id }}/protocol-mappers/models
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_oidc_auth_admin_token.json.access_token }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_oidc_auth_remote_idm_ca_path }}"
+    status_code: 200
+    return_content: true
+  register: openshift_post_install_oidc_auth_client_protocol_mappers
+  no_log: true
+
+- name: Derive the Keycloak OAuth group protocol mapper id
+  ansible.builtin.set_fact:
+    openshift_post_install_oidc_auth_client_group_mapper_id: >-
+      {{
+        (
+          openshift_post_install_oidc_auth_client_protocol_mappers.json
+          | selectattr('name', 'equalto', openshift_oidc_auth.oauth.protocol_mappers.groups.name)
+          | map(attribute='id')
+          | first
+        ) | default('')
+      }}
+
+- name: Create the Keycloak OAuth group protocol mapper when missing
+  ansible.builtin.uri:
+    url: >-
+      {{ openshift_post_install_oidc_auth_admin_api_base_url }}/{{ openshift_oidc_auth.realm_name }}/clients/{{
+      (openshift_post_install_oidc_auth_client_refresh.json | first).id }}/protocol-mappers/models
+    method: POST
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_oidc_auth_admin_token.json.access_token }}"
+    body_format: json
+    body: "{{ openshift_post_install_oidc_auth_oauth_group_protocol_mapper }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_oidc_auth_remote_idm_ca_path }}"
+    status_code: [201, 409]
+  when: openshift_post_install_oidc_auth_client_group_mapper_id | length == 0
+  changed_when: true
+  no_log: true
+
+- name: Update the Keycloak OAuth group protocol mapper when present
+  ansible.builtin.uri:
+    url: >-
+      {{ openshift_post_install_oidc_auth_admin_api_base_url }}/{{ openshift_oidc_auth.realm_name }}/clients/{{
+      (openshift_post_install_oidc_auth_client_refresh.json | first).id }}/protocol-mappers/models/{{
+      openshift_post_install_oidc_auth_client_group_mapper_id }}
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_oidc_auth_admin_token.json.access_token }}"
+    body_format: json
+    body: >-
+      {{
+        openshift_post_install_oidc_auth_oauth_group_protocol_mapper
+        | combine({'id': openshift_post_install_oidc_auth_client_group_mapper_id})
+      }}
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_oidc_auth_remote_idm_ca_path }}"
+    status_code: 204
+  when: openshift_post_install_oidc_auth_client_group_mapper_id | length > 0
+  changed_when: true
+  no_log: true
+
+- name: Capture current Keycloak user federation providers
+  ansible.builtin.uri:
+    url: >-
+      {{ openshift_post_install_oidc_auth_admin_api_base_url }}/{{ openshift_oidc_auth.realm_name }}/components?type=org.keycloak.storage.UserStorageProvider
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_oidc_auth_admin_token.json.access_token }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_oidc_auth_remote_idm_ca_path }}"
+    status_code: 200
+    return_content: true
+  register: openshift_post_install_oidc_auth_user_storage_components
+  no_log: true
+
+- name: Derive the Keycloak LDAP federation component id
+  ansible.builtin.set_fact:
+    openshift_post_install_oidc_auth_ldap_component_id: >-
+      {{
+        (
+          openshift_post_install_oidc_auth_user_storage_components.json
+          | selectattr('name', 'equalto', openshift_oidc_auth.ldap_federation.provider_name)
+          | map(attribute='id')
+          | first
+        ) | default('')
+      }}
+
+- name: Create the Keycloak LDAP federation component when missing
+  ansible.builtin.uri:
+    url: "{{ openshift_post_install_oidc_auth_admin_api_base_url }}/{{ openshift_oidc_auth.realm_name }}/components"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_oidc_auth_admin_token.json.access_token }}"
+    body_format: json
+    body:
+      name: "{{ openshift_oidc_auth.ldap_federation.provider_name }}"
+      parentId: "{{ openshift_post_install_oidc_auth_realm_refresh.json.id }}"
+      providerId: ldap
+      providerType: org.keycloak.storage.UserStorageProvider
+      config: "{{ openshift_post_install_oidc_auth_ldap_component_config }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_oidc_auth_remote_idm_ca_path }}"
+    status_code: [201, 409]
+  when: openshift_post_install_oidc_auth_ldap_component_id | length == 0
+  changed_when: true
+  no_log: true
+
+- name: Update the Keycloak LDAP federation component when present
+  ansible.builtin.uri:
+    url: >-
+      {{ openshift_post_install_oidc_auth_admin_api_base_url }}/{{ openshift_oidc_auth.realm_name }}/components/{{
+      openshift_post_install_oidc_auth_ldap_component_id }}
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_oidc_auth_admin_token.json.access_token }}"
+    body_format: json
+    body:
+      id: "{{ openshift_post_install_oidc_auth_ldap_component_id }}"
+      name: "{{ openshift_oidc_auth.ldap_federation.provider_name }}"
+      parentId: "{{ openshift_post_install_oidc_auth_realm_refresh.json.id }}"
+      providerId: ldap
+      providerType: org.keycloak.storage.UserStorageProvider
+      config: "{{ openshift_post_install_oidc_auth_ldap_component_config }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_oidc_auth_remote_idm_ca_path }}"
+    status_code: 204
+  when: openshift_post_install_oidc_auth_ldap_component_id | length > 0
+  changed_when: true
+  no_log: true
+
+- name: Refresh Keycloak user federation providers after LDAP provider changes
+  ansible.builtin.uri:
+    url: >-
+      {{ openshift_post_install_oidc_auth_admin_api_base_url }}/{{ openshift_oidc_auth.realm_name }}/components?type=org.keycloak.storage.UserStorageProvider
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_oidc_auth_admin_token.json.access_token }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_oidc_auth_remote_idm_ca_path }}"
+    status_code: 200
+    return_content: true
+  register: openshift_post_install_oidc_auth_user_storage_components_refresh
+  no_log: true
+
+- name: Derive the refreshed Keycloak LDAP federation component id
+  ansible.builtin.set_fact:
+    openshift_post_install_oidc_auth_ldap_component_id: >-
+      {{
+        (
+          openshift_post_install_oidc_auth_user_storage_components_refresh.json
+          | selectattr('name', 'equalto', openshift_oidc_auth.ldap_federation.provider_name)
+          | map(attribute='id')
+          | first
+        ) | default('')
+      }}
+
+- name: Capture Keycloak LDAP federation mappers
+  ansible.builtin.uri:
+    url: >-
+      {{ openshift_post_install_oidc_auth_admin_api_base_url }}/{{ openshift_oidc_auth.realm_name }}/components?parent={{
+      openshift_post_install_oidc_auth_ldap_component_id }}&type=org.keycloak.storage.ldap.mappers.LDAPStorageMapper
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_oidc_auth_admin_token.json.access_token }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_oidc_auth_remote_idm_ca_path }}"
+    status_code: 200
+    return_content: true
+  register: openshift_post_install_oidc_auth_ldap_mapper_components
+  when: openshift_post_install_oidc_auth_ldap_component_id | length > 0
+  no_log: true
+
+- name: Normalize Keycloak LDAP name mappers for IdM compat entries
+  ansible.builtin.uri:
+    url: >-
+      {{ openshift_post_install_oidc_auth_admin_api_base_url }}/{{ openshift_oidc_auth.realm_name }}/components/{{
+      item.id }}
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_oidc_auth_admin_token.json.access_token }}"
+    body_format: json
+    body: >-
+      {{
+        item
+        | combine(
+            {
+              'config': (
+                item.config
+                | combine(
+                    {
+                      'ldap.attribute': ['cn'],
+                      'is.mandatory.in.ldap': ['false']
+                    }
+                  )
+              )
+            },
+            recursive=True
+          )
+      }}
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_oidc_auth_remote_idm_ca_path }}"
+    status_code: 204
+  loop: >-
+    {{
+      openshift_post_install_oidc_auth_ldap_mapper_components.json
+      | selectattr('name', 'in', ['first name', 'last name'])
+      | list
+    }}
+  loop_control:
+    label: "{{ item.name }}"
+  when: openshift_post_install_oidc_auth_ldap_component_id | length > 0
+  changed_when: true
+  no_log: true
+
+- name: Capture Keycloak LDAP group mappers
+  ansible.builtin.uri:
+    url: >-
+      {{ openshift_post_install_oidc_auth_admin_api_base_url }}/{{ openshift_oidc_auth.realm_name }}/components?parent={{
+      openshift_post_install_oidc_auth_ldap_component_id }}&type=org.keycloak.storage.ldap.mappers.LDAPStorageMapper
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_oidc_auth_admin_token.json.access_token }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_oidc_auth_remote_idm_ca_path }}"
+    status_code: 200
+    return_content: true
+  register: openshift_post_install_oidc_auth_ldap_group_mapper_components
+  when: openshift_post_install_oidc_auth_ldap_component_id | length > 0
+  no_log: true
+
+- name: Derive the Keycloak LDAP group mapper id
+  ansible.builtin.set_fact:
+    openshift_post_install_oidc_auth_ldap_group_mapper_id: >-
+      {{
+        (
+          openshift_post_install_oidc_auth_ldap_group_mapper_components.json
+          | selectattr('name', 'equalto', openshift_oidc_auth.ldap_federation.group_mapper_name)
+          | map(attribute='id')
+          | first
+        ) | default('')
+      }}
+  when: openshift_post_install_oidc_auth_ldap_component_id | length > 0
+
+- name: Create the Keycloak LDAP group mapper when missing
+  ansible.builtin.uri:
+    url: >-
+      {{ openshift_post_install_oidc_auth_admin_api_base_url }}/{{ openshift_oidc_auth.realm_name }}/components
+    method: POST
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_oidc_auth_admin_token.json.access_token }}"
+    body_format: json
+    body:
+      name: "{{ openshift_oidc_auth.ldap_federation.group_mapper_name }}"
+      parentId: "{{ openshift_post_install_oidc_auth_ldap_component_id }}"
+      providerId: group-ldap-mapper
+      providerType: org.keycloak.storage.ldap.mappers.LDAPStorageMapper
+      config: "{{ openshift_post_install_oidc_auth_ldap_group_component_config }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_oidc_auth_remote_idm_ca_path }}"
+    status_code: [201, 409]
+  when:
+    - openshift_post_install_oidc_auth_ldap_component_id | length > 0
+    - openshift_post_install_oidc_auth_ldap_group_mapper_id | length == 0
+  changed_when: true
+  no_log: true
+
+- name: Update the Keycloak LDAP group mapper when present
+  ansible.builtin.uri:
+    url: >-
+      {{ openshift_post_install_oidc_auth_admin_api_base_url }}/{{ openshift_oidc_auth.realm_name }}/components/{{
+      openshift_post_install_oidc_auth_ldap_group_mapper_id }}
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_oidc_auth_admin_token.json.access_token }}"
+    body_format: json
+    body:
+      id: "{{ openshift_post_install_oidc_auth_ldap_group_mapper_id }}"
+      name: "{{ openshift_oidc_auth.ldap_federation.group_mapper_name }}"
+      parentId: "{{ openshift_post_install_oidc_auth_ldap_component_id }}"
+      providerId: group-ldap-mapper
+      providerType: org.keycloak.storage.ldap.mappers.LDAPStorageMapper
+      config: "{{ openshift_post_install_oidc_auth_ldap_group_component_config }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_oidc_auth_remote_idm_ca_path }}"
+    status_code: 204
+  when:
+    - openshift_post_install_oidc_auth_ldap_component_id | length > 0
+    - openshift_post_install_oidc_auth_ldap_group_mapper_id | length > 0
+  changed_when: true
+  no_log: true
+
+- name: Create the OpenShift OIDC client secret
+  ansible.builtin.shell: >-
+    set -o pipefail &&
+    {{ openshift_post_install_oidc_auth_remote_oc_path }}
+    create secret generic {{ openshift_oidc_auth.client_secret_name }}
+    -n openshift-config
+    --from-literal=clientSecret='{{ openshift_oidc_auth.client_secret }}'
+    --dry-run=client -o yaml
+    | {{ openshift_post_install_oidc_auth_remote_oc_path }} apply -f -
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_oidc_auth_remote_kubeconfig_path }}"
+  register: openshift_post_install_oidc_auth_client_secret_result
+  changed_when: >-
+    'created' in openshift_post_install_oidc_auth_client_secret_result.stdout
+    or 'configured' in openshift_post_install_oidc_auth_client_secret_result.stdout
+  no_log: true
+
+- name: Create the OpenShift OIDC CA config map
+  ansible.builtin.shell: >-
+    set -o pipefail &&
+    {{ openshift_post_install_oidc_auth_remote_oc_path }}
+    create configmap {{ openshift_oidc_auth.ca_configmap_name }}
+    -n openshift-config
+    --from-file=ca.crt={{ openshift_post_install_oidc_auth_remote_idm_ca_path }}
+    --dry-run=client -o yaml
+    | {{ openshift_post_install_oidc_auth_remote_oc_path }} apply -f -
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_oidc_auth_remote_kubeconfig_path }}"
+  register: openshift_post_install_oidc_auth_ca_configmap_result
+  changed_when: >-
+    'created' in openshift_post_install_oidc_auth_ca_configmap_result.stdout
+    or 'configured' in openshift_post_install_oidc_auth_ca_configmap_result.stdout
+
+- name: Capture the current OAuth configuration before enabling OIDC
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_oidc_auth_remote_oc_path }}"
+      - get
+      - oauth
+      - cluster
+      - -o
+      - json
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_oidc_auth_remote_kubeconfig_path }}"
+  register: openshift_post_install_oidc_auth_current_oauth
+  changed_when: false
+
+- name: Derive the merged OAuth identity provider list with OIDC
+  ansible.builtin.set_fact:
+    openshift_post_install_oidc_auth_identity_providers: >-
+      {{
+        (
+          (
+            (
+              openshift_post_install_oidc_auth_current_oauth.stdout
+              | from_json
+            ).spec.identityProviders
+            | default([])
+          )
+          | rejectattr('name', 'equalto', openshift_oidc_auth.identity_provider_name)
+          | rejectattr(
+              'name',
+              'equalto',
+              openshift_ldap_auth.identity_provider_name
+              if openshift_oidc_auth.remove_ldap_identity_provider | bool
+              else '__keep_ldap__'
+            )
+          | list
+        )
+        + [openshift_post_install_oidc_auth_provider]
+      }}
+
+- name: Patch the OAuth resource with the OIDC identity provider
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_oidc_auth_remote_oc_path }}"
+      - patch
+      - oauth
+      - cluster
+      - --type=merge
+      - -p
+      - >-
+        {{
+          {
+            'spec': {
+              'identityProviders': openshift_post_install_oidc_auth_identity_providers
+            }
+          } | to_json
+        }}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_oidc_auth_remote_kubeconfig_path }}"
+  register: openshift_post_install_oidc_auth_oauth_patch
+  changed_when: >-
+    'patched' in openshift_post_install_oidc_auth_oauth_patch.stdout
+
+- name: Wait for the authentication cluster operator to be healthy after OIDC changes
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_oidc_auth_remote_oc_path }}"
+      - get
+      - clusteroperator
+      - authentication
+      - -o
+      - jsonpath={.status.conditions[?(@.type=="Available")].status},{.status.conditions[?(@.type=="Progressing")].status},{.status.conditions[?(@.type=="Degraded")].status}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_oidc_auth_remote_kubeconfig_path }}"
+  register: openshift_post_install_oidc_auth_operator_health
+  changed_when: false
+  retries: 60
+  delay: 10
+  until: openshift_post_install_oidc_auth_operator_health.stdout == 'True,False,False'
+
+- name: Wait for the OpenShift OAuth route to answer health checks after OIDC changes
+  ansible.builtin.command:
+    argv:
+      - curl
+      - -skf
+      - https://{{ openshift_post_install_oidc_auth_oauth_host }}/healthz
+  register: openshift_post_install_oidc_auth_oauth_health
+  changed_when: false
+  retries: 18
+  delay: 10
+  until: openshift_post_install_oidc_auth_oauth_health.rc == 0
+
+- name: Render the OpenShift cluster-admin binding for the OIDC group
+  ansible.builtin.copy:
+    dest: >-
+      {{ openshift_post_install_oidc_auth_remote_dir }}/
+      {{ openshift_post_install_oidc_auth_cluster_admin_binding_name }}.yaml
+    mode: "0600"
+    content: |-
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: {{ openshift_post_install_oidc_auth_cluster_admin_binding_name }}
+      roleRef:
+        apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRole
+        name: cluster-admin
+      subjects:
+        - apiGroup: rbac.authorization.k8s.io
+          kind: Group
+          name: {{ openshift_oidc_auth.authorization.cluster_admin_group }}
+
+- name: Apply cluster-admin access for the OIDC group
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_oidc_auth_remote_oc_path }}"
+      - apply
+      - -f
+      - >-
+        {{ openshift_post_install_oidc_auth_remote_dir }}/
+        {{ openshift_post_install_oidc_auth_cluster_admin_binding_name }}.yaml
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_oidc_auth_remote_kubeconfig_path }}"
+  register: openshift_post_install_oidc_auth_cluster_admin_binding
+  changed_when: >-
+    'created' in openshift_post_install_oidc_auth_cluster_admin_binding.stdout
+    or 'configured' in openshift_post_install_oidc_auth_cluster_admin_binding.stdout
+
+- name: Validate Keycloak OIDC token issuance for the native test user
+  ansible.builtin.uri:
+    url: "{{ openshift_post_install_oidc_auth_realm_token_url }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      client_id: "{{ openshift_oidc_auth.client_id }}"
+      client_secret: "{{ openshift_oidc_auth.client_secret }}"
+      grant_type: password
+      username: "{{ openshift_oidc_auth.validation.native_test_user }}"
+      password: "{{ openshift_oidc_auth.validation.native_test_password }}"
+      scope: openid
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_oidc_auth_remote_idm_ca_path }}"
+    status_code: 200
+    return_content: true
+  register: openshift_post_install_oidc_auth_native_token
+  when: openshift_oidc_auth.validation.native_test_user | length > 0
+  no_log: true
+
+- name: Decode the native OIDC access token claims
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - >-
+        import base64, json, os, sys;
+        token = os.environ["OIDC_ACCESS_TOKEN"];
+        payload = token.split(".")[1];
+        payload += "=" * (-len(payload) % 4);
+        claims = json.loads(base64.urlsafe_b64decode(payload).decode("utf-8"));
+        json.dump(claims, sys.stdout)
+  environment:
+    OIDC_ACCESS_TOKEN: "{{ openshift_post_install_oidc_auth_native_token.json.access_token }}"
+  register: openshift_post_install_oidc_auth_native_claims
+  changed_when: false
+  when: openshift_oidc_auth.validation.native_test_user | length > 0
+  no_log: true
+
+- name: Assert the native OIDC access token includes the OpenShift admin group
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          openshift_post_install_oidc_auth_native_claims.stdout | from_json
+        ).groups is defined
+      - >-
+        openshift_oidc_auth.authorization.cluster_admin_group in
+        (
+          openshift_post_install_oidc_auth_native_claims.stdout | from_json
+        ).groups
+  when: openshift_oidc_auth.validation.native_test_user | length > 0
+  no_log: true
+
+- name: Assert the native OIDC token was issued successfully
+  ansible.builtin.assert:
+    that:
+      - openshift_post_install_oidc_auth_native_token.json.access_token is defined
+      - openshift_post_install_oidc_auth_native_token.json.id_token is defined
+  when: openshift_oidc_auth.validation.native_test_user | length > 0
+  no_log: true
+
+- name: Validate Keycloak OIDC token issuance for the AD-trusted test user
+  ansible.builtin.uri:
+    url: "{{ openshift_post_install_oidc_auth_realm_token_url }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      client_id: "{{ openshift_oidc_auth.client_id }}"
+      client_secret: "{{ openshift_oidc_auth.client_secret }}"
+      grant_type: password
+      username: "{{ openshift_oidc_auth.validation.ad_test_user }}"
+      password: "{{ openshift_oidc_auth.validation.ad_test_password }}"
+      scope: openid
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_oidc_auth_remote_idm_ca_path }}"
+    status_code: 200
+    return_content: true
+  register: openshift_post_install_oidc_auth_ad_token
+  when: openshift_oidc_auth.validation.include_ad_trusted_user | bool
+  no_log: true
+
+- name: Decode the AD-trusted OIDC access token claims
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - >-
+        import base64, json, os, sys;
+        token = os.environ["OIDC_ACCESS_TOKEN"];
+        payload = token.split(".")[1];
+        payload += "=" * (-len(payload) % 4);
+        claims = json.loads(base64.urlsafe_b64decode(payload).decode("utf-8"));
+        json.dump(claims, sys.stdout)
+  environment:
+    OIDC_ACCESS_TOKEN: "{{ openshift_post_install_oidc_auth_ad_token.json.access_token }}"
+  register: openshift_post_install_oidc_auth_ad_claims
+  changed_when: false
+  when: openshift_oidc_auth.validation.include_ad_trusted_user | bool
+  no_log: true
+
+- name: Assert the AD-trusted OIDC access token includes the OpenShift admin group
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          openshift_post_install_oidc_auth_ad_claims.stdout | from_json
+        ).groups is defined
+      - >-
+        openshift_oidc_auth.authorization.cluster_admin_group in
+        (
+          openshift_post_install_oidc_auth_ad_claims.stdout | from_json
+        ).groups
+  when: openshift_oidc_auth.validation.include_ad_trusted_user | bool
+  no_log: true
+
+- name: Assert the AD-trusted OIDC token was issued successfully
+  ansible.builtin.assert:
+    that:
+      - openshift_post_install_oidc_auth_ad_token.json.access_token is defined
+      - openshift_post_install_oidc_auth_ad_token.json.id_token is defined
+  when: openshift_oidc_auth.validation.include_ad_trusted_user | bool
+  no_log: true
+
+- name: Publish OpenShift OIDC auth summary
+  ansible.builtin.debug:
+    msg:
+      - >-
+        OpenShift OAuth now includes OIDC provider '{{ openshift_oidc_auth.identity_provider_name }}'
+        with issuer '{{ openshift_post_install_oidc_auth_issuer_url }}'.
+      - >-
+        Keycloak realm '{{ openshift_oidc_auth.realm_name }}' is configured with IdM compat LDAP federation at
+        '{{ openshift_oidc_auth.ldap_federation.connection_url }}'.
+      - >-
+        Native OIDC token validation user: '{{ openshift_oidc_auth.validation.native_test_user }}'.
+      - >-
+        AD-trusted OIDC token validation {{
+          'enabled for ' ~ openshift_oidc_auth.validation.ad_test_user
+          if openshift_oidc_auth.validation.include_ad_trusted_user | bool
+          else 'was skipped'
+        }}.

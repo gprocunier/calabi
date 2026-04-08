@@ -1,0 +1,70 @@
+---
+# AD-as-SoT / IdM-policy bridge contract for fresh deployments.
+#
+# The orchestration creates these groups directly when AD trust is enabled.
+# In-place migration from legacy group names is intentionally unsupported.
+
+ad_group_policy:
+  enabled: "{{ lab_configure_ad_trust | bool }}"
+  source_of_truth: active_directory
+  authorization_hub: idm
+  description_templates:
+    local: "Access group: {permission}"
+    external: "AD source group: {domain}/{group}"
+  notes:
+    - >-
+      AD remains the source of truth for users and source-side group
+      membership.
+    - >-
+      IdM local groups remain the policy and authorization boundary consumed by
+      RHEL, Keycloak, and OpenShift.
+    - >-
+      Trusted AD groups should be nested into IdM external groups, which are
+      then nested into local IdM POSIX groups.
+  mappings:
+    - name: openshift_admins
+      ad_group: ad-corp-openshift-admins
+      idm_external_group: ad-corp-openshift-admins
+      idm_local_group: access-openshift-admin
+      openshift_access:
+        cluster_role: cluster-admin
+      rhel_access: {}
+      consumers:
+        - keycloak_oidc_groups
+        - optional_ldap_group_sync
+    - name: linux_admins
+      ad_group: ad-corp-linux-admins
+      idm_external_group: ad-corp-linux-admins
+      idm_local_group: access-linux-admin
+      openshift_access: {}
+      rhel_access:
+        sudo_rule: admins-nopasswd-all
+      consumers:
+        - sssd
+        - ipa_sudo
+    - name: virtualization_admins
+      ad_group: ad-corp-openshift-virt-admins
+      idm_external_group: ad-corp-openshift-virt-admins
+      idm_local_group: access-virt-admin
+      openshift_access: {}
+      rhel_access: {}
+      consumers:
+        - keycloak_oidc_groups
+        - optional_ldap_group_sync
+    - name: developers
+      ad_group: ad-corp-developers
+      idm_external_group: ad-corp-developers
+      idm_local_group: access-developer
+      openshift_access: {}
+      rhel_access: {}
+      consumers:
+        - keycloak_oidc_groups
+        - optional_ldap_group_sync
+    - name: aap_admins
+      ad_group: ad-corp-aap-admins
+      idm_external_group: ad-corp-aap-admins
+      idm_local_group: access-aap-admin
+      openshift_access: {}
+      rhel_access: {}
+      consumers:
+        - aap_ldap_authenticator

@@ -37,6 +37,20 @@ ansible-galaxy collection install -r requirements.yml
 Current automation also assumes a modern Ansible controller environment. The
 live validation work on this repo has been using `ansible-core 2.18`.
 
+Recommended local validation tools before changing orchestration:
+
+- `yamllint`
+- `ansible-lint`
+- `shellcheck`
+
+Before pushing orchestration changes, run:
+
+```bash
+make validate
+```
+
+That validation lane is also what the repo CI runs on pull requests.
+
 ## What You Need In Public Cloud
 
 - a public-cloud account that can run an unfettered metal instance
@@ -76,6 +90,37 @@ For the current AWS implementation, that means:
   - a qcow2 cached on `virt-01`, or
   - a direct-download URL used by the automation
 - a RHEL AMI or equivalent host image source for the metal host
+
+## (OPTIONAL) What You Need From Microsoft
+
+Only needed when you plan to enable the optional AD DS / AD CS build.
+
+- Windows Server 2025 evaluation media from the Microsoft Evaluation Center:
+  - https://www.microsoft.com/en-us/evalcenter/download-windows-server-2025
+- the currently validated path is:
+  - `English (United States)`
+  - `ISO download`
+  - `64-bit edition`
+
+Place the downloaded ISO on `virt-01` at the path expected by the AD build:
+
+```bash
+/root/images/26100.32230.260111-0550.lt_release_svc_refresh_SERVER_EVAL_x64FRE_en-us.iso
+```
+
+You also need `virtio-win.iso` staged on `virt-01` for the Windows guest
+drivers and guest tools:
+
+```bash
+/root/images/virtio-win.iso
+```
+
+Current documented source for that ISO:
+
+- `virtio-win` driver installation guidance:
+  - https://virtio-win.github.io/Knowledge-Base/Driver-installation.html
+- direct ISO download referenced there:
+  - https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/latest-virtio/virtio-win.iso
 
 ## Local Secrets And Ignored Files
 
