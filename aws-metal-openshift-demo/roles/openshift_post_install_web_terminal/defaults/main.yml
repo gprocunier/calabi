@@ -27,3 +27,7 @@ openshift_post_install_web_terminal_tooling_packages:
   - traceroute
 openshift_post_install_web_terminal_pod_recovery_enabled: true
 openshift_post_install_web_terminal_pod_recovery_settle_seconds: 15
+openshift_post_install_web_terminal_expected_deployments:
+  - web-terminal-controller
+  - devworkspace-controller-manager
+  - devworkspace-webhook-server

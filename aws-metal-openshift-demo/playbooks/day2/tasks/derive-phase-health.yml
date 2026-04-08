@@ -41,6 +41,14 @@
       {{ openshift_oidc_auth.validation.ad_test_user | default('') }}
     openshift_post_install_probe_oidc_ad_test_password: >-
       {{ openshift_oidc_auth.validation.ad_test_password | default('') }}
+    openshift_post_install_probe_aap_auth_mode: >-
+      {{ openshift_aap.authentication.mode | default('keycloak') }}
+    openshift_post_install_probe_aap_authenticator_name: >-
+      {{
+        openshift_aap.keycloak.authenticator_name
+        if (openshift_aap.authentication.mode | default('keycloak')) == 'keycloak'
+        else openshift_aap.ldap.authenticator_name
+      }}
     openshift_post_install_probe_infra_nodes: >-
       {{
         openshift_install_cluster.nodes
@@ -553,11 +561,14 @@
     "${oc}" get ansibleautomationplatform "{{ openshift_aap.instance_name }}" -n "{{ openshift_aap.namespace }}" >/dev/null 2>&1 || { echo false; exit 0; }
     "${oc}" get automationcontroller "{{ openshift_aap.controller.name }}" -n "{{ openshift_aap.namespace }}" >/dev/null 2>&1 || { echo false; exit 0; }
     curl -skf "https://{{ openshift_aap.route_host }}/api/gateway/v1/ui_auth/" >/dev/null 2>&1 || { echo false; exit 0; }
+    ui_json="$(mktemp)"
     auth_json="$(mktemp)"
-    trap 'rm -f "${auth_json}"' EXIT
+    trap 'rm -f "${auth_json}" "${ui_json}"' EXIT
+    curl -sk "https://{{ openshift_aap.route_host }}/api/gateway/v1/ui_auth/" -o "${ui_json}" >/dev/null 2>&1 || { echo false; exit 0; }
     curl -sk -u "{{ openshift_aap.admin_username }}:{{ openshift_aap.admin_password }}" "https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticators/" -o "${auth_json}" >/dev/null 2>&1 || { echo false; exit 0; }
-    auth_present="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); name=sys.argv[2]; print("true" if any(item.get("name")==name for item in data.get("results", [])) else "false")' "${auth_json}" {{ openshift_aap.ldap.authenticator_name | quote }})"
-    if [[ "${csv_phase}" == "Succeeded" && "${auth_present}" == "true" ]]; then
+    auth_present="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); name=sys.argv[2]; print("true" if any(item.get("name")==name for item in data.get("results", [])) else "false")' "${auth_json}" {{ openshift_post_install_probe_aap_authenticator_name | quote }})"
+    sso_present="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1])); name=sys.argv[2]; print("true" if any(item.get("name")==name for item in data.get("ssos", [])) else "false")' "${ui_json}" {{ openshift_post_install_probe_aap_authenticator_name | quote }})"
+    if [[ "${csv_phase}" == "Succeeded" && "${auth_present}" == "true" && ( "{{ openshift_post_install_probe_aap_auth_mode }}" != "keycloak" || "${sso_present}" == "true" ) ]]; then
       echo true
     else
       echo false

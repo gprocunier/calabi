@@ -1,13 +1,4 @@
 ---
-- name: Derive OpenShift AAP orchestration context
-  ansible.builtin.set_fact:
-    openshift_post_install_aap_base_dn: >-
-      {{
-        idm_vm.domain.split('.')
-        | map('regex_replace', '^', 'dc=')
-        | join(',')
-      }}
-
 - name: Derive remaining OpenShift AAP orchestration context
   ansible.builtin.set_fact:
     openshift_post_install_aap_oc_local_path: >-
@@ -29,41 +20,37 @@
     openshift_post_install_aap_remote_instance_path: >-
       {{ openshift_post_install_aap_remote_dir }}/ansibleautomationplatform.yaml
     openshift_post_install_aap_remote_authenticator_payload_path: >-
-      {{ openshift_post_install_aap_remote_dir }}/ldap-authenticator.json
-    openshift_post_install_aap_remote_allow_map_payload_path: >-
-      {{ openshift_post_install_aap_remote_dir }}/ldap-allow-map.json
+      {{ openshift_post_install_aap_remote_dir }}/authenticator.json
     openshift_post_install_aap_remote_superuser_map_payload_path: >-
-      {{ openshift_post_install_aap_remote_dir }}/ldap-superuser-map.json
-    openshift_post_install_aap_ldap_bind_dn: >-
+      {{ openshift_post_install_aap_remote_dir }}/superuser-map.json
+    openshift_post_install_aap_keycloak_issuer_url: >-
+      https://{{ openshift_keycloak.route_host }}/realms/{{ openshift_aap.keycloak.realm_name }}
+    openshift_post_install_aap_keycloak_access_token_url: >-
+      https://{{ openshift_keycloak.route_host }}/realms/{{ openshift_aap.keycloak.realm_name }}/protocol/openid-connect/token
+    openshift_post_install_aap_keycloak_authorization_url: >-
+      https://{{ openshift_keycloak.route_host }}/realms/{{ openshift_aap.keycloak.realm_name }}/protocol/openid-connect/auth
+    openshift_post_install_aap_keycloak_admin_api_base_url: >-
+      https://{{ openshift_keycloak.route_host }}/admin/realms
+    openshift_post_install_aap_keycloak_client_redirect_uris:
+      - "https://{{ openshift_aap.route_host }}/*"
+    openshift_post_install_aap_authenticator_name: >-
       {{
-        openshift_aap.ldap.bind_dn
-        if openshift_aap.ldap.bind_dn | length > 0
-        else 'uid=admin,cn=users,cn=accounts,' ~ openshift_post_install_aap_base_dn
+        openshift_aap.keycloak.authenticator_name
+        if (openshift_aap.authentication.mode | default('keycloak')) == 'keycloak'
+        else openshift_aap.ldap.authenticator_name
       }}
-    openshift_post_install_aap_ldap_user_search_base_dn: >-
+    openshift_post_install_aap_required_group_names: >-
       {{
-        openshift_aap.ldap.user_search_base_dn
-        if openshift_aap.ldap.user_search_base_dn | length > 0
-        else 'cn=users,cn=accounts,' ~ openshift_post_install_aap_base_dn
+        openshift_aap.keycloak.required_group_names
+        if (openshift_aap.authentication.mode | default('keycloak')) == 'keycloak'
+        else []
       }}
-    openshift_post_install_aap_ldap_group_search_base_dn: >-
-      {{
-        openshift_aap.ldap.group_search_base_dn
-        if openshift_aap.ldap.group_search_base_dn | length > 0
-        else 'cn=groups,cn=accounts,' ~ openshift_post_install_aap_base_dn
-      }}
-    openshift_post_install_aap_ldap_require_group_dns: >-
-      {{
-        openshift_aap.ldap.require_group_dns
-        if openshift_aap.ldap.require_group_dns | length > 0
-        else ['cn=access-openshift-admin,cn=groups,cn=accounts,' ~ openshift_post_install_aap_base_dn]
-      }}
+
+- name: Derive the OpenShift AAP superuser map name
+  ansible.builtin.set_fact:
     openshift_post_install_aap_superuser_map_name: >-
       {{
-        (
-          openshift_post_install_aap_ldap_require_group_dns | first | regex_search('cn=([^,]+)', '\\1')
-        )[0]
-        ~ ' AAP superuser'
+        (openshift_post_install_aap_required_group_names | first) ~ ' AAP superuser'
       }}
 
 - name: Assert local AAP orchestration artifacts exist
@@ -639,59 +626,6 @@
         or
         (openshift_post_install_aap_controller_task_recovery_pods.stdout | trim | length == 0)
 
-- name: Render AAP LDAP authenticator payload
-  ansible.builtin.copy:
-    dest: "{{ openshift_post_install_aap_remote_authenticator_payload_path }}"
-    mode: "0600"
-    content: |-
-      {
-        "name": {{ openshift_aap.ldap.authenticator_name | to_json }},
-        "enabled": {{ openshift_aap.ldap.enabled | to_json }},
-        "create_objects": {{ openshift_aap.ldap.create_objects | to_json }},
-        "remove_users": {{ openshift_aap.ldap.remove_users | to_json }},
-        "type": "ansible_base.authentication.authenticator_plugins.ldap",
-        "order": 2,
-        "configuration": {
-          "SERVER_URI": [{{ openshift_aap.ldap.server_uri | to_json }}],
-          "BIND_DN": {{ openshift_post_install_aap_ldap_bind_dn | to_json }},
-          "BIND_PASSWORD": {{ openshift_aap.ldap.bind_password | to_json }},
-          "GROUP_TYPE": {{ openshift_aap.ldap.group_type | to_json }},
-          "GROUP_TYPE_PARAMS": {{ openshift_aap.ldap.group_type_parameters | to_json }},
-          "GROUP_SEARCH": [
-            {{ openshift_post_install_aap_ldap_group_search_base_dn | to_json }},
-            "SCOPE_SUBTREE",
-            {{ openshift_aap.ldap.group_search_filter | to_json }}
-          ],
-          "USER_ATTR_MAP": {
-            "username": "uid",
-            "email": "mail",
-            "first_name": "givenName",
-            "last_name": "sn"
-          },
-          "USER_SEARCH": [
-            {{ openshift_post_install_aap_ldap_user_search_base_dn | to_json }},
-            "SCOPE_SUBTREE",
-            {{ openshift_aap.ldap.user_search_filter | to_json }}
-          ]
-        }
-      }
-
-- name: Render AAP LDAP superuser-map payload
-  ansible.builtin.copy:
-    dest: "{{ openshift_post_install_aap_remote_superuser_map_payload_path }}"
-    mode: "0600"
-    content: |-
-      {
-        "name": {{ openshift_post_install_aap_superuser_map_name | to_json }},
-        "map_type": "is_superuser",
-        "revoke": true,
-        "triggers": {
-          "groups": {
-            "has_or": {{ openshift_post_install_aap_ldap_require_group_dns | to_json }}
-          }
-        }
-      }
-
 - name: Wait for AAP route to answer
   ansible.builtin.command:
     argv:
@@ -708,139 +642,503 @@
   delay: 10
   until: openshift_post_install_aap_ui_auth_status.stdout == '200'
 
-- name: Look up existing AAP LDAP authenticator
-  ansible.builtin.shell: |
-    set -o pipefail
-    curl -sku {{ openshift_aap.admin_username | quote }}:{{ openshift_aap.admin_password | quote }} \
-      -k \
-      https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticators/ \
-      -o {{ openshift_post_install_aap_remote_dir }}/authenticators.json
-    curl -sku {{ openshift_aap.admin_username | quote }}:{{ openshift_aap.admin_password | quote }} \
-      -k \
-      https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticators/ \
-      -o /dev/null >/dev/null 2>&1
-    python3 - <<'PY'
-    import json,sys
-    data=json.load(open("{{ openshift_post_install_aap_remote_dir }}/authenticators.json"))
-    matches=[x for x in data.get("results", []) if x.get("name") == {{ openshift_aap.ldap.authenticator_name | to_json }}]
-    print(matches[0]["id"] if matches else "")
-    PY
-  args:
-    executable: /bin/bash
-  register: openshift_post_install_aap_existing_authenticator_id
-  changed_when: false
+- name: Obtain a Keycloak admin token for AAP authentication configuration
+  ansible.builtin.uri:
+    url: "https://{{ openshift_keycloak.route_host }}/realms/master/protocol/openid-connect/token"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      client_id: admin-cli
+      grant_type: password
+      username: "{{ openshift_keycloak.bootstrap_admin_username }}"
+      password: "{{ openshift_keycloak.bootstrap_admin_password }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_aap_remote_idm_ca_path }}"
+    status_code: 200
+    return_content: true
+  register: openshift_post_install_aap_keycloak_admin_token
+  no_log: true
 
-- name: Create AAP LDAP authenticator when absent
-  ansible.builtin.shell: |
-    set -euo pipefail
-    curl -sku {{ openshift_aap.admin_username | quote }}:{{ openshift_aap.admin_password | quote }} \
-      -k \
-      --fail-with-body \
-      -H 'Content-Type: application/json' \
-      -X POST \
-      https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticators/ \
-      --data-binary @{{ openshift_post_install_aap_remote_authenticator_payload_path }} \
-      -o {{ openshift_post_install_aap_remote_dir }}/authenticator-create.json
-    python3 - <<'PY'
-    import json
-    data=json.load(open("{{ openshift_post_install_aap_remote_dir }}/authenticator-create.json"))
-    print(data.get("id", ""))
-    PY
-  args:
-    executable: /bin/bash
-  register: openshift_post_install_aap_create_authenticator_id
-  changed_when: true
-  when: openshift_post_install_aap_existing_authenticator_id.stdout | length == 0
+- name: Capture the current AAP Keycloak client in the OIDC realm
+  ansible.builtin.uri:
+    url: >-
+      {{ openshift_post_install_aap_keycloak_admin_api_base_url }}/{{ openshift_aap.keycloak.realm_name }}/clients?clientId={{
+      openshift_aap.keycloak.client_id }}
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_aap_keycloak_admin_token.json.access_token }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_aap_remote_idm_ca_path }}"
+    status_code: 200
+    return_content: true
+  register: openshift_post_install_aap_keycloak_client_get
+  no_log: true
 
-- name: Seed resulting AAP LDAP authenticator id from existing or create response
+- name: Derive the AAP Keycloak client representation
   ansible.builtin.set_fact:
-    openshift_post_install_aap_authenticator_id_seed: >-
+    openshift_post_install_aap_keycloak_client_representation:
+      clientId: "{{ openshift_aap.keycloak.client_id }}"
+      name: AAP Gateway
+      enabled: true
+      protocol: openid-connect
+      publicClient: false
+      secret: "{{ openshift_aap.keycloak.client_secret }}"
+      standardFlowEnabled: true
+      directAccessGrantsEnabled: true
+      serviceAccountsEnabled: false
+      frontchannelLogout: true
+      redirectUris: "{{ openshift_post_install_aap_keycloak_client_redirect_uris }}"
+      webOrigins:
+        - "https://{{ openshift_aap.route_host }}"
+      defaultClientScopes:
+        - profile
+        - email
+        - roles
+        - web-origins
+
+- name: Create the AAP Keycloak client when missing
+  ansible.builtin.uri:
+    url: >-
+      {{ openshift_post_install_aap_keycloak_admin_api_base_url }}/{{ openshift_aap.keycloak.realm_name }}/clients
+    method: POST
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_aap_keycloak_admin_token.json.access_token }}"
+    body_format: json
+    body: "{{ openshift_post_install_aap_keycloak_client_representation }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_aap_remote_idm_ca_path }}"
+    status_code: [201, 409]
+  when: (openshift_post_install_aap_keycloak_client_get.json | length) == 0
+  changed_when: true
+  no_log: true
+
+- name: Refresh the current AAP Keycloak client state
+  ansible.builtin.uri:
+    url: >-
+      {{ openshift_post_install_aap_keycloak_admin_api_base_url }}/{{ openshift_aap.keycloak.realm_name }}/clients?clientId={{
+      openshift_aap.keycloak.client_id }}
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_aap_keycloak_admin_token.json.access_token }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_aap_remote_idm_ca_path }}"
+    status_code: 200
+    return_content: true
+  register: openshift_post_install_aap_keycloak_client_refresh
+  no_log: true
+
+- name: Update the AAP Keycloak client
+  ansible.builtin.uri:
+    url: >-
+      {{ openshift_post_install_aap_keycloak_admin_api_base_url }}/{{ openshift_aap.keycloak.realm_name }}/clients/{{
+      (openshift_post_install_aap_keycloak_client_refresh.json | first).id }}
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_aap_keycloak_admin_token.json.access_token }}"
+    body_format: json
+    body: >-
       {{
-        openshift_post_install_aap_existing_authenticator_id.stdout
-        if openshift_post_install_aap_existing_authenticator_id.stdout | length > 0
-        else (
-          openshift_post_install_aap_create_authenticator_id.stdout
-          | default('')
-        )
+        openshift_post_install_aap_keycloak_client_representation
+        | combine({'id': (openshift_post_install_aap_keycloak_client_refresh.json | first).id})
       }}
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_aap_remote_idm_ca_path }}"
+    status_code: 204
+  changed_when: true
+  no_log: true
 
-- name: Look up resulting AAP LDAP authenticator id
-  ansible.builtin.shell: |
-    set -o pipefail
-    if [[ -n {{ openshift_post_install_aap_authenticator_id_seed | quote }} ]]; then
-      printf '%s\n' {{ openshift_post_install_aap_authenticator_id_seed | quote }}
-      exit 0
-    fi
-    curl -sku {{ openshift_aap.admin_username | quote }}:{{ openshift_aap.admin_password | quote }} \
-      -k \
-      https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticators/ \
-      -o {{ openshift_post_install_aap_remote_dir }}/authenticators.json
-    curl -sku {{ openshift_aap.admin_username | quote }}:{{ openshift_aap.admin_password | quote }} \
-      -k \
-      https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticators/ \
-      -o /dev/null >/dev/null 2>&1
-    python3 - <<'PY'
-    import json,sys
-    data=json.load(open("{{ openshift_post_install_aap_remote_dir }}/authenticators.json"))
-    matches=[x for x in data.get("results", []) if x.get("name") == {{ openshift_aap.ldap.authenticator_name | to_json }}]
-    print(matches[0]["id"] if matches else "")
-    PY
-  args:
-    executable: /bin/bash
-  register: openshift_post_install_aap_authenticator_id
-  changed_when: false
-  retries: 12
-  delay: 5
-  until: openshift_post_install_aap_authenticator_id.stdout | length > 0
+- name: Capture current AAP Keycloak client protocol mappers
+  ansible.builtin.uri:
+    url: >-
+      {{ openshift_post_install_aap_keycloak_admin_api_base_url }}/{{ openshift_aap.keycloak.realm_name }}/clients/{{
+      (openshift_post_install_aap_keycloak_client_refresh.json | first).id }}/protocol-mappers/models
+    method: GET
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_aap_keycloak_admin_token.json.access_token }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_aap_remote_idm_ca_path }}"
+    status_code: 200
+    return_content: true
+  register: openshift_post_install_aap_keycloak_client_protocol_mappers
+  no_log: true
 
-- name: Assert AAP LDAP authenticator exists
+- name: Derive the AAP Keycloak group protocol mapper id
+  ansible.builtin.set_fact:
+    openshift_post_install_aap_keycloak_group_mapper_id: >-
+      {{
+        (
+          openshift_post_install_aap_keycloak_client_protocol_mappers.json
+          | selectattr('name', 'equalto', openshift_aap.keycloak.protocol_mapper.name)
+          | map(attribute='id')
+          | first
+        ) | default('')
+      }}
+    openshift_post_install_aap_keycloak_group_protocol_mapper:
+      name: "{{ openshift_aap.keycloak.protocol_mapper.name }}"
+      protocol: openid-connect
+      protocolMapper: oidc-group-membership-mapper
+      config:
+        full.path: "{{ openshift_aap.keycloak.protocol_mapper.full_path | ternary('true', 'false') }}"
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "true"
+        claim.name: "{{ openshift_aap.keycloak.protocol_mapper.claim_name }}"
+        multivalued: "true"
+    openshift_post_install_aap_keycloak_audience_mapper_id: >-
+      {{
+        (
+          openshift_post_install_aap_keycloak_client_protocol_mappers.json
+          | selectattr('name', 'equalto', openshift_aap.keycloak.audience_mapper.name)
+          | map(attribute='id')
+          | first
+        ) | default('')
+      }}
+    openshift_post_install_aap_keycloak_audience_protocol_mapper:
+      name: "{{ openshift_aap.keycloak.audience_mapper.name }}"
+      protocol: openid-connect
+      protocolMapper: oidc-audience-mapper
+      config:
+        included.client.audience: "{{ openshift_aap.keycloak.audience_mapper.included_client_audience }}"
+        id.token.claim: "true"
+        access.token.claim: "true"
+        userinfo.token.claim: "false"
+
+- name: Create the AAP Keycloak group protocol mapper when missing
+  ansible.builtin.uri:
+    url: >-
+      {{ openshift_post_install_aap_keycloak_admin_api_base_url }}/{{ openshift_aap.keycloak.realm_name }}/clients/{{
+      (openshift_post_install_aap_keycloak_client_refresh.json | first).id }}/protocol-mappers/models
+    method: POST
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_aap_keycloak_admin_token.json.access_token }}"
+    body_format: json
+    body: "{{ openshift_post_install_aap_keycloak_group_protocol_mapper }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_aap_remote_idm_ca_path }}"
+    status_code: [201, 409]
+  when: openshift_post_install_aap_keycloak_group_mapper_id | length == 0
+  changed_when: true
+  no_log: true
+
+- name: Update the AAP Keycloak group protocol mapper when present
+  ansible.builtin.uri:
+    url: >-
+      {{ openshift_post_install_aap_keycloak_admin_api_base_url }}/{{ openshift_aap.keycloak.realm_name }}/clients/{{
+      (openshift_post_install_aap_keycloak_client_refresh.json | first).id }}/protocol-mappers/models/{{
+      openshift_post_install_aap_keycloak_group_mapper_id }}
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_aap_keycloak_admin_token.json.access_token }}"
+    body_format: json
+    body: >-
+      {{
+        openshift_post_install_aap_keycloak_group_protocol_mapper
+        | combine({'id': openshift_post_install_aap_keycloak_group_mapper_id})
+      }}
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_aap_remote_idm_ca_path }}"
+    status_code: 204
+  when: openshift_post_install_aap_keycloak_group_mapper_id | length > 0
+  changed_when: true
+  no_log: true
+
+- name: Create the AAP Keycloak audience protocol mapper when missing
+  ansible.builtin.uri:
+    url: >-
+      {{ openshift_post_install_aap_keycloak_admin_api_base_url }}/{{ openshift_aap.keycloak.realm_name }}/clients/{{
+      (openshift_post_install_aap_keycloak_client_refresh.json | first).id }}/protocol-mappers/models
+    method: POST
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_aap_keycloak_admin_token.json.access_token }}"
+    body_format: json
+    body: "{{ openshift_post_install_aap_keycloak_audience_protocol_mapper }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_aap_remote_idm_ca_path }}"
+    status_code: [201, 409]
+  when: openshift_post_install_aap_keycloak_audience_mapper_id | length == 0
+  changed_when: true
+  no_log: true
+
+- name: Update the AAP Keycloak audience protocol mapper when present
+  ansible.builtin.uri:
+    url: >-
+      {{ openshift_post_install_aap_keycloak_admin_api_base_url }}/{{ openshift_aap.keycloak.realm_name }}/clients/{{
+      (openshift_post_install_aap_keycloak_client_refresh.json | first).id }}/protocol-mappers/models/{{
+      openshift_post_install_aap_keycloak_audience_mapper_id }}
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ openshift_post_install_aap_keycloak_admin_token.json.access_token }}"
+    body_format: json
+    body: >-
+      {{
+        openshift_post_install_aap_keycloak_audience_protocol_mapper
+        | combine({'id': openshift_post_install_aap_keycloak_audience_mapper_id})
+      }}
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_aap_remote_idm_ca_path }}"
+    status_code: 204
+  when: openshift_post_install_aap_keycloak_audience_mapper_id | length > 0
+  changed_when: true
+  no_log: true
+
+- name: Capture the public Keycloak realm metadata for AAP authentication
+  ansible.builtin.uri:
+    url: "{{ openshift_post_install_aap_keycloak_issuer_url }}"
+    method: GET
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_aap_remote_idm_ca_path }}"
+    status_code: 200
+    return_content: true
+  register: openshift_post_install_aap_keycloak_realm_metadata
+  no_log: true
+
+- name: Assert the AAP Keycloak realm exposes a public key
   ansible.builtin.assert:
     that:
-      - openshift_post_install_aap_authenticator_id.stdout | length > 0
-    fail_msg: AAP LDAP authenticator was not created successfully.
+      - openshift_post_install_aap_keycloak_realm_metadata.json.public_key is defined
+      - openshift_post_install_aap_keycloak_realm_metadata.json.public_key | length > 0
+    fail_msg: The Keycloak realm for AAP authentication did not expose a public key.
 
-- name: Look up existing AAP authenticator maps
-  ansible.builtin.shell: |
-    set -o pipefail
-    curl -sku {{ openshift_aap.admin_username | quote }}:{{ openshift_aap.admin_password | quote }} \
-      -k \
-      https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticator_maps/ \
-      -o {{ openshift_post_install_aap_remote_dir }}/authenticator-maps.json
-    curl -sku {{ openshift_aap.admin_username | quote }}:{{ openshift_aap.admin_password | quote }} \
-      -k \
-      https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticator_maps/ \
-      -o /dev/null >/dev/null 2>&1
-    python3 - <<'PY'
-    import json,sys
-    data=json.load(open("{{ openshift_post_install_aap_remote_dir }}/authenticator-maps.json"))
-    names={item["name"] for item in data.get("results", [])}
-    print("\n".join(sorted(names)))
-    PY
-  args:
-    executable: /bin/bash
-  register: openshift_post_install_aap_existing_map_names
-  changed_when: false
+- name: Render the AAP Keycloak authenticator payload
+  ansible.builtin.set_fact:
+    openshift_post_install_aap_authenticator_payload:
+      name: "{{ openshift_aap.keycloak.authenticator_name }}"
+      enabled: true
+      create_objects: "{{ openshift_aap.authentication.create_objects }}"
+      remove_users: "{{ openshift_aap.authentication.remove_users }}"
+      type: ansible_base.authentication.authenticator_plugins.keycloak
+      order: "{{ openshift_aap.authentication.order | int }}"
+      configuration:
+        ACCESS_TOKEN_URL: "{{ openshift_post_install_aap_keycloak_access_token_url }}"
+        AUTHORIZATION_URL: "{{ openshift_post_install_aap_keycloak_authorization_url }}"
+        KEY: "{{ openshift_aap.keycloak.client_id }}"
+        PUBLIC_KEY: "{{ openshift_post_install_aap_keycloak_realm_metadata.json.public_key }}"
+        SECRET: "{{ openshift_aap.keycloak.client_secret }}"
+        GROUPS_CLAIM: "{{ openshift_aap.keycloak.groups_claim }}"
 
-- name: Create AAP LDAP superuser map when absent
-  ansible.builtin.shell: |
-    set -o pipefail
-    python3 - <<'PY' > {{ openshift_post_install_aap_remote_dir }}/ldap-superuser-map-final.json
-    import json
-    payload=json.load(open({{ openshift_post_install_aap_remote_superuser_map_payload_path | to_json }}))
-    payload["authenticator"]={{ openshift_post_install_aap_authenticator_id.stdout | int }}
-    print(json.dumps(payload))
-    PY
-    curl -sku {{ openshift_aap.admin_username | quote }}:{{ openshift_aap.admin_password | quote }} \
-      -k \
-      --fail-with-body \
-      -H 'Content-Type: application/json' \
-      -X POST \
-      https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticator_maps/ \
-      --data-binary @{{ openshift_post_install_aap_remote_dir }}/ldap-superuser-map-final.json
-  args:
-    executable: /bin/bash
+- name: Write the AAP Keycloak authenticator payload for debugging
+  ansible.builtin.copy:
+    dest: "{{ openshift_post_install_aap_remote_authenticator_payload_path }}"
+    mode: "0600"
+    content: "{{ openshift_post_install_aap_authenticator_payload | to_nice_json }}"
+
+- name: Render the AAP Keycloak superuser-map payload
+  ansible.builtin.set_fact:
+    openshift_post_install_aap_superuser_map_payload:
+      name: "{{ openshift_post_install_aap_superuser_map_name }}"
+      map_type: is_superuser
+      revoke: true
+      triggers:
+        groups:
+          has_or: "{{ openshift_post_install_aap_required_group_names }}"
+
+- name: Write the AAP Keycloak superuser-map payload for debugging
+  ansible.builtin.copy:
+    dest: "{{ openshift_post_install_aap_remote_superuser_map_payload_path }}"
+    mode: "0600"
+    content: "{{ openshift_post_install_aap_superuser_map_payload | to_nice_json }}"
+
+- name: Capture existing AAP authenticators
+  ansible.builtin.uri:
+    url: "https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticators/"
+    method: GET
+    url_username: "{{ openshift_aap.admin_username }}"
+    url_password: "{{ openshift_aap.admin_password }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+    return_content: true
+  register: openshift_post_install_aap_authenticators
+  no_log: true
+
+- name: Derive the current AAP authenticator ids
+  ansible.builtin.set_fact:
+    openshift_post_install_aap_authenticator_id: >-
+      {{
+        (
+          openshift_post_install_aap_authenticators.json.results
+          | selectattr('name', 'equalto', openshift_aap.keycloak.authenticator_name)
+          | map(attribute='id')
+          | first
+        ) | default('')
+      }}
+    openshift_post_install_aap_legacy_ldap_authenticator_id: >-
+      {{
+        (
+          openshift_post_install_aap_authenticators.json.results
+          | selectattr('name', 'equalto', openshift_aap.ldap.authenticator_name)
+          | map(attribute='id')
+          | first
+        ) | default('')
+      }}
+
+- name: Create the AAP Keycloak authenticator when absent
+  ansible.builtin.uri:
+    url: "https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticators/"
+    method: POST
+    url_username: "{{ openshift_aap.admin_username }}"
+    url_password: "{{ openshift_aap.admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body: "{{ openshift_post_install_aap_authenticator_payload }}"
+    validate_certs: false
+    status_code: 201
+    return_content: true
+  register: openshift_post_install_aap_authenticator_create
+  when: openshift_post_install_aap_authenticator_id | length == 0
   changed_when: true
-  when: openshift_post_install_aap_superuser_map_name not in openshift_post_install_aap_existing_map_names.stdout_lines
+  no_log: true
+
+- name: Update the AAP Keycloak authenticator when present
+  ansible.builtin.uri:
+    url: "https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticators/{{ openshift_post_install_aap_authenticator_id }}/"
+    method: PUT
+    url_username: "{{ openshift_aap.admin_username }}"
+    url_password: "{{ openshift_aap.admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body: "{{ openshift_post_install_aap_authenticator_payload | combine({'id': (openshift_post_install_aap_authenticator_id | int)}) }}"
+    validate_certs: false
+    status_code: 200
+    return_content: true
+  when: openshift_post_install_aap_authenticator_id | length > 0
+  changed_when: true
+  no_log: true
+
+- name: Refresh the resulting AAP authenticators
+  ansible.builtin.uri:
+    url: "https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticators/"
+    method: GET
+    url_username: "{{ openshift_aap.admin_username }}"
+    url_password: "{{ openshift_aap.admin_password }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+    return_content: true
+  register: openshift_post_install_aap_authenticators_refresh
+  no_log: true
+
+- name: Derive the resulting AAP Keycloak authenticator id
+  ansible.builtin.set_fact:
+    openshift_post_install_aap_authenticator_id: >-
+      {{
+        (
+          openshift_post_install_aap_authenticators_refresh.json.results
+          | selectattr('name', 'equalto', openshift_aap.keycloak.authenticator_name)
+          | map(attribute='id')
+          | first
+        ) | default('')
+      }}
+    openshift_post_install_aap_legacy_ldap_authenticator_id: >-
+      {{
+        (
+          openshift_post_install_aap_authenticators_refresh.json.results
+          | selectattr('name', 'equalto', openshift_aap.ldap.authenticator_name)
+          | map(attribute='id')
+          | first
+        ) | default('')
+      }}
+
+- name: Assert the AAP Keycloak authenticator exists
+  ansible.builtin.assert:
+    that:
+      - openshift_post_install_aap_authenticator_id | length > 0
+    fail_msg: AAP Keycloak authenticator was not created successfully.
+
+- name: Capture existing AAP authenticator maps
+  ansible.builtin.uri:
+    url: "https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticator_maps/"
+    method: GET
+    url_username: "{{ openshift_aap.admin_username }}"
+    url_password: "{{ openshift_aap.admin_password }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+    return_content: true
+  register: openshift_post_install_aap_authenticator_maps
+  no_log: true
+
+- name: Derive the current AAP superuser map id
+  ansible.builtin.set_fact:
+    openshift_post_install_aap_superuser_map_id: >-
+      {{
+        (
+          openshift_post_install_aap_authenticator_maps.json.results
+          | selectattr('name', 'equalto', openshift_post_install_aap_superuser_map_name)
+          | map(attribute='id')
+          | first
+        ) | default('')
+      }}
+    openshift_post_install_aap_legacy_ldap_map_ids: >-
+      {{
+        (
+          openshift_post_install_aap_authenticator_maps.json.results
+          | selectattr('authenticator', 'equalto', (openshift_post_install_aap_legacy_ldap_authenticator_id | int))
+          | map(attribute='id')
+          | list
+        )
+        if openshift_post_install_aap_legacy_ldap_authenticator_id | length > 0
+        else []
+      }}
+
+- name: Create the AAP Keycloak superuser map when absent
+  ansible.builtin.uri:
+    url: "https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticator_maps/"
+    method: POST
+    url_username: "{{ openshift_aap.admin_username }}"
+    url_password: "{{ openshift_aap.admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body: "{{ openshift_post_install_aap_superuser_map_payload | combine({'authenticator': (openshift_post_install_aap_authenticator_id | int)}) }}"
+    validate_certs: false
+    status_code: 201
+    return_content: true
+  when: openshift_post_install_aap_superuser_map_id | length == 0
+  changed_when: true
+  no_log: true
+
+- name: Update the AAP Keycloak superuser map when present
+  ansible.builtin.uri:
+    url: "https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticator_maps/{{ openshift_post_install_aap_superuser_map_id }}/"
+    method: PUT
+    url_username: "{{ openshift_aap.admin_username }}"
+    url_password: "{{ openshift_aap.admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body: "{{ openshift_post_install_aap_superuser_map_payload | combine({'id': (openshift_post_install_aap_superuser_map_id | int), 'authenticator': (openshift_post_install_aap_authenticator_id | int)}) }}"
+    validate_certs: false
+    status_code: 200
+    return_content: true
+  when: openshift_post_install_aap_superuser_map_id | length > 0
+  changed_when: true
+  no_log: true
+
+- name: Delete any legacy AAP LDAP authenticator maps
+  ansible.builtin.uri:
+    url: "https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticator_maps/{{ item }}/"
+    method: DELETE
+    url_username: "{{ openshift_aap.admin_username }}"
+    url_password: "{{ openshift_aap.admin_password }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 204
+  loop: "{{ openshift_post_install_aap_legacy_ldap_map_ids }}"
+  when: openshift_post_install_aap_legacy_ldap_map_ids | length > 0
+  changed_when: true
+  no_log: true
+
+- name: Delete the legacy AAP LDAP authenticator when present
+  ansible.builtin.uri:
+    url: "https://{{ openshift_aap.route_host }}/api/gateway/v1/authenticators/{{ openshift_post_install_aap_legacy_ldap_authenticator_id }}/"
+    method: DELETE
+    url_username: "{{ openshift_aap.admin_username }}"
+    url_password: "{{ openshift_aap.admin_password }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 204
+  when: openshift_post_install_aap_legacy_ldap_authenticator_id | length > 0
+  changed_when: true
+  no_log: true
 
 - name: Restart AAP gateway deployment after CA bundle/auth changes
   ansible.builtin.command:
@@ -855,7 +1153,7 @@
     KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
   changed_when: true
 
-- name: Wait for AAP gateway rollout after LDAP changes
+- name: Wait for AAP gateway rollout after authentication changes
   ansible.builtin.command:
     argv:
       - "{{ openshift_post_install_aap_remote_oc_path }}"
@@ -869,28 +1167,152 @@
     KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
   changed_when: false
 
-- name: Validate AAP LDAP login for the configured user
+- name: Capture AAP UI authentication options after Keycloak changes
+  ansible.builtin.uri:
+    url: "https://{{ openshift_aap.route_host }}/api/gateway/v1/ui_auth/"
+    method: GET
+    validate_certs: false
+    status_code: 200
+    return_content: true
+  register: openshift_post_install_aap_ui_auth
+
+- name: Assert AAP UI authentication exposes the Keycloak SSO entry
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          openshift_post_install_aap_ui_auth.json.ssos
+          | selectattr('name', 'equalto', openshift_aap.keycloak.authenticator_name)
+          | list
+          | length
+        ) > 0
+      - >-
+        (
+          openshift_post_install_aap_ui_auth.json.passwords
+          | selectattr('name', 'equalto', openshift_aap.ldap.authenticator_name)
+          | list
+          | length
+        ) == 0
+    fail_msg: AAP UI authentication did not expose the expected Keycloak SSO entry cleanly.
+
+- name: Validate Keycloak token issuance for the configured AAP SSO user
+  ansible.builtin.uri:
+    url: "{{ openshift_post_install_aap_keycloak_access_token_url }}"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      client_id: "{{ openshift_aap.keycloak.client_id }}"
+      client_secret: "{{ openshift_aap.keycloak.client_secret }}"
+      grant_type: password
+      username: "{{ openshift_aap.keycloak.validation_username }}"
+      password: "{{ openshift_aap.keycloak.validation_password }}"
+    validate_certs: true
+    ca_path: "{{ openshift_post_install_aap_remote_idm_ca_path }}"
+    status_code: 200
+    return_content: true
+  register: openshift_post_install_aap_keycloak_validation_token
+  no_log: true
+
+- name: Decode the AAP Keycloak access token claims
   ansible.builtin.shell: |
-    set -o pipefail
-    TMPDIR="$(mktemp -d)"
-    trap 'rm -rf "${TMPDIR}"' EXIT
-    curl -skc "${TMPDIR}/cookies.txt" \
-      https://{{ openshift_aap.route_host }}/api/gateway/v1/login/ \
-      -o /dev/null
-    CSRF_TOKEN="$(awk '/csrftoken/ {print $7}' "${TMPDIR}/cookies.txt" | tail -n1)"
-    curl -skb "${TMPDIR}/cookies.txt" -c "${TMPDIR}/cookies.txt" \
-      -e https://{{ openshift_aap.route_host }}/api/gateway/v1/login/ \
-      -X POST \
-      https://{{ openshift_aap.route_host }}/api/gateway/v1/login/ \
-      --data-urlencode "csrfmiddlewaretoken=${CSRF_TOKEN}" \
-      --data-urlencode "username={{ openshift_aap.validation_username }}" \
-      --data-urlencode "password={{ openshift_aap.validation_password }}" \
-      --data-urlencode "next=/api/gateway/v1/" \
-      -o /dev/null -w "%{http_code}"
+    python3 - <<'PY'
+    import base64, json, os
+    token = os.environ["OIDC_ACCESS_TOKEN"]
+    payload = token.split(".")[1]
+    payload += "=" * (-len(payload) % 4)
+    print(json.dumps(json.loads(base64.urlsafe_b64decode(payload.encode()).decode())))
+    PY
   args:
     executable: /bin/bash
-  register: openshift_post_install_aap_ldap_login_status
+  register: openshift_post_install_aap_keycloak_token_claims
   changed_when: false
-  retries: 1
-  delay: 1
-  until: openshift_post_install_aap_ldap_login_status.stdout == '302'
+  environment:
+    OIDC_ACCESS_TOKEN: "{{ openshift_post_install_aap_keycloak_validation_token.json.access_token }}"
+  no_log: true
+
+- name: Assert the AAP Keycloak access token includes the required admin group
+  ansible.builtin.assert:
+    that:
+      - openshift_post_install_aap_keycloak_validation_token.json.access_token is defined
+      - >-
+        (
+          openshift_aap.keycloak.required_group_names
+          | difference(
+              (
+                (openshift_post_install_aap_keycloak_token_claims.stdout | from_json).groups
+                | default([])
+              )
+            )
+          | length
+        ) == 0
+    fail_msg: The AAP Keycloak access token did not contain the expected admin group claims.
+  no_log: true
+
+- name: Validate AAP Keycloak login for the configured user
+  ansible.builtin.shell: |
+    set -o pipefail
+    python3 - <<'PY'
+    import html, json, re, sys, urllib.parse
+    import requests
+
+    aap_base = "https://{{ openshift_aap.route_host }}"
+    username = {{ openshift_aap.keycloak.validation_username | to_json }}
+    password = {{ openshift_aap.keycloak.validation_password | to_json }}
+    authenticator_name = {{ openshift_aap.keycloak.authenticator_name | to_json }}
+
+    session = requests.Session()
+    session.verify = False
+
+    ui_auth = session.get(f"{aap_base}/api/gateway/v1/ui_auth/", timeout=30)
+    ui_auth.raise_for_status()
+    payload = ui_auth.json()
+    sso_entry = next((item for item in payload.get("ssos", []) if item.get("name") == authenticator_name), None)
+    if not sso_entry:
+        raise SystemExit("missing_sso_entry")
+
+    login_url = (
+        sso_entry.get("login_url")
+        or sso_entry.get("url")
+        or sso_entry.get("href")
+    )
+    if not login_url and sso_entry.get("slug"):
+        login_url = f"/api/gateway/v1/login/{sso_entry['slug']}/"
+    if not login_url:
+        raise SystemExit("missing_sso_login_url")
+    login_url = urllib.parse.urljoin(aap_base, login_url)
+
+    login_page = session.get(login_url, allow_redirects=True, timeout=60)
+    login_page.raise_for_status()
+    form_match = re.search(r'<form[^>]+id=["\\\']kc-form-login["\\\'][^>]+action=["\\\']([^"\\\']+)', login_page.text)
+    if not form_match:
+        form_match = re.search(r'<form[^>]+action=["\\\']([^"\\\']+)[^>]*id=["\\\']kc-form-login["\\\']', login_page.text)
+    if not form_match:
+        raise SystemExit("missing_keycloak_login_form")
+    action_url = urllib.parse.urljoin(login_page.url, html.unescape(form_match.group(1)))
+
+    fields = {name: value for name, value in re.findall(r'<input[^>]+type=["\\\']hidden["\\\'][^>]+name=["\\\']([^"\\\']+)["\\\'][^>]+value=["\\\']([^"\\\']*)["\\\']', login_page.text)}
+    fields["username"] = username
+    fields["password"] = password
+    fields.setdefault("credentialId", "")
+
+    complete = session.post(action_url, data=fields, allow_redirects=True, timeout=90)
+    if "Invalid username or password" in complete.text:
+        raise SystemExit("keycloak_login_rejected")
+    if "aap.apps.ocp.workshop.lan" not in complete.url:
+        raise SystemExit(f"unexpected_final_url={complete.url}")
+
+    users_response = session.get(f"{aap_base}/api/gateway/v1/users/", allow_redirects=False, timeout=30)
+    if users_response.status_code != 200:
+        raise SystemExit(f"unexpected_users_status={users_response.status_code}")
+
+    print(json.dumps({
+        "final_url": complete.url,
+        "users_status": users_response.status_code,
+        "sso_entry": sso_entry
+    }))
+    PY
+  args:
+    executable: /bin/bash
+  register: openshift_post_install_aap_keycloak_login_status
+  changed_when: false
+  no_log: true

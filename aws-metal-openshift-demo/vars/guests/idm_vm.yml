@@ -58,7 +58,7 @@ idm_server:
   ds_password: "{{ lab_default_password | default('') }}"
   admin_password: "{{ lab_default_password | default('') }}"
   pki:
-    mode: "{{ lab_pki_mode }}"
+    mode: "{{ lab_pki_mode | default('idm-root') }}"
     external_ca_type: ms-cs
     external_ca_profile: SubCA
     controller_work_root: "{{ lookup('env', 'HOME') }}/.local/state/calabi-pki"

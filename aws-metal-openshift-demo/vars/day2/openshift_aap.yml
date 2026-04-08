@@ -33,22 +33,37 @@ openshift_aap:
     disabled: true
   no_log: false
   image_pull_policy: IfNotPresent
-  ldap:
-    authenticator_name: Red Hat Identity Management
-    enabled: true
+  authentication:
+    mode: keycloak
     create_objects: true
     remove_users: false
-    login_prompt: Red Hat Identity Management
-    server_uri: ldaps://idm-01.workshop.lan
-    bind_dn: cn=Directory Manager
-    bind_password: "{{ idm_server.ds_password }}"
-    user_search_base_dn: ""
-    group_search_base_dn: ""
-    user_search_filter: uid=%(user)s
-    group_search_filter: (objectClass=groupOfNames)
-    group_type: MemberDNGroupType
-    group_type_parameters:
-      member_attr: member
-      name_attr: cn
-    require_group_dns:
-      - cn=access-openshift-admin,cn=groups,cn=accounts,dc=workshop,dc=lan
+    order: 2
+  keycloak:
+    authenticator_name: Red Hat build of Keycloak
+    realm_name: "{{ openshift_oidc_auth.realm_name }}"
+    client_id: aap
+    client_secret: "{{ lab_default_password | default('') }}"
+    groups_claim: groups
+    required_group_names:
+      - access-openshift-admin
+    protocol_mapper:
+      name: groups
+      claim_name: groups
+      full_path: false
+    audience_mapper:
+      name: aap-audience
+      included_client_audience: aap
+    validation_username: >-
+      {{
+        openshift_oidc_auth.validation.ad_test_user
+        if (lab_configure_ad_trust | default(false) | bool)
+        else openshift_oidc_auth.validation.native_test_user
+      }}
+    validation_password: >-
+      {{
+        openshift_oidc_auth.validation.ad_test_password
+        if (lab_configure_ad_trust | default(false) | bool)
+        else openshift_oidc_auth.validation.native_test_password
+      }}
+  ldap:
+    authenticator_name: Red Hat Identity Management
