@@ -336,6 +336,8 @@ a {
 
 .example-block {
   list-style: none;
+  margin-left: 0;
+  padding-left: 0;
 }
 
 .page-shell {
