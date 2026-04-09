@@ -13,11 +13,10 @@ Nearby docs:
 <a href="./portability-and-gap-analysis.md"><kbd>&nbsp;&nbsp;PORTABILITY / GAPS&nbsp;&nbsp;</kbd></a>
 <a href="./README.md"><kbd>&nbsp;&nbsp;ON-PREM DOCS MAP&nbsp;&nbsp;</kbd></a>
 
-## Why This Matters
+## Scope
 
-Use this page to decide whether your on-prem host is close enough to the
-validated `m5.metal` baseline or whether you need to deliberately shrink the
-lab profile.
+Use this guidance to decide whether your on-prem host is close enough to the
+validated `m5.metal` baseline or whether you need to shrink the lab profile.
 
 The current Calabi host design was validated on AWS `m5.metal`:
 
@@ -27,7 +26,7 @@ The current Calabi host design was validated on AWS `m5.metal`:
 - 96 logical CPUs total
 - 384 GiB RAM
 
-That hardware shape is large enough to support:
+That baseline is large enough to support:
 
 - a 9-node OpenShift cluster
 - support guests
@@ -35,14 +34,14 @@ That hardware shape is large enough to support:
 - host-side CPU reservation
 - zram + KSM + THP for memory efficiency
 
-The farther your on-prem host drifts from that shape, the more careful your
-sizing and scheduling policy must become.
+The farther your host drifts from that shape, the more deliberate your sizing
+and scheduling decisions need to be.
 
 ## Current Baseline Assumptions
 
 ### CPU
 
-The current CPU policy is static, not auto-derived.
+The current CPU policy is static.
 
 The source of truth today is:
 
@@ -66,17 +65,15 @@ The design assumes:
 
 ### Memory
 
-The current memory policy is also tuned for a large host.
-
-Current baseline assumptions:
+The current memory policy is tuned for a large host:
 
 - host RAM: 384 GiB
 - zram: 16 GiB
 - THP: `madvise`
 - KSM: enabled
 
-The important point is that the current memory policy is an efficiency layer,
-not a substitute for insufficient RAM.
+Treat that memory policy as an efficiency layer, not a substitute for missing
+RAM.
 
 ### Guest shape
 
@@ -102,8 +99,6 @@ very differently if:
 ## CPU Considerations As Hardware Drifts From `m5.metal`
 
 ### If the host has fewer cores
-
-This is the most obvious pressure case.
 
 You cannot safely carry the current static CPU pool values onto a smaller host.
 
@@ -164,8 +159,6 @@ breaks that assumption needs a fresh pool design, not a copied config.
 
 ### If the host has more cores than `m5.metal`
 
-This is the easiest drift case.
-
 You can usually:
 
 - preserve the current guest sizing
@@ -220,7 +213,7 @@ Larger hosts primarily buy margin, not a different memory policy.
 
 ## Storage Considerations
 
-AWS `m5.metal` plus EBS gave the project a very explicit disk model:
+AWS `m5.metal` plus EBS gave the project an explicit disk model:
 
 - one host root volume
 - dedicated raw guest block devices
@@ -230,7 +223,7 @@ AWS `m5.metal` plus EBS gave the project a very explicit disk model:
   - IOPS
   - throughput
 
-For you as the operator, on-prem storage matters in three ways:
+For on-prem, storage matters in four ways:
 
 ### 1. Deterministic naming
 
@@ -258,9 +251,7 @@ the current libvirt/raw-disk behavior intact.
 
 ### 3. Aggregate performance
 
-This is where the on-prem target differs most from AWS.
-
-Today, the repo preserves:
+This is the biggest difference from AWS. Today, the repo preserves:
 
 - guest disk capacity
 - stable guest disk identity
@@ -290,10 +281,9 @@ Practical guidance:
   virtualization-heavy mixed workloads
 - treat ODF data disks as real storage consumers, not as decorative placeholders
 
-If you need a concrete mental model, think in terms of an aggregate backend
-ceiling rather than per-LV guarantees. The current on-prem target assumes a
-storage backend that is simply fast enough for the whole lab rather than a
-backend that enforces precise per-guest caps.
+Think in terms of an aggregate backend ceiling, not per-LV guarantees. The
+current on-prem target assumes a backend that is fast enough for the whole lab
+rather than one that enforces precise per-guest caps.
 
 ### 4. Rebuild hygiene
 
@@ -318,13 +308,13 @@ Likely future directions:
 - per-tier guest storage weighting
 - host-side cgroup I/O policy
 
-That is worth chasing only after you have evidence that the backend is fast
-enough in aggregate but still needs guest-to-guest isolation.
+Do that only after you have evidence that the backend is fast enough in
+aggregate but still needs guest-to-guest isolation.
 
 ## Networking Considerations
 
-Your on-prem host does not need AWS VPCs, but it does need an equivalent network
-contract:
+Your on-prem host does not need AWS VPCs, but it does need an equivalent
+network contract:
 
 - management access to the hypervisor
 - an uplink interface that OVS can build around
@@ -334,9 +324,8 @@ contract:
   - cluster VLANs
   - bastion management path
 
-If your on-prem environment cannot supply the VLAN/trunk model cleanly, the
-current network design will need more change than the current CPU or memory
-policy.
+If your environment cannot supply the VLAN/trunk model cleanly, the current
+network design will need more change than the CPU or memory policy.
 
 ## Practical On-Prem Sizing Guidance
 

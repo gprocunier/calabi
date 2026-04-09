@@ -14,28 +14,24 @@ Nearby docs:
 <a href="../../aws-metal-openshift-demo/docs/automation-flow.md"><kbd>&nbsp;&nbsp;AWS AUTOMATION FLOW&nbsp;&nbsp;</kbd></a>
 <a href="./README.md"><kbd>&nbsp;&nbsp;ON-PREM DOCS MAP&nbsp;&nbsp;</kbd></a>
 
-Use this page for the build order that is specific to the on-prem target.
-
-Once you have prepared the host, provisioned the guest logical volumes, built
-the bastion, and staged the project, return to the stock
+This page covers the on-prem-only build order. After host bootstrap and
+bastion staging, return to the stock
 <a href="../../aws-metal-openshift-demo/docs/automation-flow.md"><kbd>AWS AUTOMATION FLOW</kbd></a>
 for the remaining support-service, cluster, and day-2 sequencing.
 
-## Operator Model
+## Execution Contexts
 
-Your execution model on-prem has three contexts:
+You will work in three places:
 
 - operator workstation
 - on-prem `virt-01`-like hypervisor
 - bastion-native execution from `bastion-01`
 
-The on-prem target changes only the early phases:
+Only the early phases differ from the AWS path:
 
 - there is no AWS tenant or host-stack provisioning
 - you start from a preinstalled host
 - you provide an LVM volume group instead of AWS-attached guest EBS volumes
-
-After the bastion is built and staged, the normal Calabi sequencing resumes.
 
 ## Phase Summary
 
@@ -77,9 +73,9 @@ After the bastion is built and staged, the normal Calabi sequencing resumes.
 | 6+ | `bastion-01` | resume the stock support-service, cluster, and day-2 flow |
 
 > [!IMPORTANT]
-> **Pick a side and stay on it.** The on-prem target still uses the normal
-> workstation-to-bastion boundary. Do the early host-facing work from the
-> operator workstation, then stay on bastion once you cross that boundary.
+> Keep the normal workstation-to-bastion boundary. Do the early host-facing
+> work from the operator workstation, then stay on bastion once you cross that
+> boundary.
 
 ### Command shorthand
 
@@ -119,7 +115,7 @@ After the bastion is built and staged, the normal Calabi sequencing resumes.
      ```bash
      ansible-playbook playbooks/site-bootstrap.yml
      ```
-   - this on-prem wrapper stages both:
+   - this wrapper stages both:
      - `on-prem-openshift-demo/`
      - `aws-metal-openshift-demo/`
    - it also rewrites the bastion-side runtime inventory so bastion uses your
@@ -143,7 +139,7 @@ subtree:
 - the bastion has been built
 - the on-prem and stock project trees have been staged
 
-At that point, your next reference pages should usually be:
+At that point, use:
 
 - <a href="../../aws-metal-openshift-demo/docs/automation-flow.md"><kbd>AWS AUTOMATION FLOW</kbd></a>
 - <a href="../../aws-metal-openshift-demo/docs/manual-process.md#13a-optionally-build-ad-ds-and-ad-cs-from-bastion"><kbd>AWS MANUAL PROCESS: STEP 13A</kbd></a>

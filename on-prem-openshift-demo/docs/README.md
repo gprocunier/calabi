@@ -14,10 +14,10 @@ Nearby docs:
 <a href="./host-sizing-and-resource-policy.md"><kbd>&nbsp;&nbsp;HOST SIZING&nbsp;&nbsp;</kbd></a>
 <a href="../../aws-metal-openshift-demo/docs/README.md"><kbd>&nbsp;&nbsp;AWS DOCS MAP&nbsp;&nbsp;</kbd></a>
 
-Use this docs set when you are building Calabi on an on-prem `virt-01`-like
-host instead of provisioning that host through AWS.
+Use these pages when you are building Calabi on an on-prem `virt-01`-like
+host.
 
-Your on-prem contract is intentionally narrow:
+What you provide:
 
 - you provide a RHEL hypervisor host
 - you provide an LVM2 volume group for guest storage
@@ -27,12 +27,11 @@ Your on-prem contract is intentionally narrow:
 - you define both:
   - how the operator workstation reaches the hypervisor
   - how bastion reaches that same hypervisor on the lab network
-- once that host contract is satisfied, the existing support-service, cluster,
-  and day-2 orchestration is reused
+- once that host contract is satisfied, the stock support-service, cluster, and
+  day-2 orchestration is reused
 
-Use these notes only for what is materially different from the AWS path. Once
-you have bootstrapped the on-prem host and crossed the bastion boundary, return
-to the stock docs under
+These pages only cover the on-prem differences. After host bootstrap and
+bastion staging, return to
 <a href="../../aws-metal-openshift-demo/docs/README.md"><kbd>AWS DOCS MAP</kbd></a>.
 
 ## Start Here
@@ -53,11 +52,11 @@ to the stock docs under
 
 ## Where The Normal Docs Take Over Again
 
-For your manual workflow, the on-prem divergence is concentrated in the early
-host-preparation and storage-preparation steps. After that, hand back to the
+For the manual path, the on-prem-specific work ends once the host is prepared,
+guest storage exists, and bastion staging is complete. Then continue in the
 stock runbook at:
 
-- <a href="../../aws-metal-openshift-demo/docs/manual-process.md#12-build-the-bastion-vm"><kbd>AWS MANUAL PROCESS: STEP 12</kbd></a> for the bastion build onward
+- <a href="../../aws-metal-openshift-demo/docs/manual-process.md#12-build-the-bastion-vm"><kbd>AWS MANUAL PROCESS: STEP 12</kbd></a> if you want the bastion build onward
 - <a href="../../aws-metal-openshift-demo/docs/manual-process.md#13a-optionally-build-ad-ds-and-ad-cs-from-bastion"><kbd>AWS MANUAL PROCESS: STEP 13A</kbd></a> once the bastion is built and the project is staged
 
 For automation, the on-prem entrypoints are:

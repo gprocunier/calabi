@@ -14,11 +14,9 @@ Nearby docs:
 <a href="../../aws-metal-openshift-demo/docs/manual-process.md"><kbd>&nbsp;&nbsp;AWS MANUAL PROCESS&nbsp;&nbsp;</kbd></a>
 <a href="./README.md"><kbd>&nbsp;&nbsp;ON-PREM DOCS MAP&nbsp;&nbsp;</kbd></a>
 
-Use this only for the part of the operator workflow that is materially
-different on-prem.
-
-Once the host is prepared, guest storage exists, and the bastion boundary is
-crossed, return to the stock
+This page covers only the on-prem-specific portion of the operator workflow.
+Once the host is prepared, guest storage exists, and bastion staging is done,
+return to the stock
 <a href="../../aws-metal-openshift-demo/docs/manual-process.md"><kbd>AWS MANUAL PROCESS</kbd></a>.
 
 ## Table Of Contents
@@ -62,10 +60,8 @@ ansible-playbook --syntax-check playbooks/site-lab.yml
 
 ## 2. Verify The On-Prem `virt-01` Host Contract
 
-The on-prem target starts after the host already exists.
-
-Before bootstrap, confirm the host behaves like a usable `virt-01`
-equivalent:
+The on-prem target starts after the host already exists. Before bootstrap,
+confirm that host can stand in for `virt-01`:
 
 - SSH reachable from the operator workstation
 - RHEL installed and updated to the desired baseline
@@ -87,8 +83,8 @@ sudo vgs
 EOF
 ```
 
-If CPU / RAM / NUMA shape differs from the validated `m5.metal` baseline, read
-the host-sizing guidance before bootstrap:
+If CPU, RAM, or NUMA shape differs from the validated `m5.metal` baseline,
+read the host-sizing guidance before bootstrap:
 
 - <a href="./host-sizing-and-resource-policy.md"><kbd>HOST SIZING</kbd></a>
 
@@ -101,7 +97,7 @@ The current lab footprint expects roughly:
 
 - `5950 GiB` of guest LV capacity for the full current design
 
-That figure is the raw guest-disk sum only. Leave additional headroom for:
+That is only the raw guest-disk sum. Leave additional headroom for:
 
 - host root growth
 - image cache
@@ -148,9 +144,9 @@ What must be correct:
 - any optional `on_prem_lvm_lv_name_prefix`
 - any project-local credential overrides
 
-At this stage, the on-prem subtree is still reusing the stock guest and day-2
-vars and playbooks from `aws-metal-openshift-demo`, but it does so through the
-local on-prem wrappers rather than by modifying the AWS-target codepath.
+At this stage, the on-prem subtree reuses the stock guest and day-2 vars and
+playbooks from `aws-metal-openshift-demo` through local wrappers. It does not
+modify the AWS-target codepath.
 
 ## 5. Bootstrap The Host And Provision Guest LVs
 
@@ -164,7 +160,7 @@ cd <project-root>/on-prem-openshift-demo
 ansible-playbook playbooks/bootstrap/site.yml
 ```
 
-This does the on-prem equivalent of the early AWS host steps:
+This is the on-prem equivalent of the early AWS host steps:
 
 - host base configuration
 - host CPU and memory policy
@@ -187,7 +183,7 @@ EOF
 
 ## 6. Build The Bastion And Stage The Project
 
-The current on-prem `site-bootstrap.yml` is the narrow wrapper that:
+The current on-prem `site-bootstrap.yml`:
 
 - runs the on-prem bootstrap host prep
 - reuses the stock bastion build
@@ -208,7 +204,7 @@ After this, the bastion should exist and the project should be staged.
 
 ## 7. Hand Back To The Stock Runbook
 
-At this point, the on-prem-specific divergence is over.
+At this point, the on-prem-specific portion is over.
 
 Choose the next stock runbook entry based on what you already completed:
 

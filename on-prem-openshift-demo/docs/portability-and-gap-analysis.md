@@ -15,20 +15,18 @@ Nearby docs:
 
 ## Executive Summary
 
-Use this page when you need to understand what you can treat as already
-portable versus what you still need to preserve from the current AWS-shaped
-host contract.
+This page separates what is already portable from what still depends on the
+current AWS-shaped host contract.
 
 The repo now ships an initial on-prem target under:
 
 - <a href="../playbooks/site-bootstrap.yml"><kbd>on-prem-openshift-demo/playbooks/site-bootstrap.yml</kbd></a>
 - <a href="../playbooks/site-lab.yml"><kbd>on-prem-openshift-demo/playbooks/site-lab.yml</kbd></a>
 
-For you as the operator, the important point is simple: the AWS-specific part
-is mostly the substrate that creates `virt-01` and its attached guest block
-devices. Once your host exists and presents the expected network, storage, and
-execution contract, the rest of the lab behaves like a host-local
-KVM/libvirt/Open vSwitch environment.
+The AWS-specific part is mostly the substrate that creates `virt-01` and its
+attached guest block devices. Once your host exists and presents the expected
+network, storage, and execution contract, the rest of the lab behaves like a
+host-local KVM/libvirt/Open vSwitch environment.
 
 That means:
 
@@ -167,8 +165,7 @@ libvirt `iotune` or any other host-level storage QoS policy.
 
 ## Current On-Prem Bring-Up Model
 
-The current shipped on-prem target takes the lowest-risk path for you as the
-operator:
+The current shipped on-prem target takes the lowest-risk path:
 
 1. Install a RHEL host manually so it becomes the on-prem equivalent of
    `virt-01`.
@@ -186,7 +183,7 @@ For the current branch, that split is now explicit:
 - `on_prem_bastion_hypervisor_host` and `on_prem_bastion_hypervisor_user`
   define the bastion-side return path to that same host
 
-In that model, most of the current playbooks do work with little or no
+In that model, most of the current playbooks work with little or no
 orchestration change.
 
 The tradeoff is that the current target is capacity-first, not QoS-first:
@@ -305,8 +302,6 @@ less compatibility-driven and more neutral, with:
 - neutralized inventory and storage model
 
 ## Bottom Line
-
-The practical takeaway for you is:
 
 The bulk of Calabi was already portable once a `virt-01`-like host existed.
 The current on-prem target proves that by replacing the outer AWS host and

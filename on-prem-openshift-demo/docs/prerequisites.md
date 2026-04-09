@@ -14,10 +14,8 @@ Nearby docs:
 <a href="../../aws-metal-openshift-demo/docs/prerequisites.md"><kbd>&nbsp;&nbsp;AWS PREREQUISITES&nbsp;&nbsp;</kbd></a>
 <a href="./README.md"><kbd>&nbsp;&nbsp;ON-PREM DOCS MAP&nbsp;&nbsp;</kbd></a>
 
-Read this before the first on-prem build.
-
-Use this page only for the prerequisites that differ materially from the AWS
-path. For the rest of the content-access and lab-input model, keep the stock
+This page covers only the prerequisites that differ from the AWS path. For the
+shared Red Hat, Microsoft, and lab-input guidance, keep
 <a href="../../aws-metal-openshift-demo/docs/prerequisites.md"><kbd>AWS PREREQUISITES</kbd></a>
 nearby.
 
@@ -45,8 +43,8 @@ ansible-galaxy collection install -r aws-metal-openshift-demo/requirements.yml
 
 ## What You Need On The On-Prem Hypervisor
 
-Assume you are starting from a freshly installed RHEL host that plays the role
-of `virt-01`.
+Assume you are starting from a freshly installed RHEL host that will act as
+`virt-01`.
 
 Required host contract:
 
@@ -69,7 +67,7 @@ The current group-wide on-prem settings live in:
 
 - <a href="../inventory/group_vars/all.yml"><kbd>on-prem-openshift-demo/inventory/group_vars/all.yml</kbd></a>
 
-The important split is:
+Keep the access paths separate:
 
 - `inventory/hosts.yml` describes how **you** reach the hypervisor from the
   operator workstation
@@ -86,8 +84,8 @@ Required inputs:
 - optional `on_prem_lvm_lv_name_prefix`
 - optional `on_prem_lvm_guest_symlink_root`
 
-The on-prem bootstrap role validates that volume group and checks free space
-before any `lvcreate` runs.
+The on-prem bootstrap validates that volume group and checks free space before
+any `lvcreate` runs.
 
 Current full-footprint guest storage requirement from the stock volume
 inventory is approximately:
@@ -116,13 +114,12 @@ This storage figure does **not** include:
 - mirror-content workspace overhead
 - general operator headroom
 
-Do not size the volume group to the exact raw sum and call it done.
+Do not size the volume group to the raw sum and stop there.
 
-You should also treat AWS `gp3` performance settings as workload hints, not as
-something the current on-prem target enforces automatically. The shipped
-on-prem path preserves capacity and stable disk identity. It does **not** yet
-translate per-volume AWS `gp3` IOPS and throughput settings into libvirt or
-host-level storage QoS controls.
+Treat the AWS `gp3` performance settings as workload hints. The current on-prem
+path preserves capacity and stable disk identity. It does **not** yet translate
+per-volume AWS `gp3` IOPS and throughput settings into libvirt or host-level
+storage QoS controls.
 
 Plan for:
 
@@ -155,8 +152,7 @@ You still need the same Red Hat content inputs as the AWS path:
 - RHSM credentials
 - RHEL 10.1 guest image source
 
-The difference is that the host image source is now your on-prem RHEL install,
-not an AWS AMI.
+The host image source is now your on-prem RHEL install, not an AWS AMI.
 
 Keep the stock guidance nearby:
 
