@@ -11,6 +11,6 @@
     - support-vms
 
 - name: Stage the on-prem project onto the bastion
-  import_playbook: ../../aws-metal-openshift-demo/playbooks/bootstrap/bastion-stage.yml
+  import_playbook: bootstrap/bastion-stage.yml
   tags:
     - bastion-stage

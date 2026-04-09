@@ -72,6 +72,8 @@ equivalent:
 - nested KVM available
 - an uplink interface is present for OVS integration
 - local storage is visible and the guest VG exists or can be created
+- the later bastion handoff can still use the stock expectation of
+  `ec2-user@172.16.0.1`
 
 Minimal verification:
 

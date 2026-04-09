@@ -56,6 +56,9 @@ Required host contract:
 - an uplink that OVS can build around
 - SSH reachability from the operator workstation
 - enough local storage and RAM for the selected guest footprint
+- willingness to preserve the stock bastion-to-hypervisor handoff model:
+  - bastion reaches the hypervisor on `172.16.0.1`
+  - bootstrap leaves `ec2-user` usable there with the staged SSH key
 
 The current inventory example is:
 

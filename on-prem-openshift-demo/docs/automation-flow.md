@@ -51,6 +51,7 @@ After the bastion is built and staged, the normal Calabi sequencing resumes.
   - configure OVS, libvirt, and firewalling
   - create guest logical volumes
   - publish `/dev/ebs/*` compatibility symlinks
+  - preserve the stock bastion handoff expectation of `ec2-user@172.16.0.1`
 - Phase 4, bastion bootstrap:
   - build `bastion-01`
   - stage the on-prem and stock project trees onto bastion
@@ -94,6 +95,8 @@ After the bastion is built and staged, the normal Calabi sequencing resumes.
    - check SSH reachability
    - check `virt-host-validate`
    - check storage visibility and the intended volume group
+   - remember that the later bastion handoff still expects the hypervisor on
+     `172.16.0.1` as `ec2-user`
    - `RUN LOCALLY`
      ```bash
      ssh <hypervisor-admin-user>@<hypervisor-management-ip> \

@@ -267,11 +267,10 @@
   ansible.builtin.hostname:
     name: "{{ virt_host.name }}.{{ virt_host.domain }}"
 
-- name: Ensure the selected hypervisor login user is not locked so Cockpit login works
+- name: Ensure ec2-user is not locked so Cockpit password login works
   ansible.builtin.user:
-    name: "{{ lab_host_base_login_user }}"
+    name: ec2-user
     password_lock: false
-  when: lab_host_base_login_user | default('ec2-user') | length > 0
 
 - name: Ensure the hypervisor short hostname is resolvable locally
   ansible.builtin.lineinfile:
@@ -334,12 +333,12 @@
 
 - name: Persist tmpfiles configuration for the stable EBS symlink directory
   ansible.builtin.copy:
-    dest: /etc/tmpfiles.d/lab-guest-disk-links.conf
+    dest: /etc/tmpfiles.d/ebs-friendly.conf
     owner: root
     group: root
     mode: "0644"
     content: |
-      d {{ lab_host_base_guest_symlink_dir | default('/dev/ebs') }} 0755 root root -
+      d /dev/ebs 0755 root root -
   register: lab_host_base_ebs_tmpfiles
 
 - name: Ensure the stable EBS symlink directory exists immediately
@@ -347,7 +346,7 @@
     argv:
       - systemd-tmpfiles
       - --create
-      - /etc/tmpfiles.d/lab-guest-disk-links.conf
+      - /etc/tmpfiles.d/ebs-friendly.conf
   changed_when: lab_host_base_ebs_tmpfiles.changed
 
 - name: Install the managed EBS-friendly udev rules
@@ -358,7 +357,6 @@
     group: root
     mode: "0644"
   register: lab_host_base_ebs_udev_rules
-  when: lab_host_base_manage_ebs_udev | default(true) | bool
 
 - name: Reload udev rules when the managed EBS mapping changes
   ansible.builtin.command:
@@ -366,9 +364,7 @@
       - udevadm
       - control
       - --reload-rules
-  when:
-    - lab_host_base_manage_ebs_udev | default(true) | bool
-    - lab_host_base_ebs_udev_rules.changed
+  when: lab_host_base_ebs_udev_rules.changed
   changed_when: true
   # noqa: no-handler
 
@@ -379,9 +375,7 @@
       - trigger
       - --subsystem-match=block
       - --action=change
-  when:
-    - lab_host_base_manage_ebs_udev | default(true) | bool
-    - lab_host_base_ebs_udev_rules.changed
+  when: lab_host_base_ebs_udev_rules.changed
   changed_when: true
   # noqa: no-handler
 
@@ -390,9 +384,7 @@
     argv:
       - udevadm
       - settle
-  when:
-    - lab_host_base_manage_ebs_udev | default(true) | bool
-    - lab_host_base_ebs_udev_rules.changed
+  when: lab_host_base_ebs_udev_rules.changed
   changed_when: false
   # noqa: no-handler
 
