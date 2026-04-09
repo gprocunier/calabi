@@ -1,5 +1,10 @@
 # Portability And Gap Analysis
 
+> [!WARNING]
+> This on-prem target is experimental. Treat the docs and playbooks in this
+> subtree as an emerging alternate installation path, not yet the same
+> confidence level as the validated AWS-target flow.
+
 Nearby docs:
 
 <a href="./prerequisites.md"><kbd>&nbsp;&nbsp;PREREQUISITES&nbsp;&nbsp;</kbd></a>

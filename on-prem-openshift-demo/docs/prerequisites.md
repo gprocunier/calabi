@@ -1,5 +1,10 @@
 # On-Prem Prerequisites
 
+> [!WARNING]
+> This on-prem target is experimental. Treat the docs and playbooks in this
+> subtree as an emerging alternate installation path, not yet the same
+> confidence level as the validated AWS-target flow.
+
 Nearby docs:
 
 <a href="./automation-flow.md"><kbd>&nbsp;&nbsp;AUTOMATION FLOW&nbsp;&nbsp;</kbd></a>
