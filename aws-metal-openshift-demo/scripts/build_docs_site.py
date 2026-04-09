@@ -1022,10 +1022,21 @@ def rewrite_links(soup: BeautifulSoup, source_path: Path) -> None:
 
 
 def link_repo_paths(soup: BeautifulSoup) -> None:
-    path_pattern = re.compile(r"^(?:cloudformation|cockpit|docs|playbooks|roles|scripts|vars)(?:/|$)")
+    path_pattern = re.compile(
+        r"^(?:\./)?(?:"
+        r"cloudformation|cockpit|docs|inventory|playbooks|roles|scripts|vars|\.githooks"
+        r")(?:/|$)"
+    )
 
-    def repo_link_target(text: str) -> Path | None:
-        candidate_text = text
+    def normalize_candidate_text(text: str) -> str | None:
+        candidate_text = text.strip()
+        if not candidate_text:
+            return None
+
+        candidate_text = re.sub(r"^<(?:project-root|repo-root)>/", "", candidate_text)
+        if candidate_text.startswith("./"):
+            candidate_text = candidate_text[2:]
+
         if "*" in candidate_text:
             prefix = candidate_text.split("*", 1)[0]
             if "/" not in prefix:
@@ -1033,32 +1044,36 @@ def link_repo_paths(soup: BeautifulSoup) -> None:
             if not prefix.endswith("/"):
                 prefix = prefix.rsplit("/", 1)[0] + "/"
             candidate_text = prefix
-        candidate = (PROJECT_ROOT / candidate_text).resolve()
-        if not candidate.exists() or not candidate.is_relative_to(REPO_ROOT):
-            return None
-        return candidate
 
-    for container in soup.find_all(["td", "li"]):
-        if container.find("pre"):
+        return candidate_text or None
+
+    def repo_link_target(text: str) -> Path | None:
+        candidate_text = normalize_candidate_text(text)
+        if candidate_text is None or not path_pattern.match(candidate_text):
+            return None
+
+        for root in (PROJECT_ROOT, REPO_ROOT):
+            candidate = (root / candidate_text).resolve()
+            if candidate.exists() and candidate.is_relative_to(REPO_ROOT):
+                return candidate
+        return None
+
+    for code in list(soup.find_all("code")):
+        if code.find_parent("pre"):
             continue
-        for code in list(container.find_all("code")):
-            if code.find_parent("pre"):
-                continue
-            if code.find_parent("a"):
-                continue
-            text = code.get_text(strip=True)
-            if not text:
-                continue
-            if not path_pattern.match(text):
-                continue
-            candidate = repo_link_target(text)
-            if candidate is None:
-                continue
-            anchor = soup.new_tag("a", href=source_url(candidate))
-            new_code = soup.new_tag("code")
-            new_code.string = text
-            anchor.append(new_code)
-            code.replace_with(anchor)
+        if code.find_parent("a"):
+            continue
+
+        text = code.get_text(strip=True)
+        candidate = repo_link_target(text)
+        if candidate is None:
+            continue
+
+        anchor = soup.new_tag("a", href=source_url(candidate))
+        new_code = soup.new_tag("code")
+        new_code.string = text
+        anchor.append(new_code)
+        code.replace_with(anchor)
 
 
 def render_execution_contexts(soup: BeautifulSoup) -> None:
