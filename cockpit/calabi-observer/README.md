@@ -90,10 +90,10 @@ CPU tier model are earning their keep.
 │  │  collector.py                                   │  │
 │  │  - reads /proc/meminfo, /proc/stat, /proc/vmstat│  │
 │  │  - reads /sys/kernel/mm/ksm/*, /sys/block/zram* │  │
-│  │  - reads cgroup v2 cpu.stat per tier and domain  │  │
-│  │  - reads /proc/<pid>/stat for kernel threads     │  │
-│  │  - (full mode) runs virsh list + virsh dumpxml   │  │
-│  │  - emits single JSON blob to stdout              │  │
+│  │  - reads cgroup v2 cpu.stat per tier and domain │  │
+│  │  - reads /proc/<pid>/stat for kernel threads    │  │
+│  │  - (full mode) runs virsh list + virsh dumpxml  │  │
+│  │  - emits single JSON blob to stdout             │  │
 │  └─────────────────────────────────────────────────┘  │
 └───────────────────────────────────────────────────────┘
 ```
