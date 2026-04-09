@@ -8,9 +8,9 @@ Nearby docs:
 <a href="./odf-declarative-plan.md"><kbd>&nbsp;&nbsp;ODF PLAN&nbsp;&nbsp;</kbd></a>
 <a href="./README.md"><kbd>&nbsp;&nbsp;DOCS MAP&nbsp;&nbsp;</kbd></a>
 
-This page shows the network shape the lab is trying to reproduce on one host.
-The point is not just connectivity. The topology needs to stay relatable to a
-real multi-host deployment.
+This lab keeps a real network shape even on one host. The point is not just
+connectivity; the topology should still map cleanly to a multi-host
+deployment.
 
 The VLAN count is deliberate. The lab is not trying to prove that OpenShift can
 boot with the fewest possible segments. It is trying to preserve the service

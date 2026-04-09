@@ -11,8 +11,7 @@ Nearby docs:
 
 ## Purpose
 
-This page defines the current supported authentication and authorization model
-formally.
+This doc defines the supported authentication and authorization model.
 
 It answers:
 
@@ -21,8 +20,6 @@ It answers:
 - what AD, IdM, Keycloak, OpenShift, and RHEL each own
 - what the breakglass path is
 - how the current model aligns with public zero-trust guidance
-
-This page describes the supported current-state model.
 
 The planned future evolution where AD becomes the user and source-group system
 of record while IdM local groups remain the authorization boundary is tracked

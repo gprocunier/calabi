@@ -7,11 +7,8 @@ Nearby docs:
 <a href="./network-topology.md"><kbd>&nbsp;&nbsp;NETWORK TOPOLOGY&nbsp;&nbsp;</kbd></a>
 <a href="./README.md"><kbd>&nbsp;&nbsp;DOCS MAP&nbsp;&nbsp;</kbd></a>
 
-This page covers the public-cloud layer that exists before Ansible ever touches
-`virt-01`.
-
-It is the outer infrastructure that gets the metal host and guest-disk
-substrate on the ground.
+This is the public-cloud layer that exists before Ansible ever touches
+`virt-01`. It lays down the outer host and guest-disk substrate first.
 
 ## Ownership Split
 

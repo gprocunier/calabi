@@ -7,7 +7,7 @@ Nearby docs:
 <a href="./manual-process.md"><kbd>&nbsp;&nbsp;MANUAL PROCESS&nbsp;&nbsp;</kbd></a>
 <a href="./README.md"><kbd>&nbsp;&nbsp;DOCS MAP&nbsp;&nbsp;</kbd></a>
 
-This page is for the execution model itself:
+Use this page to answer the execution-boundary questions:
 
 - what runs on the operator workstation
 - what runs on `virt-01`

@@ -739,16 +739,6 @@ def preprocess_kbd_links(text: str) -> str:
     return pattern.sub(repl, text)
 
 
-def preprocess_mermaid(text: str) -> str:
-    pattern = re.compile(r"```mermaid\s*\n(.*?)```", re.DOTALL)
-
-    def repl(match: re.Match[str]) -> str:
-        content = html.escape(match.group(1).strip())
-        return f'<div class="mermaid">\n{content}\n</div>'
-
-    return pattern.sub(repl, text)
-
-
 def anchor_slug(text: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
     return slug or "section"
@@ -1007,7 +997,6 @@ def load_markdown(path: Path) -> tuple[str, str]:
     text = path.read_text(encoding="utf-8")
     text = normalize_list_indentation(text)
     text = preprocess_kbd_links(text)
-    text = preprocess_mermaid(text)
     options = Options.CMARK_OPT_UNSAFE | Options.CMARK_OPT_GITHUB_PRE_LANG
     html_body = github_flavored_markdown_to_html(text, options=options)
     soup = BeautifulSoup(html_body, "html.parser")
@@ -1054,6 +1043,8 @@ def link_repo_paths(soup: BeautifulSoup) -> None:
             continue
         for code in list(container.find_all("code")):
             if code.find_parent("pre"):
+                continue
+            if code.find_parent("a"):
                 continue
             text = code.get_text(strip=True)
             if not text:

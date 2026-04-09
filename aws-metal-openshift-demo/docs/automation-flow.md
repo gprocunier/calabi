@@ -13,8 +13,7 @@ Nearby docs:
 
 ## Operator Model
 
-This page gives you the big-picture run order before you drop into playbooks
-and roles.
+Use this page for the build order before you drop into playbooks and roles.
 
 If you are starting from zero, read
 <a href="./prerequisites.md"><kbd>PREREQUISITES</kbd></a> first.
