@@ -47,22 +47,66 @@ SITE_ORDER = [
     "secrets-and-sanitization",
 ]
 
-PAGE_GROUPS = {
-    "Start Here": [
-        ("Docs Map", "index.html"),
-        ("Lab README", "readme.html"),
-        ("Project README", "project-readme.html"),
-        ("Automation Flow", "automation-flow.html"),
-        ("Manual Process", "manual-process.html"),
-        ("Auth Model", "authentication-model.html"),
-        ("Code Guide", "orchestration-guide.html"),
+PATH_SEQUENCES = {
+    "Get Started": [
+        "index",
+        "readme",
+        "prerequisites",
+        "automation-flow",
+        "manual-process",
     ],
-    "Build And Operate": [
-        ("Prerequisites", "prerequisites.html"),
-        ("Orchestration Plumbing", "orchestration-plumbing.html"),
-        ("Resource Management", "host-resource-management.html"),
-        ("Cluster Matrix", "openshift-cluster-matrix.html"),
+    "Build And Rebuild": [
+        "prerequisites",
+        "redhat-developer-subscription",
+        "automation-flow",
+        "orchestration-plumbing",
+        "authentication-model",
+        "manual-process",
+        "openshift-cluster-matrix",
     ],
+    "Architecture And Policy": [
+        "authentication-model",
+        "ad-idm-policy-model",
+        "network-topology",
+        "iaas-resource-model",
+        "host-resource-management",
+        "host-memory-oversubscription",
+        "odf-declarative-plan",
+    ],
+    "Operate And Recover": [
+        "manual-process",
+        "investigating",
+        "issues",
+        "secrets-and-sanitization",
+    ],
+    "Change The Code": [
+        "orchestration-guide",
+        "orchestration-plumbing",
+        "automation-flow",
+    ],
+}
+
+PAGE_PATH = {
+    "index": "Get Started",
+    "readme": "Get Started",
+    "project-readme": "Get Started",
+    "prerequisites": "Build And Rebuild",
+    "redhat-developer-subscription": "Build And Rebuild",
+    "automation-flow": "Build And Rebuild",
+    "orchestration-plumbing": "Build And Rebuild",
+    "authentication-model": "Architecture And Policy",
+    "ad-idm-policy-model": "Architecture And Policy",
+    "manual-process": "Operate And Recover",
+    "investigating": "Operate And Recover",
+    "issues": "Operate And Recover",
+    "secrets-and-sanitization": "Operate And Recover",
+    "network-topology": "Architecture And Policy",
+    "iaas-resource-model": "Architecture And Policy",
+    "host-resource-management": "Architecture And Policy",
+    "host-memory-oversubscription": "Architecture And Policy",
+    "openshift-cluster-matrix": "Build And Rebuild",
+    "odf-declarative-plan": "Architecture And Policy",
+    "orchestration-guide": "Change The Code",
 }
 
 PAGE_ADJACENCY = {
@@ -70,7 +114,7 @@ PAGE_ADJACENCY = {
         ("Automation Flow", "automation-flow.html"),
         ("Authentication Model", "authentication-model.html"),
         ("Manual Process", "manual-process.html"),
-        ("Orchestration Guide", "orchestration-guide.html"),
+        ("Investigating", "investigating.html"),
     ],
     "automation-flow": [
         ("Prerequisites", "prerequisites.html"),
@@ -82,24 +126,20 @@ PAGE_ADJACENCY = {
         ("Automation Flow", "automation-flow.html"),
         ("AD / IdM Policy Model", "ad-idm-policy-model.html"),
         ("Manual Process", "manual-process.html"),
-        ("Orchestration Guide", "orchestration-guide.html"),
     ],
     "manual-process": [
         ("Automation Flow", "automation-flow.html"),
         ("Authentication Model", "authentication-model.html"),
-        ("Orchestration Plumbing", "orchestration-plumbing.html"),
         ("Investigating", "investigating.html"),
     ],
     "orchestration-guide": [
         ("Automation Flow", "automation-flow.html"),
         ("Orchestration Plumbing", "orchestration-plumbing.html"),
-        ("Authentication Model", "authentication-model.html"),
         ("Issues Ledger", "issues.html"),
     ],
     "investigating": [
         ("Issues Ledger", "issues.html"),
         ("Manual Process", "manual-process.html"),
-        ("Orchestration Guide", "orchestration-guide.html"),
         ("Secrets And Sanitization", "secrets-and-sanitization.html"),
     ],
 }
@@ -188,29 +228,27 @@ a {
 .site-header__actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-top: 1rem;
+  gap: 0.45rem;
+  margin-top: 0.8rem;
 }
 
 .site-header__actions a,
-.adjacent-links a,
-.quick-links a,
-.next-links a {
+.path-links a,
+.pager-links a {
   text-decoration: none;
 }
 
 .site-header__actions kbd,
-.adjacent-links kbd,
-.quick-links kbd,
-.next-links kbd,
+.path-links kbd,
+.pager-links kbd,
 .markdown-body a kbd,
 .markdown-body kbd {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 2.5rem;
+  min-height: 2.35rem;
   margin: 0.2rem 0.35rem 0.2rem 0;
-  padding: 0.45rem 0.85rem;
+  padding: 0.42rem 0.78rem;
   color: var(--rh-gray-90);
   background: #ffffff;
   border: 1px solid var(--rh-gray-80);
@@ -223,9 +261,8 @@ a {
 }
 
 .site-header__actions kbd:hover,
-.adjacent-links kbd:hover,
-.quick-links kbd:hover,
-.next-links kbd:hover,
+.path-links kbd:hover,
+.pager-links kbd:hover,
 .markdown-body a kbd:hover,
 .markdown-body a kbd:focus,
 .markdown-body kbd:hover,
@@ -259,7 +296,7 @@ a {
   letter-spacing: 0.06em;
 }
 
-.adjacent-block,
+.context-block,
 .toc-block,
 .source-block {
   border-top: 1px solid var(--rh-gray-20);
@@ -267,7 +304,7 @@ a {
   margin-bottom: 1.75rem;
 }
 
-.adjacent-block h2,
+.context-block h2,
 .toc-block h2,
 .source-block h2 {
   margin: 0 0 0.6rem;
@@ -277,12 +314,61 @@ a {
   line-height: 1.2;
 }
 
-.adjacent-links,
-.quick-links,
-.next-links {
+.context-block p,
+.source-block p {
+  margin: 0;
+  color: var(--rh-gray-80);
+  font-size: 0.95rem;
+}
+
+.path-links,
+.pager-links {
   display: flex;
   flex-wrap: wrap;
   gap: 0.25rem 0.35rem;
+}
+
+.path-list,
+.pager-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.path-list li,
+.pager-list li {
+  margin: 0 0 0.7rem;
+}
+
+.path-list a,
+.pager-list a {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+
+.path-list strong,
+.pager-list strong {
+  display: block;
+  color: var(--rh-gray-90);
+  font-size: 0.97rem;
+}
+
+.path-list span,
+.pager-list span {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--rh-gray-70);
+  font-size: 0.92rem;
+}
+
+.path-list .is-current {
+  padding-left: 0.85rem;
+  border-left: 3px solid var(--rh-red);
+}
+
+.path-list .is-current strong {
+  color: var(--rh-red-dark);
 }
 
 .toc-block ul {
@@ -292,12 +378,6 @@ a {
 
 .toc-block li {
   margin: 0.3rem 0;
-}
-
-.source-block p {
-  margin: 0;
-  color: var(--rh-gray-80);
-  font-size: 0.95rem;
 }
 
 .markdown-body {
@@ -467,11 +547,33 @@ a {
   padding-top: 1rem;
 }
 
-.next-section h2 {
+.next-section h2,
+.page-kicker h2 {
   margin: 0 0 0.6rem;
   color: var(--rh-gray-90);
   font-family: "Red Hat Display", "Red Hat Text", Arial, sans-serif;
   font-size: 1.1rem;
+}
+
+.page-kicker {
+  margin-bottom: 1.3rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--rh-gray-20);
+}
+
+.page-kicker__eyebrow {
+  margin: 0 0 0.45rem;
+  color: var(--rh-gray-70);
+  font-size: 0.88rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.page-kicker__summary {
+  margin: 0;
+  max-width: 52rem;
+  color: var(--rh-gray-80);
+  font-size: 1rem;
 }
 
 .site-footer {
@@ -656,12 +758,46 @@ def convert_admonitions(soup: BeautifulSoup) -> None:
         blockquote.replace_with(wrapper)
 
 
-def normalize_html(soup: BeautifulSoup) -> None:
+def is_kbd_only_paragraph(tag: BeautifulSoup) -> bool:
+    if tag.name != "p":
+        return False
+    if not tag.find("kbd"):
+        return False
+    clone = BeautifulSoup(str(tag), "html.parser").p
+    if clone is None:
+        return False
+    for kbd in clone.find_all("kbd"):
+        kbd.decompose()
+    return clone.get_text(" ", strip=True) == ""
+
+
+def remove_nearby_docs_nav(soup: BeautifulSoup) -> None:
+    for para in list(soup.find_all("p")):
+        if para.get_text(" ", strip=True).lower() != "nearby docs:":
+            continue
+        next_para = para.find_next_sibling("p")
+        para.decompose()
+        if next_para and is_kbd_only_paragraph(next_para):
+            next_para.decompose()
+        break
+
+
+def remove_index_launch_grid(soup: BeautifulSoup) -> None:
+    for element in soup.find_all(["p", "h2"]):
+        if element.name == "h2":
+            break
+        if element.name == "p" and is_kbd_only_paragraph(element):
+            element.decompose()
+            break
+
+
+def normalize_html(soup: BeautifulSoup, slug: str) -> None:
     restore_kbd_links(soup)
     convert_admonitions(soup)
-    for para in list(soup.find_all("p")):
-        if para.get_text(" ", strip=True).lower() == "nearby docs:":
-            para.decompose()
+    remove_nearby_docs_nav(soup)
+    if slug == "index":
+        remove_index_launch_grid(soup)
+
     seen_ids: set[str] = set()
     for heading in soup.find_all(["h1", "h2", "h3"]):
         if not heading.get("id"):
@@ -691,7 +827,7 @@ def load_markdown(path: Path) -> tuple[str, str]:
     options = Options.CMARK_OPT_UNSAFE | Options.CMARK_OPT_GITHUB_PRE_LANG
     html_body = github_flavored_markdown_to_html(text, options=options)
     soup = BeautifulSoup(html_body, "html.parser")
-    normalize_html(soup)
+    normalize_html(soup, slug_for(path))
     return str(soup), build_toc(soup)
 
 
@@ -770,6 +906,7 @@ def build_adjacent_links(slug: str) -> str:
                 next_slug = SITE_ORDER[idx + 1]
                 dynamic.append((title_for_slug(next_slug), filename_for_slug(next_slug)))
             links = dynamic
+    links = links[:3]
     parts = ["<div class=\"adjacent-links\">"]
     for label, href in links:
         parts.append(f'<a href="{href}"><kbd>{html.escape(label)}</kbd></a>')
@@ -777,16 +914,93 @@ def build_adjacent_links(slug: str) -> str:
     return "\n".join(parts)
 
 
-def build_quick_links() -> str:
-    parts = []
-    for heading, links in PAGE_GROUPS.items():
-        parts.append("<section class=\"adjacent-block\">")
-        parts.append(f"<h2>{html.escape(heading)}</h2>")
-        parts.append("<div class=\"quick-links\">")
-        for label, href in links:
-            parts.append(f'<a href="{href}"><kbd>{html.escape(label)}</kbd></a>')
-        parts.append("</div></section>")
-    return "\n".join(parts)
+def page_path_name(slug: str) -> str | None:
+    return PAGE_PATH.get(slug)
+
+
+def page_sequence(slug: str) -> list[str]:
+    path_name = page_path_name(slug)
+    if not path_name:
+        return []
+    return PATH_SEQUENCES.get(path_name, [])
+
+
+def build_path_block(slug: str) -> str:
+    sequence = page_sequence(slug)
+    if not sequence:
+        return ""
+
+    items = []
+    for position, seq_slug in enumerate(sequence, start=1):
+        current_class = " class=\"is-current\"" if seq_slug == slug else ""
+        items.append(
+            f'<li{current_class}><a href="{filename_for_slug(seq_slug)}">'
+            f"<strong>{html.escape(title_for_slug(seq_slug))}</strong>"
+            f"<span>Step {position} of {len(sequence)}</span>"
+            "</a></li>"
+        )
+
+    return f"""
+<section class="context-block">
+  <h2>{html.escape(page_path_name(slug) or 'Documentation')}</h2>
+  <ul class="path-list">
+    {''.join(items)}
+  </ul>
+</section>
+"""
+
+
+def pager_for_slug(slug: str) -> tuple[tuple[str, str] | None, tuple[str, str] | None]:
+    sequence = page_sequence(slug)
+    if not sequence or slug not in sequence:
+        return None, None
+    idx = sequence.index(slug)
+    prev_item = None
+    next_item = None
+    if idx > 0:
+        prev_slug = sequence[idx - 1]
+        prev_item = (title_for_slug(prev_slug), filename_for_slug(prev_slug))
+    if idx + 1 < len(sequence):
+        next_slug = sequence[idx + 1]
+        next_item = (title_for_slug(next_slug), filename_for_slug(next_slug))
+    return prev_item, next_item
+
+
+def build_pager(slug: str) -> str:
+    prev_item, next_item = pager_for_slug(slug)
+    if not prev_item and not next_item:
+        return ""
+
+    items: list[str] = []
+    if prev_item:
+        label, href = prev_item
+        items.append(
+            f'<li><a href="{href}"><strong>Previous</strong><span>{html.escape(label)}</span></a></li>'
+        )
+    if next_item:
+        label, href = next_item
+        items.append(
+            f'<li><a href="{href}"><strong>Next</strong><span>{html.escape(label)}</span></a></li>'
+        )
+
+    return f"""
+<section class="next-section">
+  <h2>Continue</h2>
+  <ul class="pager-list">
+    {''.join(items)}
+  </ul>
+</section>
+"""
+
+
+def build_page_kicker(slug: str, description: str) -> str:
+    path_name = page_path_name(slug) or "Documentation"
+    return f"""
+<section class="page-kicker">
+  <p class="page-kicker__eyebrow">{html.escape(path_name)}</p>
+  <p class="page-kicker__summary">{html.escape(description)}</p>
+</section>
+"""
 
 
 def render_page(
@@ -798,9 +1012,9 @@ def render_page(
     slug: str,
     source_path: Path,
 ) -> str:
-    adjacent = build_adjacent_links(slug)
-    quick = build_quick_links()
-    next_links = adjacent
+    page_kicker = build_page_kicker(slug, description)
+    path_block = build_path_block(slug) if slug != "index" else ""
+    pager_block = build_pager(slug) if slug != "index" else ""
     toc_block = ""
     if toc_html and "<li>" in toc_html:
         toc_block = f"""
@@ -848,29 +1062,21 @@ def render_page(
           <div class="site-header__actions">
             <a href="index.html"><kbd>DOCS MAP</kbd></a>
             <a href="readme.html"><kbd>LAB README</kbd></a>
-            <a href="automation-flow.html"><kbd>AUTOMATION FLOW</kbd></a>
             <a href="manual-process.html"><kbd>MANUAL PROCESS</kbd></a>
-            <a href="authentication-model.html"><kbd>AUTH MODEL</kbd></a>
             <a href="{GITHUB_REPO_URL}"><kbd>GITHUB REPO</kbd></a>
           </div>
         </div>
       </header>
       <main class="page-shell">
         <div class="content-column">
-          <section class="adjacent-block">
-            <h2>Read Alongside</h2>
-            {adjacent}
-          </section>
+          {page_kicker}
           <article class="markdown-body">
             {body_html}
           </article>
-          <section class="next-section">
-            <h2>Next Step</h2>
-            {next_links}
-          </section>
+          {pager_block}
         </div>
         <aside class="side-column">
-          {quick}
+          {path_block}
           {toc_block}
           {source_block}
         </aside>
