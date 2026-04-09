@@ -24,6 +24,9 @@ Your on-prem contract is intentionally narrow:
 - the on-prem subtree creates the guest logical volumes and publishes the same
   `/dev/ebs/*` compatibility paths the stock guest and cluster roles already
   expect
+- you define both:
+  - how the operator workstation reaches the hypervisor
+  - how bastion reaches that same hypervisor on the lab network
 - once that host contract is satisfied, the existing support-service, cluster,
   and day-2 orchestration is reused
 
