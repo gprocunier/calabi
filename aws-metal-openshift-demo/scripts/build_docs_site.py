@@ -273,6 +273,67 @@ a {
   border-color: var(--rh-red);
 }
 
+.execution-context-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.16rem 0.58rem;
+  border-radius: 999px;
+  border: 1px solid var(--rh-gray-30);
+  background: var(--rh-gray-10);
+  color: var(--rh-gray-90);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.execution-context-badge--local {
+  background: #eef5ff;
+  border-color: #8bb7f0;
+  color: #003366;
+}
+
+.execution-context-badge--bastion {
+  background: #fce3e3;
+  border-color: #ee0000;
+  color: #7d1007;
+}
+
+.execution-context-badge--guest {
+  background: #fff4cc;
+  border-color: #f0ab00;
+  color: #795600;
+}
+
+.execution-context-inline {
+  list-style: none;
+}
+
+.execution-context-inline .execution-context-badge {
+  margin-right: 0.45rem;
+}
+
+.execution-context-only {
+  list-style: none;
+  margin-left: 0;
+}
+
+.execution-context-list {
+  list-style: none;
+  margin: 0.35rem 0 0.15rem;
+  padding-left: 0;
+}
+
+.execution-context-list > .execution-context-only {
+  margin: 0;
+}
+
+.execution-context-list + pre {
+  margin-top: 0.6rem;
+}
+
 .page-shell {
   display: grid;
   grid-template-columns: minmax(0, var(--rh-body-width)) minmax(220px, var(--rh-sidebar-width));
@@ -1009,6 +1070,61 @@ def link_repo_paths(soup: BeautifulSoup) -> None:
             code.replace_with(anchor)
 
 
+def render_execution_contexts(soup: BeautifulSoup) -> None:
+    contexts = {
+        "RUN LOCALLY": "local",
+        "RUN ON BASTION": "bastion",
+        "RUN ON GUEST": "guest",
+    }
+
+    def badge_for(label: str):
+        badge = soup.new_tag(
+            "span",
+            attrs={"class": ["execution-context-badge", f"execution-context-badge--{contexts[label]}"]},
+        )
+        badge.string = label
+        return badge
+
+    for li in soup.find_all("li"):
+        if li.find_parent("pre"):
+            continue
+        code = li.find("code", recursive=False)
+        if code is None:
+            continue
+        label = code.get_text(" ", strip=True)
+        if label not in contexts:
+            continue
+
+        code.replace_with(badge_for(label))
+
+    for li in soup.find_all("li"):
+        direct_badge = li.find("span", class_="execution-context-badge", recursive=False)
+        if direct_badge is None:
+            existing = [name for name in li.get("class", []) if name not in {"execution-context-inline", "execution-context-only"}]
+            if existing:
+                li["class"] = existing
+            elif li.has_attr("class"):
+                del li["class"]
+            continue
+
+        meaningful_children = []
+        for child in li.contents:
+            if isinstance(child, NavigableString) and not child.strip():
+                continue
+            meaningful_children.append(child)
+
+        classes = [name for name in li.get("class", []) if name not in {"execution-context-inline", "execution-context-only"}]
+        if len(meaningful_children) == 1 and meaningful_children[0] is direct_badge:
+            li["class"] = classes + ["execution-context-only"]
+        else:
+            li["class"] = classes + ["execution-context-inline"]
+
+    for ul in soup.find_all("ul"):
+        direct_items = ul.find_all("li", recursive=False)
+        if direct_items and all("execution-context-only" in item.get("class", []) for item in direct_items):
+            ul["class"] = ul.get("class", []) + ["execution-context-list"]
+
+
 def first_heading(soup: BeautifulSoup) -> str:
     h1 = soup.find("h1")
     return h1.get_text(" ", strip=True) if h1 else "Calabi"
@@ -1267,6 +1383,7 @@ def build_site(output_dir: Path) -> None:
         soup = BeautifulSoup(body_html, "html.parser")
         rewrite_links(soup, source_path)
         link_repo_paths(soup)
+        render_execution_contexts(soup)
         slug = slug_for(source_path)
         title = title_for_slug(slug)
         description = first_paragraph_text(soup)
