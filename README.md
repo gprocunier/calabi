@@ -16,13 +16,6 @@ content mirroring.
 <a href="./aws-metal-openshift-demo/README.md"><kbd>&nbsp;&nbsp;OPEN THE LAB&nbsp;&nbsp;</kbd></a>
 <a href="./aws-metal-openshift-demo/docs/README.md"><kbd>&nbsp;&nbsp;DOCS MAP&nbsp;&nbsp;</kbd></a>
 
-> [!WARNING]
-> Experimental on-prem target: if you already have a prepared on-prem
-> `virt-01`-like host and want the alternate LVM-backed path, start with
-> <a href="./on-prem-openshift-demo/docs/README.md"><kbd>ON-PREM DOCS</kbd></a>.
-> Those pages cover only the divergent early host and bastion-staging steps,
-> then direct you back to the main docs once the normal Calabi flow resumes.
-
 ---
 
 `Calabi` is shorthand for a `Calabi-Yau manifold` -- a play on folded
@@ -115,3 +108,11 @@ Each plugin has its own README and can be installed via RPM or rsync.
 
 Use the buttons at the top of the page to drop into the lab itself or the docs
 map.
+
+If you already have a prepared on-prem `virt-01`-like host and want the
+experimental alternate LVM-backed path, start with:
+
+<a href="./on-prem-openshift-demo/docs/README.md"><kbd>&nbsp;&nbsp;ON-PREM DOCS&nbsp;&nbsp;</kbd></a>
+
+Those pages cover only the divergent early host and bastion-staging steps,
+then direct you back to the main docs once the normal Calabi flow resumes.
