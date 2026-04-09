@@ -1,29 +1,57 @@
-# On-Prem Calabi Notes
+# On-Prem Documentation
 
-This directory captures the current portability analysis for running Calabi on
-an on-prem bare-metal host instead of provisioning `virt-01` through AWS.
+Nearby docs:
 
-Current conclusion:
+<a href="./prerequisites.md"><kbd>&nbsp;&nbsp;PREREQUISITES&nbsp;&nbsp;</kbd></a>
+<a href="./manual-process.md"><kbd>&nbsp;&nbsp;MANUAL PROCESS&nbsp;&nbsp;</kbd></a>
+<a href="./portability-and-gap-analysis.md"><kbd>&nbsp;&nbsp;PORTABILITY / GAPS&nbsp;&nbsp;</kbd></a>
+<a href="./host-sizing-and-resource-policy.md"><kbd>&nbsp;&nbsp;HOST SIZING&nbsp;&nbsp;</kbd></a>
+<a href="../../aws-metal-openshift-demo/docs/README.md"><kbd>&nbsp;&nbsp;AWS DOCS MAP&nbsp;&nbsp;</kbd></a>
 
-- most of the lab, support-service, cluster, and day-2 orchestration is already
-  portable
-- the main portability gap is the outer host-acquisition contract, not the lab
-  itself
-- if an on-prem host is prepared to look enough like the current `virt-01`
-  contract, most playbooks should run with little or no orchestration change
+This directory captures the on-prem variant of Calabi where the operator starts
+from a preinstalled `virt-01`-like host instead of provisioning that host
+through AWS.
 
-Start here:
+The current on-prem target is intentionally narrow:
 
-- [Portability And Gap Analysis](./portability-and-gap-analysis.md)
-- [Host Sizing And Resource Policy](./host-sizing-and-resource-policy.md)
+- the operator provides a RHEL hypervisor host
+- the operator provides an LVM2 volume group for guest storage
+- on-prem bootstrap creates the guest logical volumes and publishes the same
+  `/dev/ebs/*` compatibility paths the stock guest and cluster roles already
+  expect
+- once that host contract is satisfied, the existing support-service, cluster,
+  and day-2 orchestration is reused
 
-Scope of this note set:
+Use these notes only for what is materially different from the AWS path. Once
+the on-prem host has been bootstrapped and the bastion boundary has been
+crossed, return to the stock docs under
+<a href="../../aws-metal-openshift-demo/docs/README.md"><kbd>AWS DOCS MAP</kbd></a>.
 
-- what is AWS-specific today
-- what is already portable
-- what host assumptions must be preserved on-prem
-- how CPU tiering and memory oversubscription change as hardware drifts away
-  from `m5.metal`
+## Start Here
 
-This is design and implementation guidance only. It does not yet add a
-first-class on-prem target to the automation.
+1. <a href="./prerequisites.md"><kbd>PREREQUISITES</kbd></a>
+2. <a href="./manual-process.md"><kbd>MANUAL PROCESS</kbd></a>
+3. <a href="./host-sizing-and-resource-policy.md"><kbd>HOST SIZING</kbd></a>
+4. <a href="./portability-and-gap-analysis.md"><kbd>PORTABILITY / GAPS</kbd></a>
+
+## What Is Different On-Prem
+
+- there is no AWS tenant or host stack
+- there is no live AWS volume discovery
+- the guest storage contract comes from an operator-provided LVM volume group
+- the operator must validate CPU, RAM, NUMA, and storage headroom against the
+  current guest footprint before bootstrap
+
+## Where The Normal Docs Take Over Again
+
+For manual operator workflow, the on-prem divergence is concentrated in the
+early host-preparation and storage-preparation steps. After that, hand back to
+the stock runbook at:
+
+- <a href="../../aws-metal-openshift-demo/docs/manual-process.md#12-build-the-bastion-vm"><kbd>AWS MANUAL PROCESS: STEP 12</kbd></a> for the bastion build onward
+- <a href="../../aws-metal-openshift-demo/docs/manual-process.md#13a-optionally-build-ad-ds-and-ad-cs-from-bastion"><kbd>AWS MANUAL PROCESS: STEP 13A</kbd></a> once the bastion is built and the project is staged
+
+For automation, the on-prem entrypoints are:
+
+- <a href="../playbooks/site-bootstrap.yml"><kbd>on-prem `site-bootstrap.yml`</kbd></a>
+- <a href="../playbooks/site-lab.yml"><kbd>on-prem `site-lab.yml`</kbd></a>

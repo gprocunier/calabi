@@ -1,5 +1,12 @@
 # Host Sizing And Resource Policy
 
+Nearby docs:
+
+<a href="./prerequisites.md"><kbd>&nbsp;&nbsp;PREREQUISITES&nbsp;&nbsp;</kbd></a>
+<a href="./manual-process.md"><kbd>&nbsp;&nbsp;MANUAL PROCESS&nbsp;&nbsp;</kbd></a>
+<a href="./portability-and-gap-analysis.md"><kbd>&nbsp;&nbsp;PORTABILITY / GAPS&nbsp;&nbsp;</kbd></a>
+<a href="./README.md"><kbd>&nbsp;&nbsp;ON-PREM DOCS MAP&nbsp;&nbsp;</kbd></a>
+
 ## Why This Matters
 
 The current Calabi host design was validated on AWS `m5.metal`:
@@ -225,6 +232,12 @@ If local storage enumeration is unstable, the on-prem target needs:
 ### 2. Isolation
 
 Guest root and ODF data disks should remain separate logical devices.
+
+The shipped on-prem target now assumes:
+
+- one operator-provided LVM volume group
+- one logical volume per guest disk
+- compatibility symlinks published under `/dev/ebs/*`
 
 Do not collapse this onto one large shared filesystem if the goal is to keep
 the current libvirt/raw-disk behavior intact.

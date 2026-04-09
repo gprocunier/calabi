@@ -1,8 +1,19 @@
 # Portability And Gap Analysis
 
+Nearby docs:
+
+<a href="./prerequisites.md"><kbd>&nbsp;&nbsp;PREREQUISITES&nbsp;&nbsp;</kbd></a>
+<a href="./manual-process.md"><kbd>&nbsp;&nbsp;MANUAL PROCESS&nbsp;&nbsp;</kbd></a>
+<a href="./host-sizing-and-resource-policy.md"><kbd>&nbsp;&nbsp;HOST SIZING&nbsp;&nbsp;</kbd></a>
+<a href="./README.md"><kbd>&nbsp;&nbsp;ON-PREM DOCS MAP&nbsp;&nbsp;</kbd></a>
+
 ## Executive Summary
 
-Calabi is already close to an on-prem design.
+Calabi is now close enough to an on-prem design that the repo ships an initial
+on-prem target under:
+
+- <a href="../playbooks/site-bootstrap.yml"><kbd>on-prem-openshift-demo/playbooks/site-bootstrap.yml</kbd></a>
+- <a href="../playbooks/site-lab.yml"><kbd>on-prem-openshift-demo/playbooks/site-lab.yml</kbd></a>
 
 The AWS-specific part is mostly the substrate that creates `virt-01` and its
 attached guest block devices. Once the host exists and presents the expected
@@ -124,30 +135,36 @@ Those names are fed by:
 - `aws-metal-openshift-demo/roles/lab_host_base/tasks/main.yml`
 - guest vars under `aws-metal-openshift-demo/vars/guests/`
 
-On-prem, you need an equivalent deterministic disk contract, even if the
-backing devices are:
+The current on-prem target now satisfies this by:
+
+- creating guest logical volumes from an operator-provided LVM volume group
+- publishing `/dev/ebs/*` compatibility symlinks
+
+That keeps the existing guest and cluster roles reusable even though the
+backing devices are now on-prem LVs rather than AWS EBS volumes.
+
+Those backing devices may be:
 
 - local NVMe
 - RAID LUNs
 - SAN-backed block devices
 - local SSDs presented by HBA order
 
-## Minimal Viable On-Prem Bring-Up
+## Current On-Prem Bring-Up Model
 
-If the goal is “make Calabi run on an on-prem box with as little code change as
-possible,” the lowest-risk path is:
+The current shipped on-prem target takes the lowest-risk path:
 
 1. Install a RHEL host manually so it becomes the on-prem equivalent of
    `virt-01`.
-2. Attach all required guest disks ahead of time.
-3. Create deterministic symlinks that match the current `/dev/ebs/*` contract,
-   even if the backing disks are not AWS EBS.
+2. Provide an LVM volume group with enough free space for the guest footprint.
+3. Let on-prem bootstrap create the guest LVs and deterministic
+   `/dev/ebs/*` compatibility symlinks.
 4. Keep the inventory host in the `aws_metal` group initially.
 5. Override `ansible_user` if the host does not use `ec2-user`.
 6. Skip the AWS host-acquisition layer and run only the host/bootstrap and lab
    orchestration from the point where the host contract is satisfied.
 
-In that model, most of the current playbooks should work with little or no
+In that model, most of the current playbooks do work with little or no
 orchestration change.
 
 ## What Would Need To Change For A First-Class On-Prem Target
@@ -245,10 +262,10 @@ Once the host-mimicry path is proven, make the substrate neutral:
 - rename `aws_metal` to a neutral hypervisor group
 - move `ec2-user` assumptions behind explicit variables
 
-### Phase 3: Publish a first-class on-prem target
+### Phase 3: Publish a more neutral on-prem target
 
-Only after the first two phases should the repo grow an actual alternate
-installation target with:
+The repo now has an initial alternate target. The remaining work is to make it
+less compatibility-driven and more neutral, with:
 
 - on-prem prerequisites
 - on-prem host-preparation workflow
@@ -256,7 +273,12 @@ installation target with:
 
 ## Bottom Line
 
-Your instinct is mostly correct.
+Your instinct was mostly correct.
+
+The bulk of Calabi was already portable once a `virt-01`-like host existed.
+The current on-prem target proves that by replacing the outer AWS host and
+storage acquisition steps while reusing the stock support-service, cluster, and
+day-2 orchestration.
 
 If you already have a freshly installed on-prem server with `m5.metal`-like
 capacity and you prepare it to satisfy the current `virt-01` contract, most of
