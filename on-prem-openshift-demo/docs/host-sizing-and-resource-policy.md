@@ -220,6 +220,10 @@ AWS `m5.metal` plus EBS gave the project a very explicit disk model:
 - one host root volume
 - dedicated raw guest block devices
 - stable `/dev/ebs/*` symlinks
+- explicit per-volume `gp3` performance intent:
+  - size
+  - IOPS
+  - throughput
 
 For you as the operator, on-prem storage matters in three ways:
 
@@ -247,7 +251,46 @@ The shipped on-prem target now assumes:
 Do not collapse this onto one large shared filesystem if the goal is to keep
 the current libvirt/raw-disk behavior intact.
 
-### 3. Rebuild hygiene
+### 3. Aggregate performance
+
+This is where the on-prem target differs most from AWS.
+
+Today, the repo preserves:
+
+- guest disk capacity
+- stable guest disk identity
+- one LV per expected guest disk
+
+Today, the repo does **not** preserve:
+
+- per-disk `gp3` IOPS guarantees
+- per-disk `gp3` throughput guarantees
+- guest-specific storage QoS through libvirt `iotune`
+
+That means you should treat the AWS `gp3` fields in the stock volume inventory
+as workload-class hints, not as behavior the on-prem target currently enforces.
+
+Your real on-prem storage contract today is:
+
+- enough aggregate read and write performance for the full guest set
+- enough queue depth and latency headroom for concurrent boot and install work
+- no obvious starvation when mirror-registry, control-plane nodes, infra nodes,
+  and day-2 operators are all active
+
+Practical guidance:
+
+- prefer local NVMe or high-quality SSD-backed storage
+- avoid slow shared spinning media
+- be cautious with oversubscribed SAN tiers unless you already trust them under
+  virtualization-heavy mixed workloads
+- treat ODF data disks as real storage consumers, not as decorative placeholders
+
+If you need a concrete mental model, think in terms of an aggregate backend
+ceiling rather than per-LV guarantees. The current on-prem target assumes a
+storage backend that is simply fast enough for the whole lab rather than a
+backend that enforces precise per-guest caps.
+
+### 4. Rebuild hygiene
 
 The project already assumes stale storage metadata can survive rebuilds.
 
@@ -257,6 +300,21 @@ Important examples:
 
 - support guest disks must be wiped on real rebuild boundaries
 - ODF data disks may need explicit BlueStore label-position wipes
+
+### Future performance isolation
+
+If you later find that one guest class can starve the rest, the next place to
+look is not LVM itself. It is per-guest presentation and throttling through
+libvirt or the underlying host I/O controller.
+
+Likely future directions:
+
+- libvirt `iotune`
+- per-tier guest storage weighting
+- host-side cgroup I/O policy
+
+That is worth chasing only after you have evidence that the backend is fast
+enough in aggregate but still needs guest-to-guest isolation.
 
 ## Networking Considerations
 

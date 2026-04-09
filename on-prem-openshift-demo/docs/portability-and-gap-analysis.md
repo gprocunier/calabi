@@ -155,6 +155,11 @@ Those backing devices may be:
 - SAN-backed block devices
 - local SSDs presented by HBA order
 
+What the current on-prem target does **not** carry over yet is the AWS `gp3`
+performance contract. It preserves the disk layout and naming contract, but it
+does not currently convert per-volume AWS IOPS and throughput settings into
+libvirt `iotune` or any other host-level storage QoS policy.
+
 ## Current On-Prem Bring-Up Model
 
 The current shipped on-prem target takes the lowest-risk path for you as the
@@ -172,6 +177,13 @@ operator:
 
 In that model, most of the current playbooks do work with little or no
 orchestration change.
+
+The tradeoff is that the current target is capacity-first, not QoS-first:
+
+- it validates space
+- it provisions the expected guest disks
+- it preserves stable guest disk identity
+- it expects you to provide a backend with enough aggregate performance
 
 ## What Would Need To Change For A First-Class On-Prem Target
 

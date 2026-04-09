@@ -102,6 +102,20 @@ This storage figure does **not** include:
 
 Do not size the volume group to the exact raw sum and call it done.
 
+You should also treat AWS `gp3` performance settings as workload hints, not as
+something the current on-prem target enforces automatically. The shipped
+on-prem path preserves capacity and stable disk identity. It does **not** yet
+translate per-volume AWS `gp3` IOPS and throughput settings into libvirt or
+host-level storage QoS controls.
+
+Plan for:
+
+- fast local SSD or NVMe storage, or a proven SAN-backed block tier
+- enough aggregate I/O for concurrent guest boot, mirror-registry activity, and
+  OpenShift node churn
+- headroom beyond the raw LV capacity sum so the backend is not saturated under
+  normal cluster and day-2 load
+
 ## CPU And Memory Baseline
 
 The current validated host baseline is still AWS `m5.metal`-like:
