@@ -26,8 +26,8 @@ GITHUB_REPO_URL = "https://github.com/gprocunier/calabi"
 
 SITE_ORDER = [
     "index",
-    "readme",
-    "project-readme",
+    "open-the-lab",
+    "docs-map",
     "prerequisites",
     "redhat-developer-subscription",
     "automation-flow",
@@ -50,7 +50,8 @@ SITE_ORDER = [
 PATH_SEQUENCES = {
     "Get Started": [
         "index",
-        "readme",
+        "open-the-lab",
+        "docs-map",
         "prerequisites",
         "automation-flow",
         "manual-process",
@@ -88,8 +89,8 @@ PATH_SEQUENCES = {
 
 PAGE_PATH = {
     "index": "Get Started",
-    "readme": "Get Started",
-    "project-readme": "Get Started",
+    "open-the-lab": "Get Started",
+    "docs-map": "Get Started",
     "prerequisites": "Build And Rebuild",
     "redhat-developer-subscription": "Build And Rebuild",
     "automation-flow": "Build And Rebuild",
@@ -108,14 +109,6 @@ PAGE_PATH = {
     "odf-declarative-plan": "Architecture And Policy",
     "orchestration-guide": "Change The Code",
 }
-
-HEADER_NAV = [
-    ("DOCS MAP", "index.html"),
-    ("BUILD / REBUILD", "automation-flow.html"),
-    ("AUTH MODEL", "authentication-model.html"),
-    ("MANUAL PROCESS", "manual-process.html"),
-    ("CODE GUIDE", "orchestration-guide.html"),
-]
 
 PAGE_ADJACENCY = {
     "index": [
@@ -616,11 +609,11 @@ a {
 
 def slug_for(path: Path) -> str:
     if path == ROOT_README:
-        return "project-readme"
-    if path == PROJECT_README:
-        return "readme"
-    if path.name == "README.md" and path.parent == DOCS_ROOT:
         return "index"
+    if path == PROJECT_README:
+        return "open-the-lab"
+    if path.name == "README.md" and path.parent == DOCS_ROOT:
+        return "docs-map"
     return path.stem
 
 
@@ -635,6 +628,31 @@ def source_label(path: Path) -> str:
 
 def source_url(path: Path) -> str:
     return f"{GITHUB_BLOB_BASE}/{path.relative_to(REPO_ROOT).as_posix()}"
+
+
+def rewrite_relative_href(href: str, source_path: Path) -> str:
+    if href.startswith(("http://", "https://", "mailto:", "#")):
+        return href
+
+    path_part, frag = (href.split("#", 1) + [""])[:2]
+    candidate = (source_path.parent / path_part).resolve()
+
+    if candidate == ROOT_README:
+        new_href = "index.html"
+    elif candidate == PROJECT_README:
+        new_href = "open-the-lab.html"
+    elif candidate.suffix == ".md" and candidate.parent == DOCS_ROOT:
+        new_href = html_name_for(candidate)
+    elif candidate.exists() and candidate.parent == DOCS_ROOT:
+        new_href = candidate.name
+    elif candidate.exists() and candidate.is_relative_to(REPO_ROOT):
+        new_href = source_url(candidate)
+    else:
+        return href
+
+    if frag:
+        new_href = f"{new_href}#{frag}"
+    return new_href
 
 
 def normalize_list_indentation(text: str) -> str:
@@ -732,6 +750,40 @@ def body_has_inline_toc(soup: BeautifulSoup) -> bool:
             if len(anchors) >= 4:
                 return True
     return False
+
+
+def extract_header_nav(source_path: Path) -> list[tuple[str, str]]:
+    text = source_path.read_text(encoding="utf-8")
+    pattern = re.compile(r'<a href="([^"]+)"><kbd>(.*?)</kbd></a>')
+    lines = text.splitlines()
+    nav_lines: list[str] = []
+    capture = False
+
+    for line in lines[:40]:
+        stripped = line.strip()
+        if not stripped:
+            if capture:
+                break
+            continue
+        if stripped.lower() == "nearby docs:":
+            capture = True
+            continue
+        if pattern.search(stripped):
+            capture = True
+            nav_lines.append(stripped)
+            continue
+        if capture:
+            break
+
+    if not nav_lines:
+        return []
+
+    nav: list[tuple[str, str]] = []
+    for raw in nav_lines:
+        for href, label in pattern.findall(raw):
+            clean_label = re.sub(r"\s+", " ", html.unescape(label).replace("\xa0", " ")).strip()
+            nav.append((clean_label, rewrite_relative_href(href, source_path)))
+    return nav
 
 
 def restore_kbd_links(soup: BeautifulSoup) -> None:
@@ -865,26 +917,9 @@ def load_markdown(path: Path) -> tuple[str, str]:
 def rewrite_links(soup: BeautifulSoup, source_path: Path) -> None:
     for tag in soup.find_all(href=True):
         href = tag["href"]
-        if href.startswith(("http://", "https://", "mailto:", "#")):
+        new_href = rewrite_relative_href(href, source_path)
+        if new_href == href and not href.startswith(("http://", "https://", "mailto:", "#")):
             continue
-        path_part, frag = (href.split("#", 1) + [""])[:2]
-        candidate = (source_path.parent / path_part).resolve()
-
-        if candidate == ROOT_README:
-            new_href = "project-readme.html"
-        elif candidate == PROJECT_README:
-            new_href = "readme.html"
-        elif candidate.suffix == ".md" and candidate.parent == DOCS_ROOT:
-            new_href = html_name_for(candidate)
-        elif candidate.exists() and candidate.parent == DOCS_ROOT:
-            new_href = candidate.name
-        elif candidate.exists() and candidate.is_relative_to(REPO_ROOT):
-            new_href = source_url(candidate)
-        else:
-            continue
-
-        if frag:
-            new_href = f"{new_href}#{frag}"
         tag["href"] = new_href
 
     for tag in soup.find_all(src=True):
@@ -903,9 +938,9 @@ def first_heading(soup: BeautifulSoup) -> str:
 
 def title_for_slug(slug: str) -> str:
     lookup = {
-        "index": "Documentation Map",
-        "readme": "Lab README",
-        "project-readme": "Calabi",
+        "index": "Calabi",
+        "open-the-lab": "Calabi",
+        "docs-map": "Documentation Map",
     }
     if slug in lookup:
         return lookup[slug]
@@ -1046,6 +1081,7 @@ def render_page(
     page_kicker = build_page_kicker(slug, description)
     path_block = build_path_block(slug) if slug != "index" else ""
     pager_block = build_pager(slug) if slug != "index" else ""
+    header_nav = extract_header_nav(source_path)
     toc_block = ""
     soup_for_toc = BeautifulSoup(body_html, "html.parser")
     if toc_html and "<li>" in toc_html and not body_has_inline_toc(soup_for_toc):
@@ -1062,6 +1098,13 @@ def render_page(
   <p><a href="{source_url(source_path)}">{source_label(source_path)}</a></p>
 </section>
 """
+
+    header_nav_html = ""
+    if header_nav:
+        header_nav_html = "".join(
+            f'<a href="{href}"><kbd>{html.escape(label)}</kbd></a>'
+            for label, href in header_nav
+        )
 
     return f"""<!DOCTYPE html>
 <html lang="en-US">
@@ -1092,7 +1135,7 @@ def render_page(
             </div>
           </div>
           <div class="site-header__actions">
-            {''.join(f'<a href="{href}"><kbd>{label}</kbd></a>' for label, href in HEADER_NAV)}
+            {header_nav_html}
           </div>
         </div>
       </header>
