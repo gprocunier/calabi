@@ -21,7 +21,7 @@ Your on-prem contract is intentionally narrow:
 
 - you provide a RHEL hypervisor host
 - you provide an LVM2 volume group for guest storage
-- on-prem bootstrap creates the guest logical volumes and publishes the same
+- the on-prem subtree creates the guest logical volumes and publishes the same
   `/dev/ebs/*` compatibility paths the stock guest and cluster roles already
   expect
 - once that host contract is satisfied, the existing support-service, cluster,

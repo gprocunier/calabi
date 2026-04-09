@@ -190,6 +190,10 @@ The tradeoff is that the current target is capacity-first, not QoS-first:
 - it preserves stable guest disk identity
 - it expects you to provide a backend with enough aggregate performance
 
+The current branch also keeps the AWS-target tree pristine. The on-prem target
+reuses the stock support-service and day-2 code through local wrappers in
+`on-prem-openshift-demo/` rather than by modifying the validated AWS path.
+
 ## What Would Need To Change For A First-Class On-Prem Target
 
 If you want a more neutral long-term target rather than “prepare the host to

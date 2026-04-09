@@ -146,7 +146,8 @@ What must be correct:
 - any project-local credential overrides
 
 At this stage, the on-prem subtree is still reusing the stock guest and day-2
-vars from `aws-metal-openshift-demo`.
+vars and playbooks from `aws-metal-openshift-demo`, but it does so through the
+local on-prem wrappers rather than by modifying the AWS-target codepath.
 
 ## 5. Bootstrap The Host And Provision Guest LVs
 
@@ -188,6 +189,7 @@ The current on-prem `site-bootstrap.yml` is the narrow wrapper that:
 - runs the on-prem bootstrap host prep
 - reuses the stock bastion build
 - stages both the on-prem subtree and the stock AWS-target subtree onto bastion
+  through the local on-prem bastion-stage wrapper
 
 Run:
 

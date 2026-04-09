@@ -54,7 +54,9 @@ After the bastion is built and staged, the normal Calabi sequencing resumes.
   - preserve the stock bastion handoff expectation of `ec2-user@172.16.0.1`
 - Phase 4, bastion bootstrap:
   - build `bastion-01`
-  - stage the on-prem and stock project trees onto bastion
+  - stage the on-prem project tree onto bastion
+  - then stage the stock AWS-target project tree through the local on-prem
+    bastion-stage wrapper
 - Phase 5, resume stock Calabi flow:
   - optional AD
   - IdM
@@ -115,6 +117,9 @@ After the bastion is built and staged, the normal Calabi sequencing resumes.
      ```bash
      ansible-playbook playbooks/site-bootstrap.yml
      ```
+   - this on-prem wrapper stages both:
+     - `on-prem-openshift-demo/`
+     - `aws-metal-openshift-demo/`
 1. Resume the stock lab flow.
    - `RUN ON BASTION`
      ```bash
