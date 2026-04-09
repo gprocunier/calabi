@@ -109,6 +109,14 @@ PAGE_PATH = {
     "orchestration-guide": "Change The Code",
 }
 
+HEADER_NAV = [
+    ("DOCS MAP", "index.html"),
+    ("BUILD / REBUILD", "automation-flow.html"),
+    ("AUTH MODEL", "authentication-model.html"),
+    ("MANUAL PROCESS", "manual-process.html"),
+    ("CODE GUIDE", "orchestration-guide.html"),
+]
+
 PAGE_ADJACENCY = {
     "index": [
         ("Automation Flow", "automation-flow.html"),
@@ -703,6 +711,29 @@ def build_toc(soup: BeautifulSoup) -> str:
     return "\n".join(items)
 
 
+def body_has_inline_toc(soup: BeautifulSoup) -> bool:
+    for heading in soup.find_all(["h2", "h3"]):
+        label = heading.get_text(" ", strip=True).lower()
+        if label in {"table of contents", "contents"}:
+            return True
+
+    main_heading = soup.find("h1")
+    limit = 0
+    for tag in soup.find_all(["p", "ul", "ol", "h2", "h3"]):
+        if main_heading and tag == main_heading:
+            continue
+        if tag.name in {"h2", "h3"}:
+            break
+        limit += 1
+        if limit > 8:
+            break
+        if tag.name in {"ul", "ol"}:
+            anchors = [a for a in tag.find_all("a", href=True) if a["href"].startswith("#")]
+            if len(anchors) >= 4:
+                return True
+    return False
+
+
 def restore_kbd_links(soup: BeautifulSoup) -> None:
     pattern = re.compile(r"\[\[KBDLINK::(.*?)::(.*?)\]\]")
 
@@ -1016,7 +1047,8 @@ def render_page(
     path_block = build_path_block(slug) if slug != "index" else ""
     pager_block = build_pager(slug) if slug != "index" else ""
     toc_block = ""
-    if toc_html and "<li>" in toc_html:
+    soup_for_toc = BeautifulSoup(body_html, "html.parser")
+    if toc_html and "<li>" in toc_html and not body_has_inline_toc(soup_for_toc):
         toc_block = f"""
 <section class="toc-block">
   <h2>On This Page</h2>
@@ -1060,10 +1092,7 @@ def render_page(
             </div>
           </div>
           <div class="site-header__actions">
-            <a href="index.html"><kbd>DOCS MAP</kbd></a>
-            <a href="readme.html"><kbd>LAB README</kbd></a>
-            <a href="manual-process.html"><kbd>MANUAL PROCESS</kbd></a>
-            <a href="{GITHUB_REPO_URL}"><kbd>GITHUB REPO</kbd></a>
+            {''.join(f'<a href="{href}"><kbd>{label}</kbd></a>' for label, href in HEADER_NAV)}
           </div>
         </div>
       </header>
