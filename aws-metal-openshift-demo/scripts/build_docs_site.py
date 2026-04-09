@@ -971,6 +971,30 @@ def rewrite_links(soup: BeautifulSoup, source_path: Path) -> None:
             tag["src"] = candidate.name
 
 
+def link_repo_paths(soup: BeautifulSoup) -> None:
+    path_pattern = re.compile(r"^(?:cloudformation|cockpit|docs|playbooks|roles|scripts|vars)(?:/|$)")
+
+    for container in soup.find_all(["td", "li"]):
+        if container.find("pre"):
+            continue
+        for code in list(container.find_all("code")):
+            if code.find_parent("pre"):
+                continue
+            text = code.get_text(strip=True)
+            if not text or "*" in text:
+                continue
+            if not path_pattern.match(text):
+                continue
+            candidate = (PROJECT_ROOT / text).resolve()
+            if not candidate.exists() or not candidate.is_relative_to(REPO_ROOT):
+                continue
+            anchor = soup.new_tag("a", href=source_url(candidate))
+            new_code = soup.new_tag("code")
+            new_code.string = text
+            anchor.append(new_code)
+            code.replace_with(anchor)
+
+
 def first_heading(soup: BeautifulSoup) -> str:
     h1 = soup.find("h1")
     return h1.get_text(" ", strip=True) if h1 else "Calabi"
@@ -1228,6 +1252,7 @@ def build_site(output_dir: Path) -> None:
         body_html, toc_html = load_markdown(source_path)
         soup = BeautifulSoup(body_html, "html.parser")
         rewrite_links(soup, source_path)
+        link_repo_paths(soup)
         slug = slug_for(source_path)
         title = title_for_slug(slug)
         description = first_paragraph_text(soup)
