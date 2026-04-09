@@ -3,11 +3,16 @@
 Nearby docs:
 
 <a href="./prerequisites.md"><kbd>&nbsp;&nbsp;PREREQUISITES&nbsp;&nbsp;</kbd></a>
+<a href="./automation-flow.md"><kbd>&nbsp;&nbsp;AUTOMATION FLOW&nbsp;&nbsp;</kbd></a>
 <a href="./manual-process.md"><kbd>&nbsp;&nbsp;MANUAL PROCESS&nbsp;&nbsp;</kbd></a>
 <a href="./portability-and-gap-analysis.md"><kbd>&nbsp;&nbsp;PORTABILITY / GAPS&nbsp;&nbsp;</kbd></a>
 <a href="./README.md"><kbd>&nbsp;&nbsp;ON-PREM DOCS MAP&nbsp;&nbsp;</kbd></a>
 
 ## Why This Matters
+
+Use this page to decide whether your on-prem host is close enough to the
+validated `m5.metal` baseline or whether you need to deliberately shrink the
+lab profile.
 
 The current Calabi host design was validated on AWS `m5.metal`:
 
@@ -25,8 +30,8 @@ That hardware shape is large enough to support:
 - host-side CPU reservation
 - zram + KSM + THP for memory efficiency
 
-The farther an on-prem host drifts from that shape, the more careful the sizing
-and scheduling policy must become.
+The farther your on-prem host drifts from that shape, the more careful your
+sizing and scheduling policy must become.
 
 ## Current Baseline Assumptions
 
@@ -141,7 +146,7 @@ Examples:
 Then the current static pool strings are wrong even if total CPU count is
 similar.
 
-The on-prem host policy must be recalculated from:
+You must recalculate the on-prem host policy from:
 
 - socket layout
 - cores per socket
@@ -216,13 +221,13 @@ AWS `m5.metal` plus EBS gave the project a very explicit disk model:
 - dedicated raw guest block devices
 - stable `/dev/ebs/*` symlinks
 
-On-prem, storage matters in three ways:
+For you as the operator, on-prem storage matters in three ways:
 
 ### 1. Deterministic naming
 
 The current lab expects stable raw device paths for guests.
 
-If local storage enumeration is unstable, the on-prem target needs:
+If local storage enumeration is unstable, you need:
 
 - custom udev rules
 - WWN-based symlinks
@@ -255,7 +260,7 @@ Important examples:
 
 ## Networking Considerations
 
-An on-prem host does not need AWS VPCs, but it does need an equivalent network
+Your on-prem host does not need AWS VPCs, but it does need an equivalent network
 contract:
 
 - management access to the hypervisor
@@ -266,7 +271,7 @@ contract:
   - cluster VLANs
   - bastion management path
 
-If an on-prem environment cannot supply the VLAN/trunk model cleanly, the
+If your on-prem environment cannot supply the VLAN/trunk model cleanly, the
 current network design will need more change than the current CPU or memory
 policy.
 
@@ -274,7 +279,7 @@ policy.
 
 ### “Near `m5.metal`” host
 
-If the host is genuinely close to:
+If your host is genuinely close to:
 
 - 48 physical cores
 - 384 GiB RAM
@@ -290,7 +295,7 @@ Main work:
 
 ### Moderately smaller host
 
-If the host is materially smaller than `m5.metal`, the safest changes are:
+If your host is materially smaller than `m5.metal`, the safest changes are:
 
 - reduce worker vCPU first
 - reduce infra vCPU second

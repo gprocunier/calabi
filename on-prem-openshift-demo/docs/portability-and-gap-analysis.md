@@ -3,22 +3,27 @@
 Nearby docs:
 
 <a href="./prerequisites.md"><kbd>&nbsp;&nbsp;PREREQUISITES&nbsp;&nbsp;</kbd></a>
+<a href="./automation-flow.md"><kbd>&nbsp;&nbsp;AUTOMATION FLOW&nbsp;&nbsp;</kbd></a>
 <a href="./manual-process.md"><kbd>&nbsp;&nbsp;MANUAL PROCESS&nbsp;&nbsp;</kbd></a>
 <a href="./host-sizing-and-resource-policy.md"><kbd>&nbsp;&nbsp;HOST SIZING&nbsp;&nbsp;</kbd></a>
 <a href="./README.md"><kbd>&nbsp;&nbsp;ON-PREM DOCS MAP&nbsp;&nbsp;</kbd></a>
 
 ## Executive Summary
 
-Calabi is now close enough to an on-prem design that the repo ships an initial
-on-prem target under:
+Use this page when you need to understand what you can treat as already
+portable versus what you still need to preserve from the current AWS-shaped
+host contract.
+
+The repo now ships an initial on-prem target under:
 
 - <a href="../playbooks/site-bootstrap.yml"><kbd>on-prem-openshift-demo/playbooks/site-bootstrap.yml</kbd></a>
 - <a href="../playbooks/site-lab.yml"><kbd>on-prem-openshift-demo/playbooks/site-lab.yml</kbd></a>
 
-The AWS-specific part is mostly the substrate that creates `virt-01` and its
-attached guest block devices. Once the host exists and presents the expected
-network, storage, and execution contract, the rest of the lab largely behaves
-like a host-local KVM/libvirt/Open vSwitch environment.
+For you as the operator, the important point is simple: the AWS-specific part
+is mostly the substrate that creates `virt-01` and its attached guest block
+devices. Once your host exists and presents the expected network, storage, and
+execution contract, the rest of the lab behaves like a host-local
+KVM/libvirt/Open vSwitch environment.
 
 That means:
 
@@ -68,7 +73,7 @@ These parts are already fundamentally host-local:
 
 ### Host assumptions that must still be satisfied
 
-An on-prem server can reuse most of the current orchestration only if it
+Your on-prem server can reuse most of the current orchestration only if it
 provides the same effective host contract as `virt-01`:
 
 - RHEL host with the required virtualization and networking stack
@@ -92,7 +97,7 @@ Today AWS creates:
 
 On-prem, those responsibilities move outside the current CloudFormation layer.
 
-You need an alternate answer for:
+You need your own answer for:
 
 - how `virt-01` is installed
 - how the operator reaches it
@@ -108,7 +113,7 @@ That does **not** mean the lab is deeply AWS-only. In practice it means:
 - playbooks target one hypervisor host through the `aws_metal` group
 - some tasks derive the hypervisor host via `groups['aws_metal']`
 
-Minimal on-prem path:
+The current on-prem path does this:
 
 - keep the inventory group name `aws_metal` even for an on-prem host
 
@@ -152,7 +157,8 @@ Those backing devices may be:
 
 ## Current On-Prem Bring-Up Model
 
-The current shipped on-prem target takes the lowest-risk path:
+The current shipped on-prem target takes the lowest-risk path for you as the
+operator:
 
 1. Install a RHEL host manually so it becomes the on-prem equivalent of
    `virt-01`.
@@ -169,9 +175,9 @@ orchestration change.
 
 ## What Would Need To Change For A First-Class On-Prem Target
 
-If the goal is a real alternate installation target rather than “prepare the
-host to look like current `virt-01`,” the code should eventually change in
-these places:
+If you want a more neutral long-term target rather than “prepare the host to
+look like current `virt-01`,” the code should eventually change in these
+places:
 
 ### Replace AWS bootstrap discovery in `playbooks/bootstrap/site.yml`
 
@@ -222,7 +228,7 @@ For an on-prem target, the host-user contract should be explicit:
 
 ## What Does Not Need To Be Redesigned
 
-Assuming the on-prem host satisfies the same effective lab contract, these do
+Assuming your on-prem host satisfies the same effective lab contract, these do
 not need a conceptual redesign:
 
 - support guest architecture
@@ -255,7 +261,7 @@ That gives the fastest proof of portability.
 
 ### Phase 2: Neutralize the substrate
 
-Once the host-mimicry path is proven, make the substrate neutral:
+Once you have proven the host-mimicry path, make the substrate neutral:
 
 - move guest-disk inventory out of `cloudformation/`
 - stop requiring AWS discovery in `playbooks/bootstrap/site.yml`
@@ -273,7 +279,7 @@ less compatibility-driven and more neutral, with:
 
 ## Bottom Line
 
-Your instinct was mostly correct.
+The practical takeaway for you is:
 
 The bulk of Calabi was already portable once a `virt-01`-like host existed.
 The current on-prem target proves that by replacing the outer AWS host and
@@ -284,5 +290,5 @@ If you already have a freshly installed on-prem server with `m5.metal`-like
 capacity and you prepare it to satisfy the current `virt-01` contract, most of
 the Calabi playbooks should not need significant tinkering.
 
-The hard part is not OpenShift or the support services.
-The hard part is preserving the current host substrate contract without AWS.
+The hard part is not OpenShift or the support services. The hard part is
+preserving the current host substrate contract without AWS.

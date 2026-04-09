@@ -2,6 +2,7 @@
 
 Nearby docs:
 
+<a href="./automation-flow.md"><kbd>&nbsp;&nbsp;AUTOMATION FLOW&nbsp;&nbsp;</kbd></a>
 <a href="./manual-process.md"><kbd>&nbsp;&nbsp;MANUAL PROCESS&nbsp;&nbsp;</kbd></a>
 <a href="./host-sizing-and-resource-policy.md"><kbd>&nbsp;&nbsp;HOST SIZING&nbsp;&nbsp;</kbd></a>
 <a href="./portability-and-gap-analysis.md"><kbd>&nbsp;&nbsp;PORTABILITY / GAPS&nbsp;&nbsp;</kbd></a>
@@ -10,7 +11,7 @@ Nearby docs:
 
 Read this before the first on-prem build.
 
-This page covers only the prerequisites that differ materially from the AWS
+Use this page only for the prerequisites that differ materially from the AWS
 path. For the rest of the content-access and lab-input model, keep the stock
 <a href="../../aws-metal-openshift-demo/docs/prerequisites.md"><kbd>AWS PREREQUISITES</kbd></a>
 nearby.
@@ -39,8 +40,8 @@ ansible-galaxy collection install -r aws-metal-openshift-demo/requirements.yml
 
 ## What You Need On The On-Prem Hypervisor
 
-The on-prem target assumes a freshly installed RHEL host that plays the role of
-`virt-01`.
+Assume you are starting from a freshly installed RHEL host that plays the role
+of `virt-01`.
 
 Required host contract:
 
@@ -61,8 +62,7 @@ The current group-wide on-prem settings live in:
 
 ## The LVM Storage Contract
 
-The operator must provide one LVM2 volume group that backs the guest logical
-volumes.
+You must provide one LVM2 volume group that backs the guest logical volumes.
 
 Required inputs:
 
@@ -70,7 +70,7 @@ Required inputs:
 - optional `on_prem_lvm_lv_name_prefix`
 - optional `on_prem_lvm_guest_symlink_root`
 
-The on-prem bootstrap role validates the volume group and checks free space
+The on-prem bootstrap role validates that volume group and checks free space
 before any `lvcreate` runs.
 
 Current full-footprint guest storage requirement from the stock volume
@@ -119,7 +119,7 @@ numbered host.
 
 ## Red Hat And Content Inputs
 
-The on-prem path still needs the same Red Hat content inputs as the AWS path:
+You still need the same Red Hat content inputs as the AWS path:
 
 - pull secret
 - RHSM credentials
@@ -163,6 +163,7 @@ ansible-playbook --syntax-check playbooks/site-lab.yml
 
 ## Where To Go Next
 
+- for the on-prem build order: <a href="./automation-flow.md"><kbd>AUTOMATION FLOW</kbd></a>
 - for the on-prem run order: <a href="./manual-process.md"><kbd>MANUAL PROCESS</kbd></a>
 - for resource drift and oversubscription guidance: <a href="./host-sizing-and-resource-policy.md"><kbd>HOST SIZING</kbd></a>
 - for the stock docs once the host contract is satisfied: <a href="../../aws-metal-openshift-demo/docs/README.md"><kbd>AWS DOCS MAP</kbd></a>
