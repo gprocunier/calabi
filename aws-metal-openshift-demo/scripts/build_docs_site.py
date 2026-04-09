@@ -320,17 +320,11 @@ a {
   margin-left: 0;
 }
 
-.execution-context-list {
-  list-style: none;
+.execution-context-row {
   margin: 0.35rem 0 0.15rem;
-  padding-left: 0;
 }
 
-.execution-context-list > .execution-context-only {
-  margin: 0;
-}
-
-.execution-context-list + pre {
+.execution-context-row + pre {
   margin-top: 0.6rem;
 }
 
@@ -1125,14 +1119,19 @@ def render_execution_contexts(soup: BeautifulSoup) -> None:
         else:
             li["class"] = classes + ["execution-context-inline"]
 
-    for ul in soup.find_all("ul"):
+    for ul in list(soup.find_all("ul")):
         direct_items = ul.find_all("li", recursive=False)
-        if direct_items and all("execution-context-only" in item.get("class", []) for item in direct_items):
-            ul["class"] = ul.get("class", []) + ["execution-context-list"]
+        if not direct_items or not all("execution-context-only" in item.get("class", []) for item in direct_items):
+            continue
+        row = soup.new_tag("div", attrs={"class": ["execution-context-row"]})
+        for item in direct_items:
+            for child in list(item.contents):
+                row.append(child.extract())
+        ul.replace_with(row)
 
     for li in soup.find_all("li"):
-        direct_context_list = li.find("ul", class_="execution-context-list", recursive=False)
-        if direct_context_list is None:
+        direct_context_row = li.find("div", class_="execution-context-row", recursive=False)
+        if direct_context_row is None:
             continue
         for child in list(li.contents):
             if isinstance(child, NavigableString) and child.strip() == "Example:":
