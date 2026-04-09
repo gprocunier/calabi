@@ -556,27 +556,6 @@ a {
   font-size: 1.1rem;
 }
 
-.page-kicker {
-  margin-bottom: 1.3rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid var(--rh-gray-20);
-}
-
-.page-kicker__eyebrow {
-  margin: 0 0 0.45rem;
-  color: var(--rh-gray-70);
-  font-size: 0.88rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.page-kicker__summary {
-  margin: 0;
-  max-width: 52rem;
-  color: var(--rh-gray-80);
-  font-size: 1rem;
-}
-
 .site-footer {
   border-top: 1px solid var(--rh-gray-20);
   padding-top: 1.25rem;
@@ -762,7 +741,7 @@ def extract_header_nav(source_path: Path) -> list[tuple[str, str]]:
     for line in lines[:40]:
         stripped = line.strip()
         if not stripped:
-            if capture:
+            if capture and nav_lines:
                 break
             continue
         if stripped.lower() == "nearby docs:":
@@ -854,6 +833,26 @@ def is_kbd_only_paragraph(tag: BeautifulSoup) -> bool:
     return clone.get_text(" ", strip=True) == ""
 
 
+def remove_leading_button_rows(soup: BeautifulSoup, slug: str) -> None:
+    first_h2 = soup.find("h2")
+    removed_nav = False
+
+    for element in list(soup.contents):
+        if element == first_h2:
+            break
+        if getattr(element, "name", None) == "p" and is_kbd_only_paragraph(element):
+            element.decompose()
+            removed_nav = True
+
+    if slug == "index" and removed_nav:
+        for element in list(soup.contents):
+            if element == first_h2:
+                break
+            if getattr(element, "name", None) == "hr":
+                element.decompose()
+                break
+
+
 def remove_nearby_docs_nav(soup: BeautifulSoup) -> None:
     for para in list(soup.find_all("p")):
         if para.get_text(" ", strip=True).lower() != "nearby docs:":
@@ -878,8 +877,7 @@ def normalize_html(soup: BeautifulSoup, slug: str) -> None:
     restore_kbd_links(soup)
     convert_admonitions(soup)
     remove_nearby_docs_nav(soup)
-    if slug == "index":
-        remove_index_launch_grid(soup)
+    remove_leading_button_rows(soup, slug)
 
     seen_ids: set[str] = set()
     for heading in soup.find_all(["h1", "h2", "h3"]):
@@ -939,7 +937,7 @@ def first_heading(soup: BeautifulSoup) -> str:
 def title_for_slug(slug: str) -> str:
     lookup = {
         "index": "Calabi",
-        "open-the-lab": "Calabi",
+        "open-the-lab": "Open The Lab",
         "docs-map": "Documentation Map",
     }
     if slug in lookup:
@@ -1059,16 +1057,6 @@ def build_pager(slug: str) -> str:
 """
 
 
-def build_page_kicker(slug: str, description: str) -> str:
-    path_name = page_path_name(slug) or "Documentation"
-    return f"""
-<section class="page-kicker">
-  <p class="page-kicker__eyebrow">{html.escape(path_name)}</p>
-  <p class="page-kicker__summary">{html.escape(description)}</p>
-</section>
-"""
-
-
 def render_page(
     *,
     page_title: str,
@@ -1078,8 +1066,6 @@ def render_page(
     slug: str,
     source_path: Path,
 ) -> str:
-    page_kicker = build_page_kicker(slug, description)
-    path_block = build_path_block(slug) if slug != "index" else ""
     pager_block = build_pager(slug) if slug != "index" else ""
     header_nav = extract_header_nav(source_path)
     toc_block = ""
@@ -1098,6 +1084,8 @@ def render_page(
   <p><a href="{source_url(source_path)}">{source_label(source_path)}</a></p>
 </section>
 """
+    if slug in {"index", "open-the-lab", "docs-map"}:
+        source_block = ""
 
     header_nav_html = ""
     if header_nav:
@@ -1106,13 +1094,15 @@ def render_page(
             for label, href in header_nav
         )
 
+    full_title = html.escape(page_title if page_title == "Calabi" else f"{page_title} | Calabi")
+
     return f"""<!DOCTYPE html>
 <html lang="en-US">
   <head>
     <meta charset="UTF-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{html.escape(page_title)} | Calabi</title>
+    <title>{full_title}</title>
     <meta name="description" content="{html.escape(description)}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1141,14 +1131,12 @@ def render_page(
       </header>
       <main class="page-shell">
         <div class="content-column">
-          {page_kicker}
           <article class="markdown-body">
             {body_html}
           </article>
           {pager_block}
         </div>
         <aside class="side-column">
-          {path_block}
           {toc_block}
           {source_block}
         </aside>
@@ -1198,9 +1186,9 @@ def build_site(output_dir: Path) -> None:
         body_html, toc_html = load_markdown(source_path)
         soup = BeautifulSoup(body_html, "html.parser")
         rewrite_links(soup, source_path)
-        title = first_heading(soup)
-        description = first_paragraph_text(soup)
         slug = slug_for(source_path)
+        title = title_for_slug(slug)
+        description = first_paragraph_text(soup)
         output_name = html_name_for(source_path)
         rendered = render_page(
             page_title=title,
