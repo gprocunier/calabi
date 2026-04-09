@@ -80,19 +80,28 @@ pattern:
 flowchart TD
     root[calabi]
 
-    root --> awsdocs[aws-metal-openshift-demo/]
-    root --> onpremdocs[on-prem-openshift-demo/]
-    root --> cockpit[cockpit/]
+    root --> awsgrp
+    root --> onpremgrp
+    root --> cockpitgrp
 
-    awsdocs --> aws1[AWS tenant and host scaffolding]
-    awsdocs --> aws2[Hypervisor and network bootstrap]
-    awsdocs --> aws3[Support services and disconnected install]
-    awsdocs --> aws4[Day-2 platform services]
+    subgraph awsgrp["aws-metal-openshift-demo/"]
+        direction TB
+        aws1[AWS tenant and host scaffolding]
+        aws2[Hypervisor and network bootstrap]
+        aws3[Support services and disconnected install]
+        aws4[Day-2 platform services]
+    end
 
-    onpremdocs --> onprem1[On-prem host and LVM preparation]
-    onpremdocs --> onprem2[Handoff back to main docs after bastion staging]
+    subgraph onpremgrp["on-prem-openshift-demo/"]
+        direction TB
+        onprem1[On-prem host and LVM preparation]
+        onprem2[Handoff back to main docs after bastion staging]
+    end
 
-    cockpit --> observer[calabi-observer]
+    subgraph cockpitgrp["cockpit/"]
+        direction TB
+        observer[calabi-observer]
+    end
 ```
 
 ## Cockpit Plugins
