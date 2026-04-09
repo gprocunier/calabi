@@ -974,6 +974,20 @@ def rewrite_links(soup: BeautifulSoup, source_path: Path) -> None:
 def link_repo_paths(soup: BeautifulSoup) -> None:
     path_pattern = re.compile(r"^(?:cloudformation|cockpit|docs|playbooks|roles|scripts|vars)(?:/|$)")
 
+    def repo_link_target(text: str) -> Path | None:
+        candidate_text = text
+        if "*" in candidate_text:
+            prefix = candidate_text.split("*", 1)[0]
+            if "/" not in prefix:
+                return None
+            if not prefix.endswith("/"):
+                prefix = prefix.rsplit("/", 1)[0] + "/"
+            candidate_text = prefix
+        candidate = (PROJECT_ROOT / candidate_text).resolve()
+        if not candidate.exists() or not candidate.is_relative_to(REPO_ROOT):
+            return None
+        return candidate
+
     for container in soup.find_all(["td", "li"]):
         if container.find("pre"):
             continue
@@ -981,12 +995,12 @@ def link_repo_paths(soup: BeautifulSoup) -> None:
             if code.find_parent("pre"):
                 continue
             text = code.get_text(strip=True)
-            if not text or "*" in text:
+            if not text:
                 continue
             if not path_pattern.match(text):
                 continue
-            candidate = (PROJECT_ROOT / text).resolve()
-            if not candidate.exists() or not candidate.is_relative_to(REPO_ROOT):
+            candidate = repo_link_target(text)
+            if candidate is None:
                 continue
             anchor = soup.new_tag("a", href=source_url(candidate))
             new_code = soup.new_tag("code")
