@@ -1,0 +1,144 @@
+---
+- name: Prepare an on-prem virt-01 host for an OpenShift disconnected lab
+  hosts: all
+  become: true
+  gather_facts: true
+  vars_files:
+    - ../../../aws-metal-openshift-demo/vars/global/execution_environment.yml
+    - ../../../aws-metal-openshift-demo/vars/global/host_resource_management.yml
+    - ../../../aws-metal-openshift-demo/vars/global/lab_switch_ports.yml
+    - ../../../aws-metal-openshift-demo/vars/global/rhsm.yml
+    - ../../../aws-metal-openshift-demo/vars/guests/idm_vm.yml
+    - ../../../aws-metal-openshift-demo/cloudformation/virt-01-volume-inventory.yml
+
+  vars:
+    lab_bridge_name: lab-switch
+    lab_switch_name: lab-switch
+    lab_switch_xml_path: /etc/libvirt/lab-switch.xml
+    lab_domain: workshop.lan
+    lab_uplink_interface: "{{ ansible_default_ipv4.interface }}"
+    lab_fast_datapath_repo: fast-datapath-for-rhel-10-x86_64-rpms
+    lab_baseos_repo: rhel-10-for-x86_64-baseos-rpms
+    lab_appstream_repo: rhel-10-for-x86_64-appstream-rpms
+    lab_codeready_repo: codeready-builder-for-rhel-10-x86_64-rpms
+    lab_ovs_package: openvswitch3.6
+    lab_service_units:
+      - NetworkManager.service
+      - openvswitch.service
+      - osbuild-composer.socket
+      - osbuild-composer.service
+      - pmcd.service
+      - pmlogger.service
+      - pmproxy.service
+      - virtqemud.service
+      - virtnetworkd.service
+      - virtnodedevd.service
+      - virtnwfilterd.service
+      - virtsecretd.service
+      - virtstoraged.service
+      - virtinterfaced.service
+      - virtqemud.socket
+      - virtnetworkd.socket
+      - virtnodedevd.socket
+      - virtnwfilterd.socket
+      - virtsecretd.socket
+      - virtstoraged.socket
+      - virtinterfaced.socket
+      - firewalld.service
+    lab_packages:
+      - NetworkManager
+      - "{{ lab_ovs_package }}"
+      - cockpit
+      - cockpit-files
+      - cockpit-image-builder
+      - cockpit-machines
+      - cockpit-podman
+      - cockpit-session-recording
+      - pcp
+      - pcp-system-tools
+      - libvirt
+      - lvm2
+      - qemu-kvm
+      - virt-install
+      - guestfs-tools
+      - virt-top
+      - firewalld
+
+  roles:
+    - role: lab_host_base
+    - role: lab_host_resource_management
+    - role: lab_switch
+    - role: lab_firewall
+    - role: lab_libvirt
+    - role: on_prem_lvm_guest_storage
+
+  post_tasks:
+    - name: Check whether the local guest base image is available on the operator host
+      ansible.builtin.stat:
+        path: "{{ lab_execution_guest_base_image_file }}"
+      delegate_to: localhost
+      become: false
+      register: lab_execution_guest_base_image_local_stat
+
+    - name: Ensure the hypervisor guest image directory exists
+      ansible.builtin.file:
+        path: "{{ lab_execution_hypervisor_guest_image_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Check whether the guest base image is already present on the hypervisor
+      ansible.builtin.stat:
+        path: >-
+          {{ lab_execution_hypervisor_guest_image_dir }}/{{
+          lab_execution_guest_base_image_file | basename }}
+      register: lab_execution_guest_base_image_remote_stat
+
+    - name: Stage the local guest base image onto the hypervisor when available
+      ansible.builtin.copy:
+        src: "{{ lab_execution_guest_base_image_file }}"
+        dest: >-
+          {{ lab_execution_hypervisor_guest_image_dir }}/{{
+          lab_execution_guest_base_image_file | basename }}
+        owner: root
+        group: root
+        mode: "0644"
+      when:
+        - lab_execution_guest_base_image_local_stat.stat.exists
+        - not lab_execution_guest_base_image_remote_stat.stat.exists
+
+    - name: Download the guest base image directly to the hypervisor when a signed URL is provided
+      ansible.builtin.get_url:
+        url: "{{ lab_execution_guest_base_image_url }}"
+        dest: >-
+          {{ lab_execution_hypervisor_guest_image_dir }}/{{
+          lab_execution_guest_base_image_file | basename }}
+        owner: root
+        group: root
+        mode: "0644"
+        timeout: 3600
+      when:
+        - not lab_execution_guest_base_image_local_stat.stat.exists
+        - not lab_execution_guest_base_image_remote_stat.stat.exists
+        - lab_execution_guest_base_image_url | default('') | length > 0
+      no_log: true
+
+    - name: Recheck whether the guest base image is present on the hypervisor after staging
+      ansible.builtin.stat:
+        path: >-
+          {{ lab_execution_hypervisor_guest_image_dir }}/{{
+          lab_execution_guest_base_image_file | basename }}
+      register: lab_execution_guest_base_image_ready_stat
+
+    - name: Fail when the guest base image is unavailable for support VM builds
+      ansible.builtin.assert:
+        that:
+          - lab_execution_guest_base_image_ready_stat.stat.exists
+        fail_msg: >-
+          Guest base image {{
+          lab_execution_hypervisor_guest_image_dir }}/{{ lab_execution_guest_base_image_file
+          | basename }} is not present on the hypervisor, no local staging
+          file was found at {{ lab_execution_guest_base_image_file }}, and no
+          usable direct-download URL was supplied in
+          lab_execution_guest_base_image_url.

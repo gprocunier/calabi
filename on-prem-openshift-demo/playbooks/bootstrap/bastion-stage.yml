@@ -1,0 +1,136 @@
+---
+- name: Stage the primary on-prem project onto the bastion
+  import_playbook: ../../../aws-metal-openshift-demo/playbooks/bootstrap/bastion-stage.yml
+
+- name: Ensure the staged stock AWS-target subtree exists on the bastion
+  hosts: bastion_stage_hosts
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../../aws-metal-openshift-demo/vars/guests/bastion_vm.yml
+  vars:
+    on_prem_bastion_stage_remote_stock_root: >-
+      {{ bastion_client.project_parent }}/aws-metal-openshift-demo
+  tasks:
+    - name: Ensure the staged stock AWS-target root exists
+      ansible.builtin.file:
+        path: "{{ on_prem_bastion_stage_remote_stock_root }}"
+        state: directory
+        owner: "{{ bastion_vm.access.admin_user }}"
+        group: "{{ bastion_vm.access.admin_user }}"
+        mode: "0755"
+
+- name: Synchronize the stock AWS-target subtree onto the bastion
+  hosts: aws_metal
+  become: false
+  gather_facts: false
+  vars_files:
+    - ../../../aws-metal-openshift-demo/vars/guests/bastion_vm.yml
+    - ../../../aws-metal-openshift-demo/vars/global/execution_environment.yml
+  vars:
+    on_prem_bastion_stage_source_stock_root: >-
+      {{ lab_execution_project_root | dirname }}/aws-metal-openshift-demo
+    on_prem_bastion_stage_remote_stock_root: >-
+      {{ bastion_client.project_parent }}/aws-metal-openshift-demo
+  tasks:
+    - name: Validate the local stock AWS-target staging root
+      ansible.builtin.stat:
+        path: "{{ on_prem_bastion_stage_source_stock_root }}"
+      delegate_to: localhost
+      become: false
+      register: on_prem_bastion_stage_stock_root_stat
+
+    - name: Fail when the local stock AWS-target staging root is missing
+      ansible.builtin.assert:
+        that:
+          - on_prem_bastion_stage_stock_root_stat.stat.exists
+        fail_msg: >-
+          Stock AWS-target project root {{
+          on_prem_bastion_stage_source_stock_root }} was not found on the
+          bootstrap controller.
+
+    - name: Synchronize the stock AWS-target subtree while preserving generated content
+      ansible.builtin.command:
+        argv:
+          - rsync
+          - -a
+          - --itemize-changes
+          - --delete
+          - --exclude=.git
+          - --exclude=generated
+          - --exclude=secrets
+          - --exclude=__pycache__
+          - --exclude=.ansible
+          - --rsync-path=sudo rsync
+          - -e
+          - >-
+            ssh -i {{ bastion_client.controller_ssh_private_key_file }}
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+            -o ProxyCommand="ssh -i {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+            {{ hostvars[inventory_hostname].ansible_user }}@{{ hostvars[inventory_hostname].ansible_host }}
+            -W %h:%p"
+          - "{{ on_prem_bastion_stage_source_stock_root }}/"
+          - "{{ bastion_vm.access.admin_user }}@{{ bastion_vm.network.ipv4_address }}:{{ on_prem_bastion_stage_remote_stock_root }}/"
+      register: on_prem_bastion_stage_stock_sync
+      changed_when: on_prem_bastion_stage_stock_sync.stdout | trim | length > 0
+      delegate_to: localhost
+      become: false
+
+- name: Render bastion-side hypervisor inventory for the on-prem runtime path
+  hosts: bastion_stage_hosts
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../../aws-metal-openshift-demo/vars/guests/bastion_vm.yml
+    - ../../../aws-metal-openshift-demo/vars/global/execution_environment.yml
+  vars:
+    on_prem_bastion_stage_hypervisor_inventory_host: >-
+      {{ (groups['aws_metal'] | default([])) | first | default('') }}
+    on_prem_bastion_stage_runtime_hypervisor_host: >-
+      {{
+        hostvars[on_prem_bastion_stage_hypervisor_inventory_host]
+        .on_prem_bastion_hypervisor_host
+        | default('172.16.0.1')
+      }}
+    on_prem_bastion_stage_runtime_hypervisor_user: >-
+      {{
+        hostvars[on_prem_bastion_stage_hypervisor_inventory_host]
+        .on_prem_bastion_hypervisor_user
+        | default(
+          hostvars[on_prem_bastion_stage_hypervisor_inventory_host]
+          .ansible_user
+        )
+      }}
+    on_prem_bastion_stage_runtime_inventory: |
+      ---
+      all:
+        children:
+          aws_metal:
+            hosts:
+              metal-01:
+                ansible_host: {{ on_prem_bastion_stage_runtime_hypervisor_host }}
+                ansible_user: {{ on_prem_bastion_stage_runtime_hypervisor_user }}
+                ansible_ssh_private_key_file: {{ bastion_client.project_root }}/secrets/id_ed25519
+                ansible_ssh_common_args: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+    on_prem_bastion_stage_runtime_inventory_targets:
+      - "{{ bastion_client.project_root }}/inventory/hosts.yml"
+      - "{{ bastion_client.project_parent }}/aws-metal-openshift-demo/inventory/hosts.yml"
+  tasks:
+    - name: Validate the on-prem hypervisor inventory host exists
+      ansible.builtin.assert:
+        that:
+          - on_prem_bastion_stage_hypervisor_inventory_host | length > 0
+        fail_msg: >-
+          The on-prem bastion-stage wrapper requires an aws_metal inventory
+          host so it can render the bastion-side hypervisor inventory.
+
+    - name: Write the bastion-side hypervisor inventory for both staged project trees
+      ansible.builtin.copy:
+        dest: "{{ item }}"
+        content: "{{ on_prem_bastion_stage_runtime_inventory }}"
+        owner: "{{ bastion_vm.access.admin_user }}"
+        group: "{{ bastion_vm.access.admin_user }}"
+        mode: "0644"
+      loop: "{{ on_prem_bastion_stage_runtime_inventory_targets }}"
