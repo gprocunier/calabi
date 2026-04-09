@@ -1,4 +1,4 @@
-# Active Investigation Notes
+# Investigation Notes
 
 Nearby docs:
 
@@ -7,101 +7,85 @@ Nearby docs:
 <a href="./issues.md"><kbd>&nbsp;&nbsp;ISSUES LEDGER&nbsp;&nbsp;</kbd></a>
 <a href="./README.md"><kbd>&nbsp;&nbsp;DOCS MAP&nbsp;&nbsp;</kbd></a>
 
-This is the working notebook for problems that are still open or worth coming
-back to later.
+This page now serves as a short closure note for investigations that mattered
+to the current validated release.
 
-It is more operational than <a href="./issues.md"><kbd>ISSUES LEDGER</kbd></a>: the issues ledger records fixes
-that already landed, while this file keeps the observations, experiments, and
-unanswered questions.
+It is more operational than <a href="./issues.md"><kbd>ISSUES LEDGER</kbd></a>: the issues ledger records the
+fixes that landed, while this file records the final disposition of the bigger
+investigation threads.
 
-## Open Investigation: Final Golden-Path Certification Run
+## Current Release Status
 
-Status:
+Current validated release:
 
-- open
-- zero-VM teardown and `playbooks/site-bootstrap.yml` have now been re-proven
-- cluster build, mirrored-content use, and the default auth/day-2 path have
-  already succeeded from preserved support-service boundaries
-- recent fresh-path `playbooks/site-lab.yml` reruns have still exposed late
-  orchestration defects that required code repair
-- the final bar remains one uninterrupted zero-VM `playbooks/site-lab.yml` run
-  on the current codebase, without live code repair during the attempt
+- `v1.0.0`
+- confirmed to deploy cleanly
+- no active investigation is currently blocking the release
 
-### What is already proven
+What is now proven on the current release:
 
-- support services can be brought up and reused across retries
-- a zero-VM rebuild through `playbooks/site-bootstrap.yml` completes on the
-  current codebase
-- the cluster can install successfully on the current codebase
-- the full support-service plus cluster path can converge cleanly on the
-  current codebase
-- mirrored Keycloak content deploys and runs
-- OpenShift OAuth converges on:
+- zero-VM teardown and rebuild through `playbooks/site-bootstrap.yml`
+- uninterrupted `playbooks/site-lab.yml` convergence on the current codebase
+- mirrored content, cluster install, and day-2 convergence
+- OpenShift auth on:
   - `HTPasswd` breakglass
   - Keycloak OIDC
   - group-based RBAC through `openshift-admin`
-- AAP now converges on Keycloak OIDC instead of the former direct-LDAP path
-- AD-backed user login to AAP has been validated on:
-  - the repaired in-place AAP run
-  - a clean AAP teardown and redeploy
-- the repo validation lane is clean:
+- AAP on Keycloak OIDC
+- AD-backed user login to AAP after clean redeploy
+- clean repo validation:
   - `make validate`
   - `ansible-lint -p`
-- the runner split and workstation-to-bastion handoff are now documented in
-  <a href="./orchestration-plumbing.md"><kbd>ORCHESTRATION PLUMBING</kbd></a>
-- the current live auth model and the planned AD-source-of-truth policy model
-  now have dedicated architecture pages:
-  - <a href="./authentication-model.md"><kbd>AUTH MODEL</kbd></a>
-  - <a href="./ad-idm-policy-model.md"><kbd>AD / IDM POLICY MODEL</kbd></a>
 
-### What remains to prove
+Current disposition:
 
-- one uninterrupted zero-VM `playbooks/site-lab.yml` run after
-  `playbooks/site-bootstrap.yml` completes
-- no live code repair during that attempt
+- all release-blocking investigation items are closed
+- the repo no longer needs a separate open-investigation gate for clean deploys
 
-### Current confidence gate
-
-1. Tear down to zero VMs and reset lab networking.
-2. Run `playbooks/site-bootstrap.yml`.
-3. Run `playbooks/site-lab.yml` end to end without intervention.
-
-## Planned Work: AD Source-Of-Truth Policy Model
+## Closed Investigation: Final Golden-Path Certification Run
 
 Status:
 
-- in progress
-- the first orchestration slice is now wired
-- live validation of the bridge and downstream consumers is still pending
+- closed
+- the clean release bar was met on `v1.0.0`
 
-The future target is:
+What was required:
 
-- AD as the source of truth for users and source-side group membership
-- IdM local groups as the policy and authorization boundary
-- RHEL sudo, Keycloak group emission, and OpenShift RBAC all consuming the
-  local IdM groups rather than raw AD group names
+- zero-VM teardown and network reset
+- `playbooks/site-bootstrap.yml`
+- uninterrupted `playbooks/site-lab.yml` without live code repair
 
-Saved implementation artifacts:
+Final result:
 
-- <a href="./ad-idm-policy-model.md"><kbd>AD / IDM POLICY MODEL</kbd></a>
-- <a href="../vars/global/ad_group_policy.yml"><kbd>vars/global/ad_group_policy.yml</kbd></a>
-- <a href="../roles/idm_ad_trust/tasks/main.yml"><kbd>roles/idm_ad_trust/tasks/main.yml</kbd></a>
+- that clean-path certification run has now been achieved
+- the late orchestration defects that previously surfaced during fresh runs
+  were corrected and retested before release
 
-What is implemented now:
+Why this note remains:
+
+- it explains why earlier docs and runbooks emphasized the need for one final
+  uninterrupted fresh-path proof
+- that proof now exists, so this is retained only as release history
+
+## Closed Investigation: AD Source-Of-Truth Policy Model
+
+Status:
+
+- closed for the current release baseline
+
+What is implemented and validated:
 
 - canonical AD-to-IdM mapping data
 - IdM external-group creation for mapped AD groups
 - nesting of those external groups into the target local IdM groups during the
   AD trust play
+- Keycloak/OpenShift/AAP auth flowing through the current validated auth model
 
-What is still pending:
+Current release stance:
 
-- live proof that trusted AD users inherit the intended local IdM groups
-- RHEL-side authorization validation through the bridged local groups
-- Keycloak/OpenShift validation that the bridged local groups are what drive
-  OIDC group claims and RBAC
-- deferred naming/description cleanup so local IdM access groups and external
-  AD source groups are visually distinct in the UI and `ipa` output
+- the release baseline is validated and closed
+- future policy refinements can proceed as follow-on design work, not as an
+  open release investigation
 
 ## Closed Investigation: ODF NooBaa / CNPG initialization stall
 
