@@ -56,9 +56,10 @@ Required host contract:
 - an uplink that OVS can build around
 - SSH reachability from the operator workstation
 - enough local storage and RAM for the selected guest footprint
-- willingness to preserve the stock bastion-to-hypervisor handoff model:
-  - bastion reaches the hypervisor on `172.16.0.1`
-  - bootstrap leaves `ec2-user` usable there with the staged SSH key
+- a lab-management path from bastion back to the hypervisor, with explicit
+  on-prem runtime settings for:
+  - `on_prem_bastion_hypervisor_host`
+  - `on_prem_bastion_hypervisor_user`
 
 The current inventory example is:
 
@@ -67,6 +68,13 @@ The current inventory example is:
 The current group-wide on-prem settings live in:
 
 - <a href="../inventory/group_vars/all.yml"><kbd>on-prem-openshift-demo/inventory/group_vars/all.yml</kbd></a>
+
+The important split is:
+
+- `inventory/hosts.yml` describes how **you** reach the hypervisor from the
+  operator workstation
+- `on_prem_bastion_hypervisor_host` and `on_prem_bastion_hypervisor_user`
+  describe how **bastion** reaches that same hypervisor on the lab network
 
 ## The LVM Storage Contract
 

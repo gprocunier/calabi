@@ -51,7 +51,8 @@ After the bastion is built and staged, the normal Calabi sequencing resumes.
   - configure OVS, libvirt, and firewalling
   - create guest logical volumes
   - publish `/dev/ebs/*` compatibility symlinks
-  - preserve the stock bastion handoff expectation of `ec2-user@172.16.0.1`
+  - preserve a bastion-to-hypervisor handoff, but with explicit on-prem
+    runtime host and user settings instead of the stock `ec2-user` assumption
 - Phase 4, bastion bootstrap:
   - build `bastion-01`
   - stage the on-prem project tree onto bastion
@@ -97,8 +98,9 @@ After the bastion is built and staged, the normal Calabi sequencing resumes.
    - check SSH reachability
    - check `virt-host-validate`
    - check storage visibility and the intended volume group
-   - remember that the later bastion handoff still expects the hypervisor on
-     `172.16.0.1` as `ec2-user`
+   - confirm the bastion-side hypervisor path you intend to publish through:
+     - `on_prem_bastion_hypervisor_host`
+     - `on_prem_bastion_hypervisor_user`
    - `RUN LOCALLY`
      ```bash
      ssh <hypervisor-admin-user>@<hypervisor-management-ip> \
@@ -120,6 +122,8 @@ After the bastion is built and staged, the normal Calabi sequencing resumes.
    - this on-prem wrapper stages both:
      - `on-prem-openshift-demo/`
      - `aws-metal-openshift-demo/`
+   - it also rewrites the bastion-side runtime inventory so bastion uses your
+     explicit on-prem hypervisor user instead of `ec2-user`
 1. Resume the stock lab flow.
    - `RUN ON BASTION`
      ```bash

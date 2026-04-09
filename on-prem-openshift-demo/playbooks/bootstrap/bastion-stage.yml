@@ -77,3 +77,60 @@
       changed_when: on_prem_bastion_stage_stock_sync.stdout | trim | length > 0
       delegate_to: localhost
       become: false
+
+- name: Render bastion-side hypervisor inventory for the on-prem runtime path
+  hosts: bastion_stage_hosts
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../../aws-metal-openshift-demo/vars/guests/bastion_vm.yml
+    - ../../../aws-metal-openshift-demo/vars/global/execution_environment.yml
+  vars:
+    on_prem_bastion_stage_hypervisor_inventory_host: >-
+      {{ (groups['aws_metal'] | default([])) | first | default('') }}
+    on_prem_bastion_stage_runtime_hypervisor_host: >-
+      {{
+        hostvars[on_prem_bastion_stage_hypervisor_inventory_host]
+        .on_prem_bastion_hypervisor_host
+        | default('172.16.0.1')
+      }}
+    on_prem_bastion_stage_runtime_hypervisor_user: >-
+      {{
+        hostvars[on_prem_bastion_stage_hypervisor_inventory_host]
+        .on_prem_bastion_hypervisor_user
+        | default(
+          hostvars[on_prem_bastion_stage_hypervisor_inventory_host]
+          .ansible_user
+        )
+      }}
+    on_prem_bastion_stage_runtime_inventory: |
+      ---
+      all:
+        children:
+          aws_metal:
+            hosts:
+              metal-01:
+                ansible_host: {{ on_prem_bastion_stage_runtime_hypervisor_host }}
+                ansible_user: {{ on_prem_bastion_stage_runtime_hypervisor_user }}
+                ansible_ssh_private_key_file: {{ bastion_client.project_root }}/secrets/id_ed25519
+                ansible_ssh_common_args: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+    on_prem_bastion_stage_runtime_inventory_targets:
+      - "{{ bastion_client.project_root }}/inventory/hosts.yml"
+      - "{{ bastion_client.project_parent }}/aws-metal-openshift-demo/inventory/hosts.yml"
+  tasks:
+    - name: Validate the on-prem hypervisor inventory host exists
+      ansible.builtin.assert:
+        that:
+          - on_prem_bastion_stage_hypervisor_inventory_host | length > 0
+        fail_msg: >-
+          The on-prem bastion-stage wrapper requires an aws_metal inventory
+          host so it can render the bastion-side hypervisor inventory.
+
+    - name: Write the bastion-side hypervisor inventory for both staged project trees
+      ansible.builtin.copy:
+        dest: "{{ item }}"
+        content: "{{ on_prem_bastion_stage_runtime_inventory }}"
+        owner: "{{ bastion_vm.access.admin_user }}"
+        group: "{{ bastion_vm.access.admin_user }}"
+        mode: "0644"
+      loop: "{{ on_prem_bastion_stage_runtime_inventory_targets }}"

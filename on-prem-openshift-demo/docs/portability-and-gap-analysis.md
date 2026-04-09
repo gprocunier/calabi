@@ -176,9 +176,15 @@ operator:
 3. Let on-prem bootstrap create the guest LVs and deterministic
    `/dev/ebs/*` compatibility symlinks.
 4. Keep the inventory host in the `aws_metal` group initially.
-5. Override `ansible_user` if the host does not use `ec2-user`.
+5. Set the operator-side and bastion-side hypervisor SSH users explicitly.
 6. Skip the AWS host-acquisition layer and run only the host/bootstrap and lab
    orchestration from the point where the host contract is satisfied.
+
+For the current branch, that split is now explicit:
+
+- `inventory/hosts.yml` is the operator-workstation path to the hypervisor
+- `on_prem_bastion_hypervisor_host` and `on_prem_bastion_hypervisor_user`
+  define the bastion-side return path to that same host
 
 In that model, most of the current playbooks do work with little or no
 orchestration change.
@@ -240,12 +246,12 @@ That should become a neutral group for:
 
 ### Abstract the login/user assumption
 
-Current host defaults and helper scripts still assume `ec2-user` in places.
+The current on-prem branch now removes the runtime requirement for `ec2-user`
+on the hypervisor by rendering a bastion-side inventory with explicit
+on-prem host and user values.
 
-For an on-prem target, the host-user contract should be explicit:
-
-- inventory-controlled SSH user
-- docs that no longer assume AWS image defaults
+Longer term, the remaining cleanup is mostly about making that host-user
+contract more neutral and less `aws_metal`-named in the stock codebase.
 
 ## What Does Not Need To Be Redesigned
 

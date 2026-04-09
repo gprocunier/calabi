@@ -72,8 +72,9 @@ equivalent:
 - nested KVM available
 - an uplink interface is present for OVS integration
 - local storage is visible and the guest VG exists or can be created
-- the later bastion handoff can still use the stock expectation of
-  `ec2-user@172.16.0.1`
+- you know what bastion-side host and user you want to publish through:
+  - `on_prem_bastion_hypervisor_host`
+  - `on_prem_bastion_hypervisor_user`
 
 Minimal verification:
 
@@ -142,6 +143,8 @@ What must be correct:
 - `ansible_user`
 - `ansible_ssh_private_key_file`
 - `on_prem_lvm_volume_group`
+- `on_prem_bastion_hypervisor_host`
+- `on_prem_bastion_hypervisor_user`
 - any optional `on_prem_lvm_lv_name_prefix`
 - any project-local credential overrides
 
@@ -190,6 +193,8 @@ The current on-prem `site-bootstrap.yml` is the narrow wrapper that:
 - reuses the stock bastion build
 - stages both the on-prem subtree and the stock AWS-target subtree onto bastion
   through the local on-prem bastion-stage wrapper
+- rewrites the bastion-side runtime inventory so the bastion can SSH back to
+  the hypervisor without requiring `ec2-user`
 
 Run:
 
