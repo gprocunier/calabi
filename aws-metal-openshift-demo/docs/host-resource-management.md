@@ -212,27 +212,14 @@ Current role-to-tier mapping:
 | `bastion-01` | Bronze | operator access host, but not part of cluster control path |
 | `ad-01` | Bronze | Windows AD for hybrid identity testing, not cluster-critical |
 
+The table is authoritative. The diagram below is only the compact tier view.
+
 ```mermaid
-flowchart TD
-    gold[Gold]
-    silver[Silver]
-    bronze[Bronze]
-
-    gold --> master1[ocp-master-01]
-    gold --> master2[ocp-master-02]
-    gold --> master3[ocp-master-03]
-
-    silver --> infra1[ocp-infra-01]
-    silver --> infra2[ocp-infra-02]
-    silver --> infra3[ocp-infra-03]
-    silver --> idm[idm-01]
-
-    bronze --> worker1[ocp-worker-01]
-    bronze --> worker2[ocp-worker-02]
-    bronze --> worker3[ocp-worker-03]
-    bronze --> mirror[mirror-registry]
-    bronze --> bastion[bastion-01]
-    bronze --> ad[ad-01]
+flowchart TB
+    guest["Guest workload classes"]
+    guest --> gold["Gold\nocp-master-01..03"]
+    guest --> silver["Silver\nocp-infra-01..03\nidm-01"]
+    guest --> bronze["Bronze\nocp-worker-01..03\nmirror-registry\nbastion-01\nad-01"]
 ```
 
 ## Thread Placement Model
