@@ -219,6 +219,17 @@ a {
   letter-spacing: -0.04em;
 }
 
+.site-brand__title a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.site-brand__title a:hover,
+.site-brand__title a:focus {
+  color: var(--rh-red-dark);
+  text-decoration: none;
+}
+
 .site-brand__tagline {
   margin: 0.35rem 0 0;
   max-width: 60rem;
@@ -1336,7 +1347,7 @@ def render_page(
           <p class="eyebrow">Calabi Documentation</p>
           <div class="site-brand">
             <div>
-              <h1 class="site-brand__title">Calabi</h1>
+              <h1 class="site-brand__title"><a href="index.html">Calabi</a></h1>
               <p class="site-brand__tagline">Single-host disconnected OpenShift on nested KVM, with intent-first docs for architecture, orchestration, auth, and recovery.</p>
             </div>
           </div>
