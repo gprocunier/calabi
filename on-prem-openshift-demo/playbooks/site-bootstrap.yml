@@ -1,0 +1,16 @@
+---
+- name: Bootstrap the on-prem hypervisor host
+  import_playbook: bootstrap/site.yml
+  tags:
+    - bootstrap-host
+
+- name: Build or refresh the bastion support VM
+  import_playbook: ../../aws-metal-openshift-demo/playbooks/bootstrap/bastion.yml
+  tags:
+    - bastion
+    - support-vms
+
+- name: Stage the on-prem project onto the bastion
+  import_playbook: ../../aws-metal-openshift-demo/playbooks/bootstrap/bastion-stage.yml
+  tags:
+    - bastion-stage

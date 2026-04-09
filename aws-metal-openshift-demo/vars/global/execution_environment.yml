@@ -1,5 +1,9 @@
 ---
-lab_execution_project_root: "{{ playbook_dir | dirname | dirname }}"
+lab_execution_project_root: >-
+  {{
+    lab_execution_project_root_override
+    | default(playbook_dir | dirname | dirname)
+  }}
 lab_execution_generated_root: "{{ lab_execution_project_root }}/generated"
 lab_execution_ocp_generated_root: "{{ lab_execution_generated_root }}/ocp"
 lab_execution_tools_root: "{{ lab_execution_generated_root }}/tools"

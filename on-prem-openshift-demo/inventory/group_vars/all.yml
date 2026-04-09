@@ -1,0 +1,18 @@
+---
+lab_execution_project_root_override: "{{ inventory_dir | dirname }}"
+
+# Fresh on-prem hosts are not expected to expose an AWS-created ec2-user.
+lab_host_base_login_user: ""
+lab_host_base_manage_ebs_udev: false
+lab_host_base_guest_symlink_dir: /dev/ebs
+
+# Operator-provided volume group that backs all guest logical volumes.
+on_prem_lvm_volume_group: calabi_lab_vg
+on_prem_lvm_lv_name_prefix: ""
+on_prem_lvm_guest_symlink_root: /dev/ebs
+
+# Stage the validated AWS-target subtree to the bastion as a sibling so the
+# on-prem wrapper playbooks can continue importing the stock support/day-2 code.
+bastion_stage_additional_sync_roots:
+  - local_path: "{{ lab_execution_project_root | dirname }}/aws-metal-openshift-demo"
+    remote_path: "{{ bastion_client.project_parent }}/aws-metal-openshift-demo"

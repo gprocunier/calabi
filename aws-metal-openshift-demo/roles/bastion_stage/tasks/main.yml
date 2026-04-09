@@ -48,6 +48,19 @@
     bastion_stage_hypervisor_host: >-
       {{ (groups['aws_metal'] | default([])) | first | default('') }}
 
+- name: Derive bastion hypervisor connection facts
+  ansible.builtin.set_fact:
+    bastion_stage_hypervisor_target_user: >-
+      {{
+        hostvars[bastion_stage_hypervisor_host].ansible_user
+        | default('root')
+      }}
+    bastion_stage_hypervisor_target_host: >-
+      {{
+        hostvars[bastion_stage_hypervisor_host].ansible_host
+        | default(bastion_stage_hypervisor_host)
+      }}
+
 - name: Validate bastion staging hypervisor inventory is present
   ansible.builtin.assert:
     that:
@@ -150,6 +163,71 @@
       - "{{ bastion_vm.access.admin_user }}@{{ bastion_vm.network.ipv4_address }}:{{ bastion_stage_remote_project_root }}/"
   register: bastion_stage_project_sync
   changed_when: bastion_stage_project_sync.stdout | trim | length > 0
+  delegate_to: localhost
+  become: false
+
+- name: Validate local auxiliary bastion staging roots
+  ansible.builtin.stat:
+    path: "{{ item.local_path }}"
+  loop: "{{ bastion_stage_additional_sync_roots | default([]) }}"
+  loop_control:
+    label: "{{ item.local_path }}"
+  delegate_to: localhost
+  become: false
+  register: bastion_stage_additional_source_stats
+
+- name: Fail when an auxiliary bastion staging root is missing
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+    fail_msg: >-
+      Auxiliary bastion staging source {{
+      item.item.local_path | default('unknown') }} was not found on the
+      bootstrap controller.
+  loop: "{{ bastion_stage_additional_source_stats.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.local_path | default('unknown') }}"
+
+- name: Ensure auxiliary staged project roots exist on the bastion
+  ansible.builtin.file:
+    path: "{{ item.remote_path }}"
+    state: directory
+    owner: "{{ bastion_vm.access.admin_user }}"
+    group: "{{ bastion_vm.access.admin_user }}"
+    mode: "0755"
+  loop: "{{ bastion_stage_additional_sync_roots | default([]) }}"
+  loop_control:
+    label: "{{ item.remote_path }}"
+
+- name: Synchronize auxiliary project roots onto the bastion
+  ansible.builtin.command:
+    argv:
+      - rsync
+      - -a
+      - --itemize-changes
+      - --delete
+      - --exclude=.git
+      - --exclude=generated
+      - --exclude=secrets
+      - --exclude=__pycache__
+      - --exclude=.ansible
+      - --rsync-path=sudo rsync
+      - -e
+      - >-
+        ssh -i {{ bastion_client.controller_ssh_private_key_file }}
+        -o IdentitiesOnly=yes
+        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        -o ProxyCommand="ssh -i {{ hostvars[bastion_stage_hypervisor_host].ansible_ssh_private_key_file }}
+        -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        {{ hostvars[bastion_stage_hypervisor_host].ansible_user }}@{{ hostvars[bastion_stage_hypervisor_host].ansible_host }}
+        -W %h:%p"
+      - "{{ item.local_path }}/"
+      - "{{ bastion_vm.access.admin_user }}@{{ bastion_vm.network.ipv4_address }}:{{ item.remote_path }}/"
+  loop: "{{ bastion_stage_additional_sync_roots | default([]) }}"
+  loop_control:
+    label: "{{ item.local_path }}"
+  register: bastion_stage_additional_sync
+  changed_when: bastion_stage_additional_sync.stdout | trim | length > 0
   delegate_to: localhost
   become: false
 
@@ -718,7 +796,9 @@
       - StrictHostKeyChecking=no
       - -o
       - UserKnownHostsFile=/dev/null
-      - ec2-user@172.16.0.1
+      - >-
+        {{ bastion_stage_hypervisor_target_user }}@{{
+        bastion_stage_hypervisor_target_host }}
       - hostnamectl
       - --static
   register: bastion_stage_hypervisor_ssh_check
@@ -732,5 +812,5 @@
     that:
       - bastion_stage_hypervisor_ssh_check.rc == 0
     fail_msg: >-
-      The bastion could not SSH to the hypervisor on 172.16.0.1 with the
-      staged key.
+      The bastion could not SSH to the hypervisor at {{
+      bastion_stage_hypervisor_target_host }} with the staged key.

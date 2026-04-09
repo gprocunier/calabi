@@ -1,0 +1,224 @@
+---
+- name: Validate the on-prem guest LVM volume group inputs
+  ansible.builtin.assert:
+    that:
+      - on_prem_lvm_volume_group | default('') | length > 0
+      - (guest_volumes | default([])) | length > 0
+    fail_msg: >-
+      On-prem guest storage provisioning requires on_prem_lvm_volume_group and
+      the standard guest_volumes inventory.
+
+- name: Check whether the on-prem guest volume group exists
+  ansible.builtin.command:
+    argv:
+      - vgs
+      - --noheadings
+      - --options
+      - vg_name
+      - "{{ on_prem_lvm_volume_group }}"
+  register: on_prem_lvm_vg_exists
+  changed_when: false
+  failed_when: false
+
+- name: Fail when the requested on-prem guest volume group is missing
+  ansible.builtin.assert:
+    that:
+      - on_prem_lvm_vg_exists.rc == 0
+    fail_msg: >-
+      Volume group {{ on_prem_lvm_volume_group }} was not found on the
+      hypervisor. Create or expose the operator-provided lab VG before running
+      on-prem bootstrap.
+
+- name: Read free space from the on-prem guest volume group
+  ansible.builtin.command:
+    argv:
+      - vgs
+      - --noheadings
+      - --units
+      - g
+      - --nosuffix
+      - --options
+      - vg_free
+      - "{{ on_prem_lvm_volume_group }}"
+  register: on_prem_lvm_vg_free
+  changed_when: false
+
+- name: Read the existing logical volumes in the on-prem guest volume group
+  ansible.builtin.command:
+    argv:
+      - lvs
+      - --noheadings
+      - --separator
+      - "|"
+      - --units
+      - g
+      - --nosuffix
+      - --options
+      - lv_name,lv_size
+      - "{{ on_prem_lvm_volume_group }}"
+  register: on_prem_lvm_existing_lvs_raw
+  changed_when: false
+
+- name: Derive the effective on-prem guest volume requests
+  ansible.builtin.set_fact:
+    on_prem_lvm_requested_volumes: []
+    on_prem_lvm_existing_lv_sizes: {}
+    on_prem_lvm_missing_required_gib: 0
+    on_prem_lvm_vg_free_gib: "{{ on_prem_lvm_vg_free.stdout | trim | float }}"
+
+- name: Normalize the existing on-prem logical volume size map
+  ansible.builtin.set_fact:
+    on_prem_lvm_existing_lv_sizes: >-
+      {{
+        on_prem_lvm_existing_lv_sizes
+        | combine(
+            {
+              (item.split('|')[0] | trim): (item.split('|')[1] | trim | float)
+            }
+          )
+      }}
+  loop: >-
+    {{
+      on_prem_lvm_existing_lvs_raw.stdout_lines
+      | reject('equalto', '')
+      | list
+    }}
+  loop_control:
+    label: "{{ item.split('|')[0] | trim }}"
+
+- name: Build the normalized on-prem guest volume request list
+  ansible.builtin.set_fact:
+    on_prem_lvm_requested_volumes: >-
+      {{
+        on_prem_lvm_requested_volumes
+        + [
+            item
+            | combine(
+                {
+                  'lv_name': (on_prem_lvm_lv_name_prefix | default('')) ~ item.name,
+                  'device_path': '/dev/' ~ on_prem_lvm_volume_group ~ '/' ~ ((on_prem_lvm_lv_name_prefix | default('')) ~ item.name),
+                  'requested_size_gib': (item.size_gib | int),
+                  'guest_symlink_effective': (
+                    item.guest_symlink
+                    | default((on_prem_lvm_guest_symlink_root | default('/dev/ebs')) ~ '/' ~ item.name)
+                  )
+                }
+              )
+          ]
+      }}
+  loop: "{{ guest_volumes }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Validate the normalized on-prem guest volume requests
+  ansible.builtin.assert:
+    that:
+      - item.lv_name | length > 0
+      - item.device_path | length > 0
+      - item.guest_symlink_effective | length > 0
+      - (item.requested_size_gib | int) > 0
+    fail_msg: >-
+      Guest volume {{ item.name | default('unnamed') }} is missing a usable
+      LVM mapping or requested size.
+  loop: "{{ on_prem_lvm_requested_volumes }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Fail when an existing guest logical volume is smaller than requested
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          on_prem_lvm_existing_lv_sizes[item.lv_name] | float
+        ) >= (item.requested_size_gib | float)
+    fail_msg: >-
+      Existing LV {{ on_prem_lvm_volume_group }}/{{ item.lv_name }} is only
+      {{ on_prem_lvm_existing_lv_sizes[item.lv_name] | float }} GiB but the lab
+      requires at least {{ item.requested_size_gib }} GiB.
+  when: item.lv_name in on_prem_lvm_existing_lv_sizes
+  loop: "{{ on_prem_lvm_requested_volumes }}"
+  loop_control:
+    label: "{{ item.lv_name }}"
+
+- name: Accumulate the missing on-prem guest logical volume space requirement
+  ansible.builtin.set_fact:
+    on_prem_lvm_missing_required_gib: >-
+      {{
+        (on_prem_lvm_missing_required_gib | float)
+        + (item.requested_size_gib | float)
+      }}
+  when: item.lv_name not in on_prem_lvm_existing_lv_sizes
+  loop: "{{ on_prem_lvm_requested_volumes }}"
+  loop_control:
+    label: "{{ item.lv_name }}"
+
+- name: Validate the volume group has enough free space for missing guest logical volumes
+  ansible.builtin.assert:
+    that:
+      - (on_prem_lvm_vg_free_gib | float) >= (on_prem_lvm_missing_required_gib | float)
+    fail_msg: >-
+      Volume group {{ on_prem_lvm_volume_group }} only has {{
+      on_prem_lvm_vg_free_gib | float }} GiB free, but missing guest LVs need
+      {{ on_prem_lvm_missing_required_gib | float }} GiB.
+
+- name: Ensure the guest compatibility symlink directory exists
+  ansible.builtin.file:
+    path: "{{ on_prem_lvm_guest_symlink_root | default('/dev/ebs') }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Create missing on-prem guest logical volumes
+  ansible.builtin.command:
+    argv:
+      - lvcreate
+      - --yes
+      - --size
+      - "{{ item.requested_size_gib }}G"
+      - --name
+      - "{{ item.lv_name }}"
+      - "{{ on_prem_lvm_volume_group }}"
+  when: item.lv_name not in on_prem_lvm_existing_lv_sizes
+  loop: "{{ on_prem_lvm_requested_volumes }}"
+  loop_control:
+    label: "{{ item.lv_name }}"
+  changed_when: true
+
+- name: Wait for LVM device nodes to settle after logical volume creation
+  ansible.builtin.command:
+    argv:
+      - udevadm
+      - settle
+  changed_when: false
+
+- name: Validate the created guest logical volume device paths exist
+  ansible.builtin.stat:
+    path: "{{ item.device_path }}"
+  loop: "{{ on_prem_lvm_requested_volumes }}"
+  loop_control:
+    label: "{{ item.device_path }}"
+  register: on_prem_lvm_device_stats
+
+- name: Fail when a requested guest logical volume device path is missing
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+    fail_msg: >-
+      Guest LV device {{ item.item.device_path }} was not found after LVM
+      provisioning.
+  loop: "{{ on_prem_lvm_device_stats.results }}"
+  loop_control:
+    label: "{{ item.item.device_path }}"
+
+- name: Publish compatibility symlinks for the stock guest playbooks
+  ansible.builtin.file:
+    src: "{{ item.device_path }}"
+    dest: "{{ item.guest_symlink_effective }}"
+    state: link
+    force: true
+    owner: root
+    group: root
+  loop: "{{ on_prem_lvm_requested_volumes }}"
+  loop_control:
+    label: "{{ item.guest_symlink_effective }}"
