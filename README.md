@@ -79,16 +79,19 @@ pattern:
 ```mermaid
 flowchart TD
     root[calabi]
-    root --> demo[aws-metal-openshift-demo/]
-    root --> onprem[on-prem-openshift-demo/]
+
+    root --> awsdocs[aws-metal-openshift-demo/]
+    root --> onpremdocs[on-prem-openshift-demo/]
     root --> cockpit[cockpit/]
-    demo --> aws[current AWS tenant and host scaffolding]
-    demo --> host[hypervisor and network bootstrap]
-    demo --> support[IdM, bastion, mirror-registry]
-    demo --> ocp[disconnected OpenShift install]
-    demo --> day2[day-2 platform services]
-    onprem --> hostprep[on-prem host and LVM preparation]
-    onprem --> handoff[handoff back to main docs after bastion staging]
+
+    awsdocs --> aws1[AWS tenant and host scaffolding]
+    awsdocs --> aws2[Hypervisor and network bootstrap]
+    awsdocs --> aws3[Support services and disconnected install]
+    awsdocs --> aws4[Day-2 platform services]
+
+    onpremdocs --> onprem1[On-prem host and LVM preparation]
+    onpremdocs --> onprem2[Handoff back to main docs after bastion staging]
+
     cockpit --> observer[calabi-observer]
 ```
 
