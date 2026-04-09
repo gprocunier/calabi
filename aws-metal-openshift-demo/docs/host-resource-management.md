@@ -473,4 +473,3 @@ Tier weights need reevaluation:
 - <a href="./automation-flow.md"><kbd>AUTOMATION FLOW</kbd></a>
 - <a href="./orchestration-guide.md"><kbd>ORCHESTRATION GUIDE</kbd></a>
 - <a href="./manual-process.md"><kbd>MANUAL PROCESS</kbd></a>
-- `<project-root>/../the-story-so-far.md`
