@@ -19,6 +19,8 @@ from cmarkgfm import Options, github_flavored_markdown_to_html
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PROJECT_ROOT = REPO_ROOT / "aws-metal-openshift-demo"
 DOCS_ROOT = PROJECT_ROOT / "docs"
+ON_PREM_ROOT = REPO_ROOT / "on-prem-openshift-demo"
+ON_PREM_DOCS_ROOT = ON_PREM_ROOT / "docs"
 ROOT_README = REPO_ROOT / "README.md"
 PROJECT_README = PROJECT_ROOT / "README.md"
 GITHUB_BLOB_BASE = "https://github.com/gprocunier/calabi/blob/main"
@@ -28,6 +30,12 @@ SITE_ORDER = [
     "index",
     "open-the-lab",
     "docs-map",
+    "on-prem-docs-map",
+    "on-prem-prerequisites",
+    "on-prem-automation-flow",
+    "on-prem-manual-process",
+    "on-prem-host-sizing-and-resource-policy",
+    "on-prem-portability-and-gap-analysis",
     "prerequisites",
     "redhat-developer-subscription",
     "automation-flow",
@@ -52,9 +60,18 @@ PATH_SEQUENCES = {
         "index",
         "open-the-lab",
         "docs-map",
+        "on-prem-docs-map",
         "prerequisites",
         "automation-flow",
         "manual-process",
+    ],
+    "Experimental On-Prem": [
+        "index",
+        "on-prem-docs-map",
+        "on-prem-prerequisites",
+        "on-prem-automation-flow",
+        "on-prem-manual-process",
+        "docs-map",
     ],
     "Build And Rebuild": [
         "prerequisites",
@@ -91,6 +108,10 @@ PAGE_PATH = {
     "index": "Get Started",
     "open-the-lab": "Get Started",
     "docs-map": "Get Started",
+    "on-prem-docs-map": "Experimental On-Prem",
+    "on-prem-prerequisites": "Experimental On-Prem",
+    "on-prem-automation-flow": "Experimental On-Prem",
+    "on-prem-manual-process": "Experimental On-Prem",
     "prerequisites": "Build And Rebuild",
     "redhat-developer-subscription": "Build And Rebuild",
     "automation-flow": "Build And Rebuild",
@@ -116,6 +137,36 @@ PAGE_ADJACENCY = {
         ("Authentication Model", "authentication-model.html"),
         ("Manual Process", "manual-process.html"),
         ("Investigating", "investigating.html"),
+    ],
+    "on-prem-docs-map": [
+        ("On-Prem Prerequisites", "on-prem-prerequisites.html"),
+        ("On-Prem Automation Flow", "on-prem-automation-flow.html"),
+        ("Docs Map", "docs-map.html"),
+    ],
+    "on-prem-prerequisites": [
+        ("On-Prem Docs", "on-prem-docs-map.html"),
+        ("On-Prem Automation Flow", "on-prem-automation-flow.html"),
+        ("Docs Map", "docs-map.html"),
+    ],
+    "on-prem-automation-flow": [
+        ("On-Prem Prerequisites", "on-prem-prerequisites.html"),
+        ("On-Prem Manual Process", "on-prem-manual-process.html"),
+        ("Docs Map", "docs-map.html"),
+    ],
+    "on-prem-manual-process": [
+        ("On-Prem Automation Flow", "on-prem-automation-flow.html"),
+        ("Docs Map", "docs-map.html"),
+        ("Manual Process", "manual-process.html"),
+    ],
+    "on-prem-host-sizing-and-resource-policy": [
+        ("On-Prem Docs", "on-prem-docs-map.html"),
+        ("On-Prem Automation Flow", "on-prem-automation-flow.html"),
+        ("Docs Map", "docs-map.html"),
+    ],
+    "on-prem-portability-and-gap-analysis": [
+        ("On-Prem Docs", "on-prem-docs-map.html"),
+        ("On-Prem Manual Process", "on-prem-manual-process.html"),
+        ("Docs Map", "docs-map.html"),
     ],
     "automation-flow": [
         ("Prerequisites", "prerequisites.html"),
@@ -181,6 +232,28 @@ a {
 
 .site-shell {
   min-height: 100vh;
+  position: relative;
+}
+
+.site-shell--experimental::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    repeating-linear-gradient(
+      135deg,
+      rgba(238, 0, 0, 0.035) 0 18px,
+      transparent 18px 180px
+    );
+}
+
+.site-shell--experimental .site-header,
+.site-shell--experimental .page-shell,
+.site-shell--experimental .site-footer {
+  position: relative;
+  z-index: 1;
 }
 
 .site-header {
@@ -242,6 +315,21 @@ a {
   flex-wrap: wrap;
   gap: 0.45rem;
   margin-top: 0.8rem;
+}
+
+.experimental-banner {
+  margin-top: 0.9rem;
+  max-width: 60rem;
+  padding: 0.8rem 1rem;
+  border-left: 0.35rem solid var(--rh-red);
+  background: var(--rh-red-light);
+  color: var(--rh-gray-90);
+  font-size: 0.98rem;
+}
+
+.experimental-banner strong {
+  display: inline-block;
+  margin-right: 0.35rem;
 }
 
 .site-header__actions a,
@@ -665,6 +753,10 @@ def slug_for(path: Path) -> str:
         return "open-the-lab"
     if path.name == "README.md" and path.parent == DOCS_ROOT:
         return "docs-map"
+    if path.name == "README.md" and path.parent == ON_PREM_DOCS_ROOT:
+        return "on-prem-docs-map"
+    if path.parent == ON_PREM_DOCS_ROOT:
+        return f"on-prem-{path.stem}"
     return path.stem
 
 
@@ -692,9 +784,9 @@ def rewrite_relative_href(href: str, source_path: Path) -> str:
         new_href = "index.html"
     elif candidate == PROJECT_README:
         new_href = "open-the-lab.html"
-    elif candidate.suffix == ".md" and candidate.parent == DOCS_ROOT:
+    elif candidate.suffix == ".md" and candidate.parent in {DOCS_ROOT, ON_PREM_DOCS_ROOT}:
         new_href = html_name_for(candidate)
-    elif candidate.exists() and candidate.parent == DOCS_ROOT:
+    elif candidate.exists() and candidate.parent in {DOCS_ROOT, ON_PREM_DOCS_ROOT}:
         new_href = candidate.name
     elif candidate.exists() and candidate.is_relative_to(REPO_ROOT):
         new_href = source_url(candidate)
@@ -1035,7 +1127,7 @@ def rewrite_links(soup: BeautifulSoup, source_path: Path) -> None:
 def link_repo_paths(soup: BeautifulSoup) -> None:
     path_pattern = re.compile(
         r"^(?:\./)?(?:"
-        r"cloudformation|cockpit|docs|inventory|playbooks|roles|scripts|vars|\.githooks"
+        r"aws-metal-openshift-demo|on-prem-openshift-demo|cloudformation|cockpit|docs|inventory|playbooks|roles|scripts|vars|\.githooks"
         r")(?:/|$)"
     )
 
@@ -1166,15 +1258,30 @@ def title_for_slug(slug: str) -> str:
         "index": "Calabi",
         "open-the-lab": "Open The Lab",
         "docs-map": "Documentation Map",
+        "on-prem-docs-map": "On-Prem Documentation",
     }
     if slug in lookup:
         return lookup[slug]
-    path = DOCS_ROOT / f"{slug}.md"
+    path = source_path_for_slug(slug)
     if path.exists():
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.startswith("# "):
                 return line[2:].strip()
     return slug.replace("-", " ").title()
+
+
+def source_path_for_slug(slug: str) -> Path:
+    if slug == "index":
+        return ROOT_README
+    if slug == "open-the-lab":
+        return PROJECT_README
+    if slug == "docs-map":
+        return DOCS_ROOT / "README.md"
+    if slug == "on-prem-docs-map":
+        return ON_PREM_DOCS_ROOT / "README.md"
+    if slug.startswith("on-prem-"):
+        return ON_PREM_DOCS_ROOT / f"{slug.removeprefix('on-prem-')}.md"
+    return DOCS_ROOT / f"{slug}.md"
 
 
 def filename_for_slug(slug: str) -> str:
@@ -1295,6 +1402,7 @@ def render_page(
 ) -> str:
     pager_block = build_pager(slug) if slug != "index" else ""
     header_nav = extract_header_nav(source_path)
+    is_experimental = slug.startswith("on-prem-")
     toc_block = ""
     soup_for_toc = BeautifulSoup(body_html, "html.parser")
     if toc_html and "<li>" in toc_html and not body_has_inline_toc(soup_for_toc):
@@ -1311,7 +1419,7 @@ def render_page(
   <p><a href="{source_url(source_path)}">{source_label(source_path)}</a></p>
 </section>
 """
-    if slug in {"index", "open-the-lab", "docs-map"}:
+    if slug in {"index", "open-the-lab", "docs-map", "on-prem-docs-map"}:
         source_block = ""
 
     header_nav_html = ""
@@ -1320,6 +1428,17 @@ def render_page(
             f'<a href="{href}"><kbd>{html.escape(label)}</kbd></a>'
             for label, href in header_nav
         )
+
+    experimental_banner = ""
+    site_shell_class = "site-shell"
+    if is_experimental:
+        site_shell_class += " site-shell--experimental"
+        experimental_banner = """
+          <div class="experimental-banner">
+            <strong>Experimental On-Prem Path.</strong>
+            Use these pages only for the divergent early host and bastion-staging steps, then return to the main Calabi docs once the normal flow resumes.
+          </div>
+"""
 
     full_title = html.escape(page_title if page_title == "Calabi" else f"{page_title} | Calabi")
 
@@ -1341,7 +1460,7 @@ def render_page(
     </script>
   </head>
   <body>
-    <div class="site-shell">
+    <div class="{site_shell_class}">
       <header class="site-header">
         <div class="site-header__inner">
           <p class="eyebrow">Calabi Documentation</p>
@@ -1354,6 +1473,7 @@ def render_page(
           <div class="site-header__actions">
             {header_nav_html}
           </div>
+{experimental_banner}
         </div>
       </header>
       <main class="page-shell">
@@ -1379,6 +1499,11 @@ def render_page(
 
 def first_paragraph_text(soup: BeautifulSoup) -> str:
     for tag in soup.find_all(["p", "li"]):
+        classes = set(tag.get("class", []))
+        if "admonition-title" in classes:
+            continue
+        if tag.find_parent(class_=re.compile(r"\badmonition\b")):
+            continue
         if tag.find("kbd"):
             continue
         text = tag.get_text(" ", strip=True)
@@ -1392,12 +1517,15 @@ def iter_source_pages() -> Iterable[Path]:
     yield PROJECT_README
     for path in sorted(DOCS_ROOT.glob("*.md")):
         yield path
+    for path in sorted(ON_PREM_DOCS_ROOT.glob("*.md")):
+        yield path
 
 
 def copy_static_assets(output_dir: Path) -> None:
-    for asset in DOCS_ROOT.iterdir():
-        if asset.suffix.lower() in {".svg", ".png", ".jpg", ".jpeg", ".gif"}:
-            shutil.copy2(asset, output_dir / asset.name)
+    for docs_root in (DOCS_ROOT, ON_PREM_DOCS_ROOT):
+        for asset in docs_root.iterdir():
+            if asset.suffix.lower() in {".svg", ".png", ".jpg", ".jpeg", ".gif"}:
+                shutil.copy2(asset, output_dir / asset.name)
 
 
 def build_site(output_dir: Path) -> None:

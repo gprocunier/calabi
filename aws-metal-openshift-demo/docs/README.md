@@ -43,6 +43,23 @@ The remaining certification bar is still one uninterrupted fresh
 `playbooks/site-lab.yml` run on the current codebase without live repair during
 that attempt.
 
+## Experimental Alternate Target
+
+If you are not provisioning `virt-01` through AWS and already have an on-prem
+host that can satisfy the Calabi hypervisor contract, use the experimental
+on-prem entry path for the divergent early steps:
+
+<a href="../../on-prem-openshift-demo/docs/README.md"><kbd>&nbsp;&nbsp;ON-PREM DOCS&nbsp;&nbsp;</kbd></a>
+
+Those pages cover:
+
+- the on-prem host contract
+- LVM-backed guest volume provisioning
+- the on-prem bastion staging wrapper
+
+They then hand you back to this main docs set once the bastion is built and the
+normal Calabi sequencing resumes.
+
 ## Choose Your Path
 
 ### I Want To Build Or Rebuild The Lab

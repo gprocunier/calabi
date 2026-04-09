@@ -16,6 +16,13 @@ content mirroring.
 <a href="./aws-metal-openshift-demo/README.md"><kbd>&nbsp;&nbsp;OPEN THE LAB&nbsp;&nbsp;</kbd></a>
 <a href="./aws-metal-openshift-demo/docs/README.md"><kbd>&nbsp;&nbsp;DOCS MAP&nbsp;&nbsp;</kbd></a>
 
+> [!WARNING]
+> Experimental on-prem target: if you already have a prepared on-prem
+> `virt-01`-like host and want the alternate LVM-backed path, start with
+> <a href="./on-prem-openshift-demo/docs/README.md"><kbd>ON-PREM DOCS</kbd></a>.
+> Those pages cover only the divergent early host and bastion-staging steps,
+> then direct you back to the main docs once the normal Calabi flow resumes.
+
 ---
 
 `Calabi` is shorthand for a `Calabi-Yau manifold` -- a play on folded
@@ -80,12 +87,15 @@ pattern:
 flowchart TD
     root[calabi]
     root --> demo[aws-metal-openshift-demo/]
+    root --> onprem[on-prem-openshift-demo/]
     root --> cockpit[cockpit/]
     demo --> aws[current AWS tenant and host scaffolding]
     demo --> host[hypervisor and network bootstrap]
     demo --> support[IdM, bastion, mirror-registry]
     demo --> ocp[disconnected OpenShift install]
     demo --> day2[day-2 platform services]
+    onprem --> hostprep[on-prem host and LVM preparation]
+    onprem --> handoff[handoff back to main docs after bastion staging]
     cockpit --> observer[calabi-observer]
 ```
 
