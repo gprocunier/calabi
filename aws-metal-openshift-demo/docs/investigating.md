@@ -18,7 +18,7 @@ investigation threads.
 
 Current validated release:
 
-- `v1.1.0`
+- `v1.2.0`
 - confirmed to deploy cleanly
 - no active investigation is currently blocking the release
 
@@ -47,7 +47,7 @@ Current disposition:
 Status:
 
 - closed
-- the clean release bar was met on `v1.1.0`
+- the clean release bar was met on `v1.2.0`
 
 What was required:
 
