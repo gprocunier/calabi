@@ -853,6 +853,47 @@ def remove_leading_button_rows(soup: BeautifulSoup, slug: str) -> None:
                 break
 
 
+def trim_landing_page_intro(soup: BeautifulSoup, slug: str) -> None:
+    elements = list(soup.contents)
+
+    if slug == "index":
+        for element in elements:
+            if isinstance(element, NavigableString):
+                if not str(element).strip():
+                    continue
+                break
+            name = getattr(element, "name", None)
+            if name == "h1":
+                element.decompose()
+                continue
+            if name == "p":
+                text = element.get_text(" ", strip=True)
+                if text.startswith("A single-host, fully disconnected OpenShift 4 lab"):
+                    element.decompose()
+                    continue
+                if text.startswith("Deploy a production-patterned OpenShift cluster"):
+                    element.decompose()
+                    continue
+            break
+
+    if slug == "open-the-lab":
+        for element in elements:
+            if isinstance(element, NavigableString):
+                if not str(element).strip():
+                    continue
+                break
+            name = getattr(element, "name", None)
+            if name == "h1":
+                element.decompose()
+                continue
+            if name == "p":
+                text = element.get_text(" ", strip=True)
+                if text.startswith("Use the navigation buttons below to jump straight"):
+                    element.decompose()
+                    continue
+            break
+
+
 def remove_nearby_docs_nav(soup: BeautifulSoup) -> None:
     for para in list(soup.find_all("p")):
         if para.get_text(" ", strip=True).lower() != "nearby docs:":
@@ -878,6 +919,7 @@ def normalize_html(soup: BeautifulSoup, slug: str) -> None:
     convert_admonitions(soup)
     remove_nearby_docs_nav(soup)
     remove_leading_button_rows(soup, slug)
+    trim_landing_page_intro(soup, slug)
 
     seen_ids: set[str] = set()
     for heading in soup.find_all(["h1", "h2", "h3"]):
