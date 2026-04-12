@@ -1464,6 +1464,7 @@ def render_page(
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{full_title}</title>
     <meta name="description" content="{html.escape(description)}">
+    <meta name="google-site-verification" content="-cAcLaA0l0O_JyCuMrNDwKoISaFm8JtOsfjnvXLGgA4">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@500;700&family=Red+Hat+Mono:wght@400;500&family=Red+Hat+Text:wght@400;500;700&display=swap" rel="stylesheet">
