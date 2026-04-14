@@ -1,18 +1,15 @@
 # Investigation Notes
 
-Nearby docs:
-
-<a href="./manual-process.md"><kbd>&nbsp;&nbsp;MANUAL PROCESS&nbsp;&nbsp;</kbd></a>
-<a href="./orchestration-guide.md"><kbd>&nbsp;&nbsp;ORCHESTRATION GUIDE&nbsp;&nbsp;</kbd></a>
-<a href="./issues.md"><kbd>&nbsp;&nbsp;ISSUES LEDGER&nbsp;&nbsp;</kbd></a>
-<a href="./README.md"><kbd>&nbsp;&nbsp;DOCS MAP&nbsp;&nbsp;</kbd></a>
-
 This page now serves as a short closure note for investigations that mattered
 to the current validated release.
 
 It is more operational than <a href="./issues.md"><kbd>ISSUES LEDGER</kbd></a>: the issues ledger records the
 fixes that landed, while this file records the final disposition of the bigger
 investigation threads.
+
+Use this page when you want the release-level answer to "is this still open, or
+is it closed now?" Use <a href="./issues.md"><kbd>ISSUES LEDGER</kbd></a> when you need the
+specific fixing commit and symptom history.
 
 ## Current Release Status
 

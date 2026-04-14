@@ -1,26 +1,10 @@
 # Documentation Map
 
-Start with the navigation buttons below. They are the quickest way to get to
-the part of the project you actually need.
+Use this page when you know the task you need to accomplish but not yet the
+right Calabi document. The repository [README](../README.md) explains what the
+project is; this page routes you into the correct workflow lane.
 
-<a href="./prerequisites.md"><kbd>&nbsp;&nbsp;PREREQUISITES&nbsp;&nbsp;</kbd></a>
-<a href="./redhat-developer-subscription.md"><kbd>&nbsp;&nbsp;DEVELOPER SUBSCRIPTION&nbsp;&nbsp;</kbd></a>
-<a href="./automation-flow.md"><kbd>&nbsp;&nbsp;BUILD / REBUILD&nbsp;&nbsp;</kbd></a>
-<a href="./orchestration-plumbing.md"><kbd>&nbsp;&nbsp;ORCHESTRATION PLUMBING&nbsp;&nbsp;</kbd></a>
-<a href="./authentication-model.md"><kbd>&nbsp;&nbsp;AUTH MODEL&nbsp;&nbsp;</kbd></a>
-<a href="./ad-idm-policy-model.md"><kbd>&nbsp;&nbsp;AD / IDM POLICY MODEL&nbsp;&nbsp;</kbd></a>
-<a href="./manual-process.md"><kbd>&nbsp;&nbsp;MANUAL PROCESS&nbsp;&nbsp;</kbd></a>
-<a href="./iaas-resource-model.md"><kbd>&nbsp;&nbsp;IAAS MODEL&nbsp;&nbsp;</kbd></a>
-<a href="./host-resource-management.md"><kbd>&nbsp;&nbsp;RESOURCE DESIGN&nbsp;&nbsp;</kbd></a>
-<a href="./host-memory-oversubscription.md"><kbd>&nbsp;&nbsp;HOST MEMORY&nbsp;&nbsp;</kbd></a>
-<a href="./network-topology.md"><kbd>&nbsp;&nbsp;NETWORK DESIGN&nbsp;&nbsp;</kbd></a>
-<a href="./openshift-cluster-matrix.md"><kbd>&nbsp;&nbsp;CLUSTER MATRIX&nbsp;&nbsp;</kbd></a>
-<a href="./orchestration-guide.md"><kbd>&nbsp;&nbsp;CODE GUIDE&nbsp;&nbsp;</kbd></a>
-<a href="./investigating.md"><kbd>&nbsp;&nbsp;INVESTIGATING&nbsp;&nbsp;</kbd></a>
-<a href="./issues.md"><kbd>&nbsp;&nbsp;ISSUES LEDGER&nbsp;&nbsp;</kbd></a>
-<a href="./secrets-and-sanitization.md"><kbd>&nbsp;&nbsp;SECRETS&nbsp;&nbsp;</kbd></a>
-
-The root `README.md` explains what the project is. This page answers:
+This page answers:
 
 - where do I start for my specific task?
 - which docs explain design versus operation versus implementation?
@@ -62,18 +46,17 @@ normal Calabi sequencing resumes.
 
 ## Choose Your Path
 
-### I Want To Build Or Rebuild The Lab
+| If you need to... | Start here | Then read |
+| --- | --- | --- |
+| build or rebuild the lab | [Prerequisites](./prerequisites.md) | [Automation Flow](./automation-flow.md), [Orchestration Plumbing](./orchestration-plumbing.md), [Manual Process](./manual-process.md) |
+| understand the supported auth and policy model | [Authentication Model](./authentication-model.md) | [AD / IdM Policy Model](./ad-idm-policy-model.md) |
+| understand the underlying design | [Network Topology](./network-topology.md) | [Host Resource Management](./host-resource-management.md), [AWS IaaS Resource Model](./iaas-resource-model.md), [OpenShift Cluster Matrix](./openshift-cluster-matrix.md), [ODF Declarative Plan](./odf-declarative-plan.md) |
+| troubleshoot or resume work | [Investigating](./investigating.md) | [Issues Ledger](./issues.md), [Manual Process](./manual-process.md), [Secrets And Sanitization](./secrets-and-sanitization.md) |
+| change the code | [Orchestration Guide](./orchestration-guide.md) | [`playbooks/site-bootstrap.yml`](../playbooks/site-bootstrap.yml), [`playbooks/site-lab.yml`](../playbooks/site-lab.yml) |
 
-<a href="./prerequisites.md"><kbd>&nbsp;&nbsp;PREREQUISITES&nbsp;&nbsp;</kbd></a>
-<a href="./redhat-developer-subscription.md"><kbd>&nbsp;&nbsp;DEVELOPER SUBSCRIPTION&nbsp;&nbsp;</kbd></a>
-<a href="./automation-flow.md"><kbd>&nbsp;&nbsp;AUTOMATION FLOW&nbsp;&nbsp;</kbd></a>
-<a href="./orchestration-plumbing.md"><kbd>&nbsp;&nbsp;ORCHESTRATION PLUMBING&nbsp;&nbsp;</kbd></a>
-<a href="./authentication-model.md"><kbd>&nbsp;&nbsp;AUTH MODEL&nbsp;&nbsp;</kbd></a>
-<a href="./ad-idm-policy-model.md"><kbd>&nbsp;&nbsp;AD / IDM POLICY MODEL&nbsp;&nbsp;</kbd></a>
-<a href="./manual-process.md"><kbd>&nbsp;&nbsp;MANUAL PROCESS&nbsp;&nbsp;</kbd></a>
-<a href="./iaas-resource-model.md"><kbd>&nbsp;&nbsp;AWS IAAS MODEL&nbsp;&nbsp;</kbd></a>
+### Build And Rebuild
 
-Pick these when you need:
+Use these when you need:
 
 - the input checklist before the first build
 - Red Hat Developer Subscription setup for content access
@@ -84,45 +67,62 @@ Pick these when you need:
 - the manual analog of the automation
 - the outer AWS substrate model
 
-### I Want To Understand The Design
+Primary pages:
 
-<a href="./network-topology.md"><kbd>&nbsp;&nbsp;NETWORK TOPOLOGY&nbsp;&nbsp;</kbd></a>
-<a href="./host-resource-management.md"><kbd>&nbsp;&nbsp;RESOURCE MANAGEMENT&nbsp;&nbsp;</kbd></a>
-<a href="./openshift-cluster-matrix.md"><kbd>&nbsp;&nbsp;CLUSTER MATRIX&nbsp;&nbsp;</kbd></a>
-<a href="./odf-declarative-plan.md"><kbd>&nbsp;&nbsp;ODF PLAN&nbsp;&nbsp;</kbd></a>
+- [Prerequisites](./prerequisites.md)
+- [Red Hat Developer Subscription](./redhat-developer-subscription.md)
+- [Automation Flow](./automation-flow.md)
+- [Orchestration Plumbing](./orchestration-plumbing.md)
+- [Authentication Model](./authentication-model.md)
+- [AD / IdM Policy Model](./ad-idm-policy-model.md)
+- [Manual Process](./manual-process.md)
+- [AWS IaaS Resource Model](./iaas-resource-model.md)
 
-Pick these when you need:
+### Architecture And Policy
+
+Use these when you need:
 
 - VLAN and routing intent
 - CPU pools, Gold/Silver/Bronze domains, and host sizing guidance
 - node identities, MACs, and install matrix data
 - storage deployment intent
 
-### I Want To Troubleshoot Or Resume Work
+Primary pages:
 
-<a href="./investigating.md"><kbd>&nbsp;&nbsp;INVESTIGATING&nbsp;&nbsp;</kbd></a>
-<a href="./issues.md"><kbd>&nbsp;&nbsp;ISSUES LEDGER&nbsp;&nbsp;</kbd></a>
-<a href="./manual-process.md"><kbd>&nbsp;&nbsp;MANUAL PROCESS&nbsp;&nbsp;</kbd></a>
-<a href="./secrets-and-sanitization.md"><kbd>&nbsp;&nbsp;SECRETS AND SANITIZATION&nbsp;&nbsp;</kbd></a>
+- [Network Topology](./network-topology.md)
+- [Host Resource Management](./host-resource-management.md)
+- [OpenShift Cluster Matrix](./openshift-cluster-matrix.md)
+- [ODF Declarative Plan](./odf-declarative-plan.md)
 
-Pick these when you need:
+### Operate And Recover
+
+Use these when you need:
 
 - live investigation checkpoints that are not finished yet
 - already-fixed problems with commit references
 - the manual equivalent of what automation is supposed to do
 - the current secret-handling and Git hygiene model
 
-### I Want To Change The Code
+Primary pages:
 
-<a href="./orchestration-guide.md"><kbd>&nbsp;&nbsp;ORCHESTRATION GUIDE&nbsp;&nbsp;</kbd></a>
-<a href="../playbooks/site-bootstrap.yml"><kbd>&nbsp;&nbsp;SITE-BOOTSTRAP&nbsp;&nbsp;</kbd></a>
-<a href="../playbooks/site-lab.yml"><kbd>&nbsp;&nbsp;SITE-LAB&nbsp;&nbsp;</kbd></a>
+- [Investigating](./investigating.md)
+- [Issues Ledger](./issues.md)
+- [Manual Process](./manual-process.md)
+- [Secrets And Sanitization](./secrets-and-sanitization.md)
 
-Pick these when you need:
+### Change The Code
+
+Use these when you need:
 
 - playbook and role boundaries
 - execution context
 - where a given workflow lives in the repo
+
+Primary pages:
+
+- [Orchestration Guide](./orchestration-guide.md)
+- [`playbooks/site-bootstrap.yml`](../playbooks/site-bootstrap.yml)
+- [`playbooks/site-lab.yml`](../playbooks/site-lab.yml)
 
 ## Directory Intent
 

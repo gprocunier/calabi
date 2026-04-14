@@ -5,15 +5,6 @@
 > subtree as an emerging alternate installation path, not yet the same
 > confidence level as the validated AWS-target flow.
 
-Nearby docs:
-
-<a href="./prerequisites.md"><kbd>&nbsp;&nbsp;PREREQUISITES&nbsp;&nbsp;</kbd></a>
-<a href="./automation-flow.md"><kbd>&nbsp;&nbsp;AUTOMATION FLOW&nbsp;&nbsp;</kbd></a>
-<a href="./manual-process.md"><kbd>&nbsp;&nbsp;MANUAL PROCESS&nbsp;&nbsp;</kbd></a>
-<a href="./portability-and-gap-analysis.md"><kbd>&nbsp;&nbsp;PORTABILITY / GAPS&nbsp;&nbsp;</kbd></a>
-<a href="./host-sizing-and-resource-policy.md"><kbd>&nbsp;&nbsp;HOST SIZING&nbsp;&nbsp;</kbd></a>
-<a href="../../aws-metal-openshift-demo/docs/README.md"><kbd>&nbsp;&nbsp;AWS DOCS MAP&nbsp;&nbsp;</kbd></a>
-
 Use these pages when you are building Calabi on an on-prem `virt-01`-like
 host.
 
@@ -36,11 +27,12 @@ bastion staging, return to
 
 ## Start Here
 
-1. <a href="./prerequisites.md"><kbd>PREREQUISITES</kbd></a>
-2. <a href="./automation-flow.md"><kbd>AUTOMATION FLOW</kbd></a>
-3. <a href="./manual-process.md"><kbd>MANUAL PROCESS</kbd></a>
-4. <a href="./host-sizing-and-resource-policy.md"><kbd>HOST SIZING</kbd></a>
-5. <a href="./portability-and-gap-analysis.md"><kbd>PORTABILITY / GAPS</kbd></a>
+| If you need to... | Start here | Then read |
+| --- | --- | --- |
+| verify the host contract | [Prerequisites](./prerequisites.md) | [Host Sizing And Resource Policy](./host-sizing-and-resource-policy.md) |
+| run the alternate automation path | [Automation Flow](./automation-flow.md) | [`playbooks/site-bootstrap.yml`](../playbooks/site-bootstrap.yml), [`playbooks/site-lab.yml`](../playbooks/site-lab.yml) |
+| compare automation with the manual path | [Manual Process](./manual-process.md) | [Portability And Gap Analysis](./portability-and-gap-analysis.md) |
+| return to the main validated flow | [AWS Docs Map](../../aws-metal-openshift-demo/docs/README.md) | [AWS Manual Process Step 12](../../aws-metal-openshift-demo/docs/manual-process.md#12-build-the-bastion-vm) |
 
 ## What Is Different On-Prem
 
@@ -63,3 +55,11 @@ For automation, the on-prem entrypoints are:
 
 - <a href="../playbooks/site-bootstrap.yml"><kbd>on-prem `site-bootstrap.yml`</kbd></a>
 - <a href="../playbooks/site-lab.yml"><kbd>on-prem `site-lab.yml`</kbd></a>
+
+## Primary Pages In This Branch
+
+- [Prerequisites](./prerequisites.md)
+- [Automation Flow](./automation-flow.md)
+- [Manual Process](./manual-process.md)
+- [Host Sizing And Resource Policy](./host-sizing-and-resource-policy.md)
+- [Portability And Gap Analysis](./portability-and-gap-analysis.md)

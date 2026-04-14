@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import datetime as dt
 import html
 import re
 import shutil
@@ -14,6 +13,8 @@ from typing import Iterable
 
 from bs4 import BeautifulSoup, NavigableString
 from cmarkgfm import Options, github_flavored_markdown_to_html
+
+from sitebuilder.shell import copy_shell_assets, render_page
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -196,568 +197,35 @@ PAGE_ADJACENCY = {
     ],
 }
 
-SITE_CSS = """
-:root {
-  --rh-red: #ee0000;
-  --rh-red-dark: #a30000;
-  --rh-red-light: #fce3e3;
-  --rh-gray-10: #f5f5f5;
-  --rh-gray-20: #e0e0e0;
-  --rh-gray-30: #c7c7c7;
-  --rh-gray-50: #8a8d90;
-  --rh-gray-70: #6a6e73;
-  --rh-gray-80: #4d4d4d;
-  --rh-gray-90: #151515;
-  --rh-link: #0066cc;
-  --rh-max-width: 1360px;
-  --rh-body-width: 820px;
-  --rh-sidebar-width: 260px;
+PAGE_KIND = {
+    "index": ("Overview", "Entry point for the lab, the repo shape, and the main documentation branches."),
+    "open-the-lab": ("Overview", "Project-level orientation before dropping into the lab-specific docs."),
+    "docs-map": ("Navigation", "Route by task when you know what you need to do but not yet the right page."),
+    "on-prem-docs-map": ("Navigation", "Experimental alternate entry path for on-prem host preparation before rejoining the main flow."),
+    "prerequisites": ("Build Flow", "Inputs and checks required before starting or repeating the lab build."),
+    "redhat-developer-subscription": ("Build Flow", "Subscription setup required for content access in the supported build path."),
+    "automation-flow": ("Build Flow", "Primary automation order for building or rebuilding the lab."),
+    "manual-process": ("Build Flow", "Manual equivalent of the automated workflow for recovery, learning, or validation."),
+    "orchestration-plumbing": ("Build Flow", "Execution-path details for how the automation is staged and run."),
+    "authentication-model": ("Architecture", "Supported identity, authorization, and breakglass model for the lab."),
+    "ad-idm-policy-model": ("Architecture", "Planned future authorization shape and boundary between AD and IdM."),
+    "iaas-resource-model": ("Architecture", "Outer AWS substrate model that the lab stands in for."),
+    "network-topology": ("Architecture", "Network segmentation, VLAN intent, and routing shape."),
+    "host-resource-management": ("Architecture", "CPU, performance-domain, and host-sizing rationale."),
+    "host-memory-oversubscription": ("Architecture", "Memory pressure model and oversubscription policy."),
+    "openshift-cluster-matrix": ("Build Flow", "Cluster identity, node inventory, and install-matrix reference."),
+    "odf-declarative-plan": ("Architecture", "Storage design intent and planned ODF configuration shape."),
+    "orchestration-guide": ("Code Guide", "Where the playbooks, roles, and implementation boundaries live in the repo."),
+    "investigating": ("Operate And Recover", "Live checkpoints and investigation guidance when the happy path breaks."),
+    "issues": ("Operate And Recover", "Known issues and already-fixed problems with commit references."),
+    "secrets-and-sanitization": ("Operate And Recover", "Current secret-handling and sanitization model for the repo and lab."),
+    "on-prem-prerequisites": ("Experimental Path", "On-prem host requirements before the alternate path can rejoin the main flow."),
+    "on-prem-automation-flow": ("Experimental Path", "Automation order for the divergent on-prem bootstrap path."),
+    "on-prem-manual-process": ("Experimental Path", "Manual analog for the on-prem branch before the normal Calabi flow resumes."),
+    "on-prem-host-sizing-and-resource-policy": ("Experimental Path", "Host resource contract specific to the on-prem branch."),
+    "on-prem-portability-and-gap-analysis": ("Experimental Path", "Gaps and portability constraints in the alternate on-prem path."),
 }
 
-* { box-sizing: border-box; }
-html { font-size: 16px; scroll-behavior: smooth; }
-body {
-  margin: 0;
-  background: #ffffff;
-  color: var(--rh-gray-90);
-  font-family: "Red Hat Text", "Helvetica Neue", Arial, sans-serif;
-  line-height: 1.5;
-}
-
-a {
-  color: var(--rh-link);
-  text-decoration: underline;
-  text-underline-offset: 0.12em;
-}
-
-.site-shell {
-  min-height: 100vh;
-  position: relative;
-}
-
-.site-shell--experimental::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background-image:
-    repeating-linear-gradient(
-      135deg,
-      rgba(238, 0, 0, 0.035) 0 18px,
-      transparent 18px 180px
-    );
-}
-
-.site-shell--experimental .site-header,
-.site-shell--experimental .page-shell,
-.site-shell--experimental .site-footer {
-  position: relative;
-  z-index: 1;
-}
-
-.site-header {
-  border-top: 4px solid var(--rh-red);
-  border-bottom: 1px solid var(--rh-gray-20);
-  background: #ffffff;
-}
-
-.site-header__inner,
-.site-footer,
-.page-shell {
-  max-width: var(--rh-max-width);
-  margin: 0 auto;
-  padding-left: 2rem;
-  padding-right: 2rem;
-}
-
-.site-header__inner {
-  padding-top: 1.25rem;
-  padding-bottom: 1rem;
-}
-
-.site-brand {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1rem 2rem;
-  align-items: baseline;
-  justify-content: space-between;
-}
-
-.site-brand__title {
-  margin: 0;
-  font-family: "Red Hat Display", "Red Hat Text", Arial, sans-serif;
-  font-size: clamp(2.1rem, 4vw, 3.5rem);
-  line-height: 1.05;
-  letter-spacing: -0.04em;
-}
-
-.site-brand__title a {
-  color: inherit;
-  text-decoration: none;
-}
-
-.site-brand__title a:hover,
-.site-brand__title a:focus {
-  color: var(--rh-red-dark);
-  text-decoration: none;
-}
-
-.site-brand__tagline {
-  margin: 0.35rem 0 0;
-  max-width: 60rem;
-  color: var(--rh-gray-80);
-  font-size: 1.05rem;
-}
-
-.site-header__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-  margin-top: 0.8rem;
-}
-
-.experimental-banner {
-  margin-top: 0.9rem;
-  max-width: 60rem;
-  padding: 0.8rem 1rem;
-  border-left: 0.35rem solid var(--rh-red);
-  background: var(--rh-red-light);
-  color: var(--rh-gray-90);
-  font-size: 0.98rem;
-}
-
-.experimental-banner strong {
-  display: inline-block;
-  margin-right: 0.35rem;
-}
-
-.site-header__actions a,
-.path-links a,
-.pager-links a {
-  text-decoration: none;
-}
-
-.site-header__actions kbd,
-.path-links kbd,
-.pager-links kbd,
-.markdown-body a kbd,
-.markdown-body kbd {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 2.35rem;
-  margin: 0.2rem 0.35rem 0.2rem 0;
-  padding: 0.42rem 0.78rem;
-  color: var(--rh-gray-90);
-  background: #ffffff;
-  border: 1px solid var(--rh-gray-80);
-  border-radius: 0;
-  box-shadow: none;
-  font-family: "Red Hat Text", Arial, sans-serif;
-  font-size: 0.92rem;
-  font-weight: 600;
-  white-space: normal;
-}
-
-.site-header__actions kbd:hover,
-.path-links kbd:hover,
-.pager-links kbd:hover,
-.markdown-body a kbd:hover,
-.markdown-body a kbd:focus,
-.markdown-body kbd:hover,
-.markdown-body kbd:focus {
-  color: #ffffff;
-  background: var(--rh-red);
-  border-color: var(--rh-red);
-}
-
-.execution-context-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.16rem 0.58rem;
-  border-radius: 999px;
-  border: 1px solid var(--rh-gray-30);
-  background: var(--rh-gray-10);
-  color: var(--rh-gray-90);
-  font-size: 0.76rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.execution-context-badge--local {
-  background: #eef5ff;
-  border-color: #8bb7f0;
-  color: #003366;
-}
-
-.execution-context-badge--bastion {
-  background: #fce3e3;
-  border-color: #ee0000;
-  color: #7d1007;
-}
-
-.execution-context-badge--guest {
-  background: #fff4cc;
-  border-color: #f0ab00;
-  color: #795600;
-}
-
-.execution-context-inline {
-  list-style: none;
-}
-
-.execution-context-inline .execution-context-badge {
-  margin-right: 0.45rem;
-}
-
-.execution-context-only {
-  list-style: none;
-  margin-left: 0;
-}
-
-.execution-context-row {
-  margin: 0.35rem 0 0.15rem;
-}
-
-.execution-context-row + pre {
-  margin-top: 0.6rem;
-}
-
-.example-block {
-  list-style: none;
-  margin-left: 0;
-  padding-left: 0;
-}
-
-.page-shell {
-  display: grid;
-  grid-template-columns: minmax(0, var(--rh-body-width)) minmax(220px, var(--rh-sidebar-width));
-  gap: 3rem;
-  padding-top: 2rem;
-  padding-bottom: 4rem;
-}
-
-.content-column {
-  min-width: 0;
-}
-
-.side-column {
-  min-width: 0;
-}
-
-.eyebrow {
-  margin: 0 0 0.5rem;
-  color: var(--rh-gray-70);
-  font-size: 0.92rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.context-block,
-.toc-block,
-.source-block {
-  border-top: 1px solid var(--rh-gray-20);
-  padding-top: 1rem;
-  margin-bottom: 1.75rem;
-}
-
-.context-block h2,
-.toc-block h2,
-.source-block h2 {
-  margin: 0 0 0.6rem;
-  color: var(--rh-gray-90);
-  font-family: "Red Hat Display", "Red Hat Text", Arial, sans-serif;
-  font-size: 1.1rem;
-  line-height: 1.2;
-}
-
-.context-block p,
-.source-block p {
-  margin: 0;
-  color: var(--rh-gray-80);
-  font-size: 0.95rem;
-}
-
-.path-links,
-.pager-links {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem 0.35rem;
-}
-
-.path-list,
-.pager-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.path-list li,
-.pager-list li {
-  margin: 0 0 0.7rem;
-}
-
-.path-list a,
-.pager-list a {
-  display: block;
-  color: inherit;
-  text-decoration: none;
-}
-
-.path-list strong,
-.pager-list strong {
-  display: block;
-  color: var(--rh-gray-90);
-  font-size: 0.97rem;
-}
-
-.path-list span,
-.pager-list span {
-  display: block;
-  margin-top: 0.15rem;
-  color: var(--rh-gray-70);
-  font-size: 0.92rem;
-}
-
-.path-list .is-current {
-  padding-left: 0.85rem;
-  border-left: 3px solid var(--rh-red);
-}
-
-.path-list .is-current strong {
-  color: var(--rh-red-dark);
-}
-
-.toc-block ul {
-  margin: 0;
-  padding-left: 1rem;
-}
-
-.toc-block li {
-  margin: 0.3rem 0;
-}
-
-.markdown-body {
-  color: var(--rh-gray-90);
-  background: #ffffff;
-}
-
-.markdown-body h1,
-.markdown-body h2,
-.markdown-body h3,
-.markdown-body h4,
-.markdown-body h5,
-.markdown-body h6 {
-  font-family: "Red Hat Display", "Red Hat Text", Arial, sans-serif;
-  color: var(--rh-gray-90);
-  font-weight: 500;
-  letter-spacing: -0.03em;
-  line-height: 1.3;
-}
-
-.markdown-body h1 {
-  margin-top: 0;
-  margin-bottom: 1.25rem;
-  padding-top: 0.5rem;
-  border-bottom: 0;
-  font-size: clamp(2.25rem, 5vw, 4rem);
-  line-height: 1.08;
-}
-
-.markdown-body h2 {
-  margin-top: 2.5rem;
-  margin-bottom: 1rem;
-  color: var(--rh-red);
-  font-size: clamp(1.65rem, 3vw, 2.25rem);
-}
-
-.markdown-body h3 {
-  margin-top: 1.8rem;
-  font-size: 1.3rem;
-}
-
-.markdown-body p,
-.markdown-body li,
-.markdown-body td,
-.markdown-body th {
-  font-size: 1rem;
-  line-height: 1.55;
-}
-
-.markdown-body ul,
-.markdown-body ol {
-  padding-left: 1.25rem;
-}
-
-.markdown-body hr {
-  height: 1px;
-  margin: 2rem 0;
-  background: var(--rh-gray-20);
-  border: 0;
-}
-
-.markdown-body table {
-  display: table;
-  width: 100%;
-  border-collapse: collapse;
-  margin: 1rem 0 1.5rem;
-}
-
-.markdown-body table th,
-.markdown-body table td {
-  border: 1px solid var(--rh-gray-20);
-  padding: 0.75rem 0.9rem;
-  vertical-align: top;
-}
-
-.markdown-body table th {
-  background: var(--rh-gray-10);
-  font-weight: 700;
-  text-align: left;
-}
-
-.markdown-body code,
-.markdown-body pre,
-.markdown-body tt {
-  font-family: "Red Hat Mono", Consolas, monospace;
-}
-
-.markdown-body code {
-  background: var(--rh-gray-10);
-  border: 1px solid var(--rh-gray-20);
-  border-radius: 0;
-  padding: 0.08rem 0.28rem;
-}
-
-.markdown-body pre {
-  padding: 1rem;
-  overflow: auto;
-  border: 1px solid var(--rh-gray-20);
-  border-radius: 0;
-  background: var(--rh-gray-10);
-}
-
-.markdown-body pre code {
-  background: transparent;
-  border: 0;
-  padding: 0;
-}
-
-.markdown-body blockquote {
-  margin: 1.25rem 0;
-  padding: 0.75rem 1rem;
-  color: var(--rh-gray-80);
-  border-left: 0.35rem solid var(--rh-gray-30);
-}
-
-.admonition {
-  border-left-width: 0.35rem;
-  border-left-style: solid;
-  margin: 1.25rem 0;
-  padding: 0.85rem 1rem;
-}
-
-.admonition p {
-  margin: 0.35rem 0;
-}
-
-.admonition-title {
-  font-weight: 700;
-  margin-bottom: 0.4rem;
-}
-
-.admonition-note,
-.admonition-tip {
-  background: var(--rh-gray-10);
-  border-left-color: var(--rh-link);
-}
-
-.admonition-important {
-  background: #fff4e5;
-  border-left-color: #f56a00;
-}
-
-.admonition-warning,
-.admonition-caution {
-  background: var(--rh-red-light);
-  border-left-color: var(--rh-red);
-}
-
-.markdown-body .mermaid {
-  max-width: 100%;
-  margin: 1.5rem 0;
-  overflow-x: auto;
-  border: 1px solid var(--rh-gray-20);
-  background: #ffffff;
-  padding: 0.85rem;
-}
-
-.markdown-body .mermaid svg {
-  display: block;
-  margin: 0 auto;
-  max-width: 100%;
-  height: auto;
-}
-
-.markdown-body .mermaid svg text,
-.markdown-body .mermaid svg tspan,
-.markdown-body .mermaid svg foreignObject,
-.markdown-body .mermaid svg foreignObject div {
-  font-family: "Red Hat Text", "Helvetica Neue", Arial, sans-serif !important;
-}
-
-.markdown-body img,
-.markdown-body svg {
-  max-width: 100%;
-  height: auto;
-}
-
-.next-section {
-  margin-top: 3rem;
-  border-top: 1px solid var(--rh-gray-20);
-  padding-top: 1rem;
-}
-
-.next-section h2,
-.page-kicker h2 {
-  margin: 0 0 0.6rem;
-  color: var(--rh-gray-90);
-  font-family: "Red Hat Display", "Red Hat Text", Arial, sans-serif;
-  font-size: 1.1rem;
-}
-
-.site-footer {
-  border-top: 1px solid var(--rh-gray-20);
-  padding-top: 1.25rem;
-  padding-bottom: 2rem;
-  color: var(--rh-gray-80);
-  font-size: 0.95rem;
-}
-
-@media (max-width: 1100px) {
-  .page-shell {
-    grid-template-columns: 1fr;
-    gap: 2rem;
-  }
-
-  .side-column {
-    order: -1;
-  }
-}
-
-@media (max-width: 720px) {
-  .site-header__inner,
-  .site-footer,
-  .page-shell {
-    padding-left: 1rem;
-    padding-right: 1rem;
-  }
-}
-"""
 
 
 def slug_for(path: Path) -> str:
@@ -969,7 +437,6 @@ def convert_admonitions(soup: BeautifulSoup) -> None:
         if not match:
             continue
         kind = match.group(1).lower()
-        rest = match.group(2).strip()
         wrapper = soup.new_tag("div", attrs={"class": f"admonition admonition-{kind}"})
         title = soup.new_tag("p", attrs={"class": "admonition-title"})
         title.string = kind.title()
@@ -1108,6 +575,15 @@ def normalize_html(soup: BeautifulSoup, slug: str) -> None:
             code = pre.get_text("\n", strip=True)
             div.string = code
             pre.replace_with(div)
+            continue
+        if lang:
+            code = pre.find("code")
+            if code is not None:
+                existing = code.get("class", [])
+                lang_class = f"language-{lang}"
+                if lang_class not in existing:
+                    code["class"] = existing + [lang_class]
+            del pre["lang"]
 
 
 def load_markdown(path: Path) -> tuple[str, str]:
@@ -1330,6 +806,10 @@ def page_path_name(slug: str) -> str | None:
     return PAGE_PATH.get(slug)
 
 
+def page_kind_for_slug(slug: str) -> tuple[str, str]:
+    return PAGE_KIND.get(slug, ("Guide", "Supporting Calabi documentation."))
+
+
 def page_sequence(slug: str) -> list[str]:
     path_name = page_path_name(slug)
     if not path_name:
@@ -1405,131 +885,151 @@ def build_pager(slug: str) -> str:
 """
 
 
-def render_page(
-    *,
-    page_title: str,
-    description: str,
-    body_html: str,
-    toc_html: str,
-    slug: str,
-    source_path: Path,
-) -> str:
-    pager_block = build_pager(slug) if slug != "index" else ""
-    header_nav = extract_header_nav(source_path)
-    is_experimental = slug.startswith("on-prem-")
-    toc_block = ""
+def build_breadcrumbs(slug: str) -> str:
+    if slug == "index":
+        return ""
+
+    crumbs = ['<nav class="page-breadcrumbs" aria-label="Breadcrumb">']
+    crumbs.append('<a href="index.html">Home</a>')
+    if slug != "docs-map":
+        crumbs.append("<span>/</span>")
+        crumbs.append('<a href="docs-map.html">Docs Map</a>')
+    page_kind, _ = page_kind_for_slug(slug)
+    crumbs.append("<span>/</span>")
+    crumbs.append(f'<span aria-current="page">{html.escape(page_kind)}</span>')
+    crumbs.append("</nav>")
+    return "".join(crumbs)
+
+
+def build_page_meta(slug: str) -> str:
+    if slug == "index":
+        return ""
+    page_kind, summary = page_kind_for_slug(slug)
+    return f"""
+<div class="page-meta">
+  <p class="page-kind">{html.escape(page_kind)}</p>
+  <p class="page-summary">{html.escape(summary)}</p>
+</div>
+"""
+
+
+def build_start_here_block(slug: str) -> str:
+    links = [
+        ("Open The Lab", "open-the-lab.html", "Project overview and the main lab entry point."),
+        ("Docs Map", "docs-map.html", "Task-driven routing into the main Calabi workflow."),
+        ("On-Prem Docs", "on-prem-docs-map.html", "Experimental alternate host-preparation path before rejoining the main flow."),
+    ]
+
+    items = []
+    for label, href, summary in links:
+        current = ' aria-current="page"' if filename_for_slug(slug) == href else ""
+        items.append(
+            f'<li><a href="{href}"{current}><strong>{html.escape(label)}</strong>'
+            f"<span>{html.escape(summary)}</span></a></li>"
+        )
+
+    return f"""
+<section class="context-block">
+  <h2>Start Here</h2>
+  <ul class="path-list">
+    {''.join(items)}
+  </ul>
+</section>
+"""
+
+
+def build_nearby_block(slug: str) -> str:
+    links = PAGE_ADJACENCY.get(slug)
+    if not links:
+        return ""
+
+    items = []
+    for label, href in links[:3]:
+        current = ' aria-current="page"' if filename_for_slug(slug) == href else ""
+        items.append(
+            f'<li><a href="{href}"{current}><strong>{html.escape(label)}</strong>'
+            "<span>Curated nearby page for the next likely jump.</span></a></li>"
+        )
+
+    return f"""
+<section class="context-block">
+  <h2>Nearby Docs</h2>
+  <ul class="path-list">
+    {''.join(items)}
+  </ul>
+</section>
+"""
+
+
+def build_project_links_block(source_path: Path) -> str:
+    return f"""
+<section class="context-block">
+  <h2>Project Links</h2>
+  <ul class="path-list">
+    <li><a href="{GITHUB_REPO_URL}"><strong>GitHub Repo</strong><span>Repository root, releases, and project context.</span></a></li>
+    <li><a href="{source_url(source_path)}"><strong>Current Source File</strong><span>Exact markdown source for this generated page.</span></a></li>
+  </ul>
+</section>
+"""
+
+
+def build_page_type_block(slug: str) -> str:
+    page_kind, summary = page_kind_for_slug(slug)
+    return f"""
+<section class="context-block context-block--meta">
+  <h2>Page Type</h2>
+  <p class="context-kicker">{html.escape(page_kind)}</p>
+  <p class="context-copy">{html.escape(summary)}</p>
+</section>
+"""
+
+
+def build_side_context(slug: str, source_path: Path) -> str:
+    blocks = [build_page_type_block(slug)]
+    workflow_block = build_path_block(slug)
+    if workflow_block:
+        blocks.append(workflow_block)
+    nearby_block = build_nearby_block(slug)
+    if nearby_block:
+        blocks.append(nearby_block)
+    blocks.append(build_start_here_block(slug))
+    blocks.append(build_project_links_block(source_path))
+    return "".join(blocks)
+
+
+def build_toc_block(body_html: str, toc_html: str) -> str:
+    if not toc_html or "<li>" not in toc_html:
+        return ""
     soup_for_toc = BeautifulSoup(body_html, "html.parser")
-    if toc_html and "<li>" in toc_html and not body_has_inline_toc(soup_for_toc):
-        toc_block = f"""
+    if body_has_inline_toc(soup_for_toc):
+        return ""
+    return f"""
 <section class="toc-block">
   <h2>On This Page</h2>
   {toc_html}
 </section>
 """
 
-    source_block = f"""
+
+def build_source_block(slug: str, source_path: Path) -> str:
+    if slug in {"index", "open-the-lab", "docs-map", "on-prem-docs-map"}:
+        return ""
+    return f"""
 <section class="source-block">
   <h2>Source</h2>
   <p><a href="{source_url(source_path)}">{source_label(source_path)}</a></p>
 </section>
 """
-    if slug in {"index", "open-the-lab", "docs-map", "on-prem-docs-map"}:
-        source_block = ""
 
-    header_nav_html = ""
-    if header_nav:
-        header_nav_html = "".join(
-            f'<a href="{href}"><kbd>{html.escape(label)}</kbd></a>'
-            for label, href in header_nav
-        )
 
-    experimental_banner = ""
-    site_shell_class = "site-shell"
-    if is_experimental:
-        site_shell_class += " site-shell--experimental"
-        experimental_banner = """
-          <div class="experimental-banner">
-            <strong>Experimental On-Prem Path.</strong>
-            Use these pages only for the divergent early host and bastion-staging steps, then return to the main Calabi docs once the normal flow resumes.
-          </div>
-"""
-
-    full_title = html.escape(page_title if page_title == "Calabi" else f"{page_title} | Calabi")
-
-    return f"""<!DOCTYPE html>
-<html lang="en-US">
-  <head>
-    <meta charset="UTF-8">
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{full_title}</title>
-    <meta name="description" content="{html.escape(description)}">
-    <meta name="google-site-verification" content="-cAcLaA0l0O_JyCuMrNDwKoISaFm8JtOsfjnvXLGgA4">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@500;700&family=Red+Hat+Mono:wght@400;500&family=Red+Hat+Text:wght@400;500;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="assets/site.css">
-    <script type="module">
-      import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-      mermaid.initialize({{
-        startOnLoad: true,
-        theme: 'base',
-        securityLevel: 'loose',
-        flowchart: {{
-          useMaxWidth: true,
-          htmlLabels: true,
-          nodeSpacing: 30,
-          rankSpacing: 42
-        }},
-        themeVariables: {{
-          fontFamily: '"Red Hat Text", "Helvetica Neue", Arial, sans-serif',
-          fontSize: '18px',
-          primaryColor: '#fff4e5',
-          primaryBorderColor: '#e0e0e0',
-          primaryTextColor: '#151515',
-          lineColor: '#8a8d90',
-          clusterBkg: '#ffffff',
-          clusterBorder: '#c7c7c7'
-        }}
-      }});
-    </script>
-  </head>
-  <body>
-    <div class="{site_shell_class}">
-      <header class="site-header">
-        <div class="site-header__inner">
-          <p class="eyebrow">Calabi Documentation</p>
-          <div class="site-brand">
-            <div>
-              <h1 class="site-brand__title"><a href="index.html">Calabi</a></h1>
-              <p class="site-brand__tagline">Single-host disconnected OpenShift on nested KVM, with intent-first docs for architecture, orchestration, auth, and recovery.</p>
-            </div>
-          </div>
-          <div class="site-header__actions">
-            {header_nav_html}
-          </div>
-{experimental_banner}
-        </div>
-      </header>
-      <main class="page-shell">
-        <div class="content-column">
-          <article class="markdown-body">
-            {body_html}
-          </article>
-          {pager_block}
-        </div>
-        <aside class="side-column">
-          {toc_block}
-          {source_block}
-        </aside>
-      </main>
-      <footer class="site-footer">
-        Generated from repository docs on {dt.date.today().isoformat()}.
-      </footer>
-    </div>
-  </body>
-</html>
-"""
+def build_header_nav_html(source_path: Path) -> str:
+    header_nav = extract_header_nav(source_path)
+    if not header_nav:
+        return ""
+    return "".join(
+        f'<a href="{href}"><kbd>{html.escape(label)}</kbd></a>'
+        for label, href in header_nav
+    )
 
 
 def first_paragraph_text(soup: BeautifulSoup) -> str:
@@ -1569,7 +1069,7 @@ def build_site(output_dir: Path) -> None:
     output_dir.mkdir(parents=True)
     assets_dir = output_dir / "assets"
     assets_dir.mkdir(parents=True)
-    (assets_dir / "site.css").write_text(SITE_CSS.strip() + "\n", encoding="utf-8")
+    copy_shell_assets(assets_dir)
     copy_static_assets(output_dir)
 
     for source_path in iter_source_pages():
@@ -1582,13 +1082,19 @@ def build_site(output_dir: Path) -> None:
         title = title_for_slug(slug)
         description = first_paragraph_text(soup)
         output_name = html_name_for(source_path)
+        rendered_body = str(soup)
         rendered = render_page(
             page_title=title,
             description=description,
-            body_html=str(soup),
-            toc_html=toc_html,
-            slug=slug,
-            source_path=source_path,
+            body_html=rendered_body,
+            breadcrumbs_html=build_breadcrumbs(slug),
+            page_meta_html=build_page_meta(slug),
+            header_nav_html=build_header_nav_html(source_path),
+            side_context_html=build_side_context(slug, source_path),
+            toc_block=build_toc_block(rendered_body, toc_html),
+            source_block=build_source_block(slug, source_path),
+            pager_block=build_pager(slug) if slug != "index" else "",
+            is_experimental=slug.startswith("on-prem-"),
         )
         (output_dir / output_name).write_text(rendered, encoding="utf-8")
 

@@ -1,12 +1,5 @@
 # Orchestration Plumbing
 
-Nearby docs:
-
-<a href="./automation-flow.md"><kbd>&nbsp;&nbsp;AUTOMATION FLOW&nbsp;&nbsp;</kbd></a>
-<a href="./orchestration-guide.md"><kbd>&nbsp;&nbsp;ORCHESTRATION GUIDE&nbsp;&nbsp;</kbd></a>
-<a href="./manual-process.md"><kbd>&nbsp;&nbsp;MANUAL PROCESS&nbsp;&nbsp;</kbd></a>
-<a href="./README.md"><kbd>&nbsp;&nbsp;DOCS MAP&nbsp;&nbsp;</kbd></a>
-
 Use this page to answer the execution-boundary questions:
 
 - what runs on the operator workstation
@@ -18,6 +11,10 @@ Use this page to answer the execution-boundary questions:
 Use <a href="./automation-flow.md"><kbd>AUTOMATION FLOW</kbd></a> for the build
 order. Use this page when the question is "who is actually running this step
 right now?"
+
+If the question is "what order should I run things in?", use
+<a href="./automation-flow.md"><kbd>AUTOMATION FLOW</kbd></a> instead. This page is
+specifically about execution ownership and handoff.
 
 ## The Short Version
 

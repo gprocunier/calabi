@@ -118,8 +118,16 @@ Each plugin has its own README and can be installed via RPM or rsync.
 
 ## Start Here
 
-Use the buttons at the top of the page to drop into the lab itself or the docs
-map.
+Use this page when you need the project-level overview: what Calabi is, what it
+models, and how the repository is organized. When you know the task you need to
+perform, move into the main docs map.
+
+| If you need to... | Start here | Then read |
+| --- | --- | --- |
+| understand the main lab flow | [AWS docs map](./aws-metal-openshift-demo/docs/README.md) | [Automation Flow](./aws-metal-openshift-demo/docs/automation-flow.md), [Manual Process](./aws-metal-openshift-demo/docs/manual-process.md) |
+| understand the project shape before operating it | [Current Project Layout](#current-project-layout) | [Why This Approach Exists](#why-this-approach-exists), [What One Metal Host Is Standing In For](#what-one-metal-host-is-standing-in-for) |
+| use the alternate on-prem entry path | [On-prem docs](./on-prem-openshift-demo/docs/README.md) | [On-prem automation flow](./on-prem-openshift-demo/docs/automation-flow.md), [AWS docs map](./aws-metal-openshift-demo/docs/README.md) |
+| understand the Cockpit extensions | [Cockpit Plugins](#cockpit-plugins) | [`cockpit/calabi-observer`](./cockpit/calabi-observer/) |
 
 If you already have a prepared on-prem `virt-01`-like host and want the
 experimental alternate LVM-backed path, start with:

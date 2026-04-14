@@ -6,3 +6,6 @@ aws-metal-openshift-demo/inventory/group_vars/all/lab_credentials.yml
 
 # Local docs-site preview output
 _site/
+
+# Local refactor checklist
+CALABI-REFACTOR-CHECKLIST.md

@@ -1,24 +1,20 @@
 # Issues Ledger
 
-Nearby docs:
-
-<a href="./manual-process.md"><kbd>&nbsp;&nbsp;MANUAL PROCESS&nbsp;&nbsp;</kbd></a>
-<a href="./orchestration-guide.md"><kbd>&nbsp;&nbsp;ORCHESTRATION GUIDE&nbsp;&nbsp;</kbd></a>
-<a href="./investigating.md"><kbd>&nbsp;&nbsp;INVESTIGATING&nbsp;&nbsp;</kbd></a>
-<a href="./README.md"><kbd>&nbsp;&nbsp;DOCS MAP&nbsp;&nbsp;</kbd></a>
-
 Executive summary:
 
 - all issues listed below are closed
 - the cluster build plus current day-2/auth path have been validated on a live
   environment
-- recent fresh-path rebuilds have continued to expose additional orchestration
-  defects, so the final zero-intervention end-to-end `playbooks/site-lab.yml`
-  certification run is still pending
+- the zero-intervention end-to-end `playbooks/site-lab.yml` certification run
+  was achieved on `v1.2.0`
 - this page is now a historical record of fixes, not an open-triage queue
 
 This ledger records problems that showed up during real rebuild and validation
 work and were fixed in Git.
+
+Use <a href="./investigating.md"><kbd>INVESTIGATING</kbd></a> for final disposition and
+release-closure notes. Use this page when you want the concrete symptom, the
+fix summary, and the commit that resolved it.
 
 ## Table Of Contents
 
@@ -36,6 +32,9 @@ When something breaks:
 1. check whether it is still an open investigation
 2. check whether it already failed before in a similar phase
 3. jump to the fixing commit if the symptom matches
+
+If the current release is already known-good and you only need the historical
+fix record, skip straight to the issues table.
 
 ## Phase Legend
 
