@@ -859,7 +859,7 @@ def build_path_block(slug: str) -> str:
 
     return f"""
 <section class="context-block">
-  <h2>{html.escape(page_path_name(slug) or 'Documentation')}</h2>
+  <h2>AWS Deployment Path</h2>
   <ul class="path-list">
     {''.join(items)}
   </ul>
@@ -937,30 +937,6 @@ def build_page_meta(slug: str) -> str:
   <p class="page-kind">{html.escape(page_kind)}</p>
   <p class="page-summary">{html.escape(summary)}</p>
 </div>
-"""
-
-
-def build_start_here_block(slug: str) -> str:
-    links = [
-        ("Start The AWS Deployment", "prerequisites.html", "Supported AWS automation path. Follow this first."),
-        ("Docs Map", "docs-map.html", "Task-driven routing into the supported AWS workflow."),
-    ]
-
-    items = []
-    for label, href, summary in links:
-        current = ' aria-current="page"' if filename_for_slug(slug) == href else ""
-        items.append(
-            f'<li><a href="{href}"{current}><strong>{html.escape(label)}</strong>'
-            f"<span>{html.escape(summary)}</span></a></li>"
-        )
-
-    return f"""
-<section class="context-block">
-  <h2>Start Here</h2>
-  <ul class="path-list">
-    {''.join(items)}
-  </ul>
-</section>
 """
 
 
@@ -1044,7 +1020,6 @@ def build_side_context(slug: str, source_path: Path) -> str:
     workflow_block = build_path_block(slug)
     if workflow_block:
         blocks.append(workflow_block)
-    blocks.append(build_start_here_block(slug))
     blocks.append(build_other_entry_points_block(slug))
     nearby_block = build_nearby_block(slug)
     if nearby_block:

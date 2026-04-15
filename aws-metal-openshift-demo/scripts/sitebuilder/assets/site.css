@@ -315,6 +315,11 @@ a {
   background: #fbfbfb;
 }
 
+.context-block h2 {
+  margin-bottom: 0.75rem;
+  letter-spacing: -0.02em;
+}
+
 .context-type {
   display: block;
   margin: 0 0 0.25rem;
