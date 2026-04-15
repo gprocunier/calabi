@@ -32,6 +32,40 @@ Keep these nearby while you use this page:
 - <a href="./host-resource-management.md"><kbd>RESOURCE MANAGEMENT</kbd></a> for guest tiers and CPU pools
 - <a href="./openshift-cluster-matrix.md"><kbd>CLUSTER MATRIX</kbd></a> for per-node identities and sizing
 
+## Current Project Layout
+
+Use this section when you need the maintainer view of the repo shape rather than
+the operator entry path. The supported deployment path still starts in
+<a href="./prerequisites.md"><kbd>PREREQUISITES</kbd></a>.
+
+```mermaid
+flowchart TD
+    root[calabi]
+
+    root --> awsgrp
+    root --> onpremgrp
+    root --> cockpitgrp
+
+    subgraph awsgrp["aws-metal-openshift-demo/"]
+        direction TB
+        aws1[AWS tenant and host scaffolding]
+        aws2[Hypervisor and network bootstrap]
+        aws3[Support services and disconnected install]
+        aws4[Day-2 platform services]
+    end
+
+    subgraph onpremgrp["on-prem-openshift-demo/"]
+        direction TB
+        onprem1[Experimental on-prem host preparation]
+        onprem2[Handoff back to main docs after bastion staging]
+    end
+
+    subgraph cockpitgrp["cockpit/"]
+        direction TB
+        observer[calabi-observer]
+    end
+```
+
 ## Table Of Contents
 
 Use this when you need to answer "where should I look" before you answer

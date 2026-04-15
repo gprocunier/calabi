@@ -89,9 +89,7 @@ task you need to accomplish but not yet the right page.
 - Experimental: [On-Prem Docs](./on-prem-openshift-demo/docs/README.md)
   describe the unvalidated developer sandbox path for a prepared `virt-01`-like
   host, then hand you back to the supported AWS flow.
-- Project orientation: [Cockpit Plugins](#cockpit-plugins) and the project
-  layout below explain the surrounding operational surface once you know the
-  deployment path.
+- Project orientation: [Orchestration Guide](./aws-metal-openshift-demo/docs/orchestration-guide.md) explains the maintainer-facing repo shape and implementation boundaries once you know the deployment path.
 
 ## Cockpit Plugins
 
@@ -105,32 +103,3 @@ with their own RPM specs, deployed directly to `virt-01`.
 
 Each plugin has its own README and can be installed via RPM or rsync.
 
-## Current Project Layout
-
-```mermaid
-flowchart TD
-    root[calabi]
-
-    root --> awsgrp
-    root --> onpremgrp
-    root --> cockpitgrp
-
-    subgraph awsgrp["aws-metal-openshift-demo/"]
-        direction TB
-        aws1[AWS tenant and host scaffolding]
-        aws2[Hypervisor and network bootstrap]
-        aws3[Support services and disconnected install]
-        aws4[Day-2 platform services]
-    end
-
-    subgraph onpremgrp["on-prem-openshift-demo/"]
-        direction TB
-        onprem1[On-prem host and LVM preparation]
-        onprem2[Handoff back to main docs after bastion staging]
-    end
-
-    subgraph cockpitgrp["cockpit/"]
-        direction TB
-        observer[calabi-observer]
-    end
-```
