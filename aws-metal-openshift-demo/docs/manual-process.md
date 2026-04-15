@@ -41,12 +41,6 @@ thrown away between runs.
 > OpenShift DNS, and cluster work. The legacy section numbering is retained
 > below so older deep links do not break.
 
-> [!NOTE]
-> This file is the step-by-step teaching reference for the intended supported
-> flow. The operational source of truth remains `PREREQUISITES` plus
-> `AUTOMATION FLOW`; use this page when you want the underlying sequence laid
-> out in human order.
-
 The command examples use these neutral placeholders:
 
 - `<operator-ssh-key>`: the SSH private key used from the operator workstation
