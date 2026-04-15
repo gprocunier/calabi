@@ -63,6 +63,7 @@ without losing the parts that matter. Right now the implementation uses AWS
 | one host used to model realistic service boundaries | many hosts used to implement those boundaries directly |
 
 What carries over is not literal infrastructure scale.
+
 What carries over is the pattern:
 
 - support services are separated from cluster nodes
