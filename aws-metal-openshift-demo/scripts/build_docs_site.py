@@ -831,8 +831,8 @@ def page_type_for_slug(slug: str) -> tuple[str, str]:
     return PAGE_TYPE.get(slug, ("Teaching Reference", "teaching"))
 
 
-def page_type_pill(label: str, css_class: str) -> str:
-    return f'<span class="page-type-pill page-type-pill--{css_class}">{html.escape(label)}</span>'
+def page_type_label(label: str, css_class: str) -> str:
+    return f'<span class="page-type-label page-type-label--{css_class}">{html.escape(label)}</span>'
 
 
 def page_sequence(slug: str) -> list[str]:
@@ -933,7 +933,7 @@ def build_page_meta(slug: str) -> str:
     page_type, page_type_class = page_type_for_slug(slug)
     return f"""
 <div class="page-meta">
-  {page_type_pill(page_type, page_type_class)}
+  <span class="context-type">{page_type_label(page_type, page_type_class)}</span>
   <p class="page-kind">{html.escape(page_kind)}</p>
   <p class="page-summary">{html.escape(summary)}</p>
 </div>
@@ -977,7 +977,7 @@ def build_other_entry_points_block(slug: str) -> str:
         page_type, page_type_class = page_type_for_slug(target_slug)
         items.append(
             f'<li><a href="{href}"{current}><strong>{html.escape(label)}</strong>'
-            f'<span>{page_type_pill(page_type, page_type_class)} {html.escape(summary)}</span></a></li>'
+            f'<span><span class="entry-point-type">{page_type_label(page_type, page_type_class)}</span> {html.escape(summary)}</span></a></li>'
         )
 
     return f"""
@@ -1002,7 +1002,7 @@ def build_nearby_block(slug: str) -> str:
         page_type, page_type_class = page_type_for_slug(target_slug)
         items.append(
             f'<li><a href="{href}"{current}><strong>{html.escape(label)}</strong>'
-            f'<span>{page_type_pill(page_type, page_type_class)} Curated nearby page for the next likely jump.</span></a></li>'
+            f'<span><span class="entry-point-type">{page_type_label(page_type, page_type_class)}</span> Curated nearby page for the next likely jump.</span></a></li>'
         )
 
     return f"""
@@ -1033,7 +1033,7 @@ def build_page_type_block(slug: str) -> str:
     return f"""
 <section class="context-block context-block--meta context-block--{page_type_class}">
   <h2>Page Type</h2>
-  <p class="context-kicker">{page_type_pill(page_type, page_type_class)}</p>
+  <p class="context-kicker">{page_type_label(page_type, page_type_class)}</p>
   <p class="context-copy"><strong>{html.escape(page_kind)}.</strong> {html.escape(summary)}</p>
 </section>
 """

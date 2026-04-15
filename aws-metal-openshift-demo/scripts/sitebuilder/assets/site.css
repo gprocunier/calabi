@@ -315,12 +315,18 @@ a {
   background: #fbfbfb;
 }
 
+.context-type {
+  display: block;
+  margin: 0 0 0.25rem;
+}
+
 .context-kicker {
-  margin: 0 0 0.3rem;
+  margin: 0;
   color: var(--rh-red-dark);
   font-family: "Red Hat Display", "Red Hat Text", Arial, sans-serif;
-  font-size: 1.15rem;
+  font-size: 1.05rem;
   line-height: 1.15;
+  font-weight: 700;
 }
 
 .context-copy {
@@ -329,38 +335,25 @@ a {
   font-size: 0.95rem;
 }
 
-.page-type-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 1.7rem;
-  padding: 0.1rem 0.55rem;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  font-size: 0.8rem;
+.page-type-label {
+  display: inline;
+  color: inherit;
+  font: inherit;
   font-weight: 700;
-  line-height: 1.2;
+  letter-spacing: 0.02em;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
 }
 
-.page-type-pill--golden {
-  background: #fce3e3;
-  border-color: #ee0000;
-  color: #7d1007;
+.page-type-label--golden {
+  color: var(--rh-red-dark);
 }
 
-.page-type-pill--teaching {
-  background: #eef5ff;
-  border-color: #8bb7f0;
-  color: #003366;
+.page-type-label--teaching {
+  color: #0050b3;
 }
 
-.page-type-pill--experimental {
-  background: #fff4cc;
-  border-color: #f0ab00;
-  color: #795600;
+.page-type-label--experimental {
+  color: #9a6700;
 }
 
 .page-banner {
@@ -444,8 +437,9 @@ a {
   font-size: 0.92rem;
 }
 
-.path-list span .page-type-pill {
-  margin-right: 0.35rem;
+.entry-point-type {
+  display: inline;
+  margin-right: 0.3rem;
 }
 
 .path-list .is-current {
@@ -487,8 +481,9 @@ a {
   margin: 0 0 1.8rem;
 }
 
-.page-meta .page-type-pill {
-  margin-bottom: 0.65rem;
+.page-meta .page-type-label {
+  display: inline-block;
+  margin-bottom: 0.45rem;
 }
 
 .page-kind {
