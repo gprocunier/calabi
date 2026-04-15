@@ -62,8 +62,8 @@ without losing the parts that matter. Right now the implementation uses AWS
 | Gold/Silver/Bronze VM performance domains on one host | priority and capacity choices spread across multiple hosts and node classes |
 | one host used to model realistic service boundaries | many hosts used to implement those boundaries directly |
 
-What carries over is not literal infrastructure scale. What carries over is the
-pattern:
+What carries over is not literal infrastructure scale.
+What carries over is the pattern:
 
 - support services are separated from cluster nodes
 - networking is segmented intentionally
