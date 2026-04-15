@@ -13,9 +13,6 @@ content mirroring.
 ![Ansible](https://img.shields.io/badge/Ansible-driven-blue)
 ![RHEL 10](https://img.shields.io/badge/RHEL-10-red)
 
-<a href="./aws-metal-openshift-demo/README.md"><kbd>&nbsp;&nbsp;OPEN THE LAB&nbsp;&nbsp;</kbd></a>
-<a href="./aws-metal-openshift-demo/docs/README.md"><kbd>&nbsp;&nbsp;DOCS MAP&nbsp;&nbsp;</kbd></a>
-
 ---
 
 `Calabi` is shorthand for a `Calabi-Yau manifold` -- a play on folded
@@ -74,6 +71,40 @@ pattern:
 - disconnected content has a real workflow
 - resource priority is explicit rather than accidental
 
+## Start Here
+
+If you are deploying Calabi in the supported way, start with the AWS automated
+path.
+
+<a href="./aws-metal-openshift-demo/docs/prerequisites.md"><kbd>&nbsp;&nbsp;START THE AWS DEPLOYMENT&nbsp;&nbsp;</kbd></a>
+
+Use the [docs map](./aws-metal-openshift-demo/docs/README.md) when you know the
+task you need to accomplish but not yet the right page.
+
+### Other Entry Points
+
+- Teaching reference: [Manual Process](./aws-metal-openshift-demo/docs/manual-process.md)
+  explains what the automation is doing under the hood. It is not the primary
+  build path.
+- Experimental: [On-Prem Docs](./on-prem-openshift-demo/docs/README.md)
+  describe the unvalidated developer sandbox path for a prepared `virt-01`-like
+  host, then hand you back to the supported AWS flow.
+- Project orientation: [Cockpit Plugins](#cockpit-plugins) and the project
+  layout below explain the surrounding operational surface once you know the
+  deployment path.
+
+## Cockpit Plugins
+
+The `cockpit/` directory contains Cockpit web console plugins that provide
+operational visibility into the running lab. These are standalone packages
+with their own RPM specs, deployed directly to `virt-01`.
+
+| Plugin | Purpose |
+| --- | --- |
+| <a href="./cockpit/calabi-observer/"><kbd>calabi-observer</kbd></a> | Real-time observability for CPU performance domains and host memory oversubscription |
+
+Each plugin has its own README and can be installed via RPM or rsync.
+
 ## Current Project Layout
 
 ```mermaid
@@ -103,36 +134,3 @@ flowchart TD
         observer[calabi-observer]
     end
 ```
-
-## Cockpit Plugins
-
-The `cockpit/` directory contains Cockpit web console plugins that provide
-operational visibility into the running lab. These are standalone packages
-with their own RPM specs, deployed directly to `virt-01`.
-
-| Plugin | Purpose |
-| --- | --- |
-| <a href="./cockpit/calabi-observer/"><kbd>calabi-observer</kbd></a> | Real-time observability for CPU performance domains and host memory oversubscription |
-
-Each plugin has its own README and can be installed via RPM or rsync.
-
-## Start Here
-
-Use this page when you need the project-level overview: what Calabi is, what it
-models, and how the repository is organized. When you know the task you need to
-perform, move into the main docs map.
-
-| If you need to... | Start here | Then read |
-| --- | --- | --- |
-| understand the main lab flow | [AWS docs map](./aws-metal-openshift-demo/docs/README.md) | [Automation Flow](./aws-metal-openshift-demo/docs/automation-flow.md), [Manual Process](./aws-metal-openshift-demo/docs/manual-process.md) |
-| understand the project shape before operating it | [Current Project Layout](#current-project-layout) | [Why This Approach Exists](#why-this-approach-exists), [What One Metal Host Is Standing In For](#what-one-metal-host-is-standing-in-for) |
-| use the alternate on-prem entry path | [On-prem docs](./on-prem-openshift-demo/docs/README.md) | [On-prem automation flow](./on-prem-openshift-demo/docs/automation-flow.md), [AWS docs map](./aws-metal-openshift-demo/docs/README.md) |
-| understand the Cockpit extensions | [Cockpit Plugins](#cockpit-plugins) | [`cockpit/calabi-observer`](./cockpit/calabi-observer/) |
-
-If you already have a prepared on-prem `virt-01`-like host and want the
-experimental alternate LVM-backed path, start with:
-
-<a href="./on-prem-openshift-demo/docs/README.md"><kbd>&nbsp;&nbsp;ON-PREM DOCS&nbsp;&nbsp;</kbd></a>
-
-Those pages cover only the divergent early host and bastion-staging steps,
-then direct you back to the main docs once the normal Calabi flow resumes.

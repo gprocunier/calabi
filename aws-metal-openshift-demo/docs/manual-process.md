@@ -11,13 +11,15 @@ Nearby docs:
 <a href="./orchestration-guide.md"><kbd>&nbsp;&nbsp;ORCHESTRATION GUIDE&nbsp;&nbsp;</kbd></a>
 <a href="./README.md"><kbd>&nbsp;&nbsp;DOCS MAP&nbsp;&nbsp;</kbd></a>
 
-Use this to walk the build by hand, teach the flow to someone else, or execute
-the standup without relying on the automation as the primary source of truth.
+Use this page to understand what the automation does step by step, teach the
+flow to someone else, or inspect the underlying sequence without treating the
+automation as a black box.
 
-If you are starting from zero, read
-<a href="./prerequisites.md"><kbd>PREREQUISITES</kbd></a> first.
+If you are building Calabi in the supported way, do not start here. Start with
+<a href="./prerequisites.md"><kbd>PREREQUISITES</kbd></a> and then follow
+<a href="./automation-flow.md"><kbd>AUTOMATION FLOW</kbd></a>.
 
-Keep these pages nearby while you use this runbook:
+Keep these pages nearby while you use this teaching reference:
 
 - <a href="./automation-flow.md"><kbd>AUTOMATION FLOW</kbd></a> for phase order and execution context
 - <a href="./authentication-model.md"><kbd>AUTH MODEL</kbd></a> for the current supported OpenShift and AAP auth boundary
@@ -25,7 +27,7 @@ Keep these pages nearby while you use this runbook:
 - <a href="./host-resource-management.md"><kbd>RESOURCE MANAGEMENT</kbd></a> for CPU pools, performance domains, and host-resize guidance
 
 Do not read this as a byte-for-byte dump of every Ansible task. Read it as the
-operator runbook for the current supported build and day-2 flow.
+teaching companion to the supported build and day-2 flow.
 
 When bastion-native playbooks need to be rerun after local repository changes,
 the staged repo on bastion is refreshed in place so `generated/` output is not
@@ -40,10 +42,10 @@ thrown away between runs.
 > below so older deep links do not break.
 
 > [!NOTE]
-> This file is the step-by-step operator runbook for the intended supported
-> flow. The current cluster/day-2/auth design is working, but the final
-> zero-intervention certification run of `playbooks/site-lab.yml` from a fresh
-> teardown boundary is still a separate confidence step.
+> This file is the step-by-step teaching reference for the intended supported
+> flow. The operational source of truth remains `PREREQUISITES` plus
+> `AUTOMATION FLOW`; use this page when you want the underlying sequence laid
+> out in human order.
 
 The command examples use these neutral placeholders:
 

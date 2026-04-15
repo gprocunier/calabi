@@ -57,17 +57,14 @@ SITE_ORDER = [
 ]
 
 PATH_SEQUENCES = {
-    "Get Started": [
-        "index",
-        "open-the-lab",
-        "docs-map",
-        "on-prem-docs-map",
+    "AWS Golden Path": [
         "prerequisites",
         "automation-flow",
-        "manual-process",
+        "orchestration-plumbing",
+        "authentication-model",
+        "investigating",
     ],
     "Experimental On-Prem": [
-        "index",
         "on-prem-docs-map",
         "on-prem-prerequisites",
         "on-prem-automation-flow",
@@ -75,16 +72,10 @@ PATH_SEQUENCES = {
         "docs-map",
     ],
     "Build And Rebuild": [
-        "prerequisites",
         "redhat-developer-subscription",
-        "automation-flow",
-        "orchestration-plumbing",
-        "authentication-model",
-        "manual-process",
         "openshift-cluster-matrix",
     ],
     "Architecture And Policy": [
-        "authentication-model",
         "ad-idm-policy-model",
         "network-topology",
         "iaas-resource-model",
@@ -93,8 +84,6 @@ PATH_SEQUENCES = {
         "odf-declarative-plan",
     ],
     "Operate And Recover": [
-        "manual-process",
-        "investigating",
         "issues",
         "secrets-and-sanitization",
     ],
@@ -106,21 +95,21 @@ PATH_SEQUENCES = {
 }
 
 PAGE_PATH = {
-    "index": "Get Started",
-    "open-the-lab": "Get Started",
-    "docs-map": "Get Started",
+    "index": "AWS Golden Path",
+    "open-the-lab": "AWS Golden Path",
+    "docs-map": "AWS Golden Path",
     "on-prem-docs-map": "Experimental On-Prem",
     "on-prem-prerequisites": "Experimental On-Prem",
     "on-prem-automation-flow": "Experimental On-Prem",
     "on-prem-manual-process": "Experimental On-Prem",
-    "prerequisites": "Build And Rebuild",
+    "prerequisites": "AWS Golden Path",
     "redhat-developer-subscription": "Build And Rebuild",
-    "automation-flow": "Build And Rebuild",
-    "orchestration-plumbing": "Build And Rebuild",
-    "authentication-model": "Architecture And Policy",
+    "automation-flow": "AWS Golden Path",
+    "orchestration-plumbing": "AWS Golden Path",
+    "authentication-model": "AWS Golden Path",
     "ad-idm-policy-model": "Architecture And Policy",
-    "manual-process": "Operate And Recover",
-    "investigating": "Operate And Recover",
+    "manual-process": "Teaching Reference",
+    "investigating": "AWS Golden Path",
     "issues": "Operate And Recover",
     "secrets-and-sanitization": "Operate And Recover",
     "network-topology": "Architecture And Policy",
@@ -129,15 +118,14 @@ PAGE_PATH = {
     "host-memory-oversubscription": "Architecture And Policy",
     "openshift-cluster-matrix": "Build And Rebuild",
     "odf-declarative-plan": "Architecture And Policy",
-    "orchestration-guide": "Change The Code",
+    "orchestration-guide": "Teaching Reference",
 }
 
 PAGE_ADJACENCY = {
     "index": [
+        ("Prerequisites", "prerequisites.html"),
+        ("Docs Map", "docs-map.html"),
         ("Automation Flow", "automation-flow.html"),
-        ("Authentication Model", "authentication-model.html"),
-        ("Manual Process", "manual-process.html"),
-        ("Investigating", "investigating.html"),
     ],
     "on-prem-docs-map": [
         ("On-Prem Prerequisites", "on-prem-prerequisites.html"),
@@ -198,14 +186,14 @@ PAGE_ADJACENCY = {
 }
 
 PAGE_KIND = {
-    "index": ("Overview", "Entry point for the lab, the repo shape, and the main documentation branches."),
+    "index": ("Overview", "Entry point for the supported AWS deployment path and the surrounding project context."),
     "open-the-lab": ("Overview", "Project-level orientation before dropping into the lab-specific docs."),
-    "docs-map": ("Navigation", "Route by task when you know what you need to do but not yet the right page."),
+    "docs-map": ("Navigation", "Route by task into the supported AWS deployment flow and its adjacent reference material."),
     "on-prem-docs-map": ("Navigation", "Experimental alternate entry path for on-prem host preparation before rejoining the main flow."),
-    "prerequisites": ("Build Flow", "Inputs and checks required before starting or repeating the lab build."),
+    "prerequisites": ("Build Flow", "Inputs and checks required before starting or repeating the supported AWS build."),
     "redhat-developer-subscription": ("Build Flow", "Subscription setup required for content access in the supported build path."),
     "automation-flow": ("Build Flow", "Primary automation order for building or rebuilding the lab."),
-    "manual-process": ("Build Flow", "Manual equivalent of the automated workflow for recovery, learning, or validation."),
+    "manual-process": ("Teaching Reference", "Step-by-step companion reading for understanding what the automation does under the hood."),
     "orchestration-plumbing": ("Build Flow", "Execution-path details for how the automation is staged and run."),
     "authentication-model": ("Architecture", "Supported identity, authorization, and breakglass model for the lab."),
     "ad-idm-policy-model": ("Architecture", "Planned future authorization shape and boundary between AD and IdM."),
@@ -216,7 +204,7 @@ PAGE_KIND = {
     "openshift-cluster-matrix": ("Build Flow", "Cluster identity, node inventory, and install-matrix reference."),
     "odf-declarative-plan": ("Architecture", "Storage design intent and planned ODF configuration shape."),
     "orchestration-guide": ("Code Guide", "Where the playbooks, roles, and implementation boundaries live in the repo."),
-    "investigating": ("Operate And Recover", "Live checkpoints and investigation guidance when the happy path breaks."),
+    "investigating": ("Operate And Recover", "Recovery checkpoints and investigation guidance when the happy path breaks."),
     "issues": ("Operate And Recover", "Known issues and already-fixed problems with commit references."),
     "secrets-and-sanitization": ("Operate And Recover", "Current secret-handling and sanitization model for the repo and lab."),
     "on-prem-prerequisites": ("Experimental Path", "On-prem host requirements before the alternate path can rejoin the main flow."),
@@ -224,6 +212,35 @@ PAGE_KIND = {
     "on-prem-manual-process": ("Experimental Path", "Manual analog for the on-prem branch before the normal Calabi flow resumes."),
     "on-prem-host-sizing-and-resource-policy": ("Experimental Path", "Host resource contract specific to the on-prem branch."),
     "on-prem-portability-and-gap-analysis": ("Experimental Path", "Gaps and portability constraints in the alternate on-prem path."),
+}
+
+PAGE_TYPE = {
+    "index": ("Golden Path", "golden"),
+    "open-the-lab": ("Golden Path", "golden"),
+    "docs-map": ("Golden Path", "golden"),
+    "prerequisites": ("Golden Path", "golden"),
+    "redhat-developer-subscription": ("Golden Path", "golden"),
+    "automation-flow": ("Golden Path", "golden"),
+    "orchestration-plumbing": ("Golden Path", "golden"),
+    "authentication-model": ("Golden Path", "golden"),
+    "investigating": ("Golden Path", "golden"),
+    "issues": ("Golden Path", "golden"),
+    "secrets-and-sanitization": ("Golden Path", "golden"),
+    "manual-process": ("Teaching Reference", "teaching"),
+    "ad-idm-policy-model": ("Teaching Reference", "teaching"),
+    "iaas-resource-model": ("Teaching Reference", "teaching"),
+    "network-topology": ("Teaching Reference", "teaching"),
+    "host-resource-management": ("Teaching Reference", "teaching"),
+    "host-memory-oversubscription": ("Teaching Reference", "teaching"),
+    "openshift-cluster-matrix": ("Teaching Reference", "teaching"),
+    "odf-declarative-plan": ("Teaching Reference", "teaching"),
+    "orchestration-guide": ("Teaching Reference", "teaching"),
+    "on-prem-docs-map": ("Experimental", "experimental"),
+    "on-prem-prerequisites": ("Experimental", "experimental"),
+    "on-prem-automation-flow": ("Experimental", "experimental"),
+    "on-prem-manual-process": ("Experimental", "experimental"),
+    "on-prem-host-sizing-and-resource-policy": ("Experimental", "experimental"),
+    "on-prem-portability-and-gap-analysis": ("Experimental", "experimental"),
 }
 
 
@@ -810,6 +827,14 @@ def page_kind_for_slug(slug: str) -> tuple[str, str]:
     return PAGE_KIND.get(slug, ("Guide", "Supporting Calabi documentation."))
 
 
+def page_type_for_slug(slug: str) -> tuple[str, str]:
+    return PAGE_TYPE.get(slug, ("Teaching Reference", "teaching"))
+
+
+def page_type_pill(label: str, css_class: str) -> str:
+    return f'<span class="page-type-pill page-type-pill--{css_class}">{html.escape(label)}</span>'
+
+
 def page_sequence(slug: str) -> list[str]:
     path_name = page_path_name(slug)
     if not path_name:
@@ -905,8 +930,10 @@ def build_page_meta(slug: str) -> str:
     if slug == "index":
         return ""
     page_kind, summary = page_kind_for_slug(slug)
+    page_type, page_type_class = page_type_for_slug(slug)
     return f"""
 <div class="page-meta">
+  {page_type_pill(page_type, page_type_class)}
   <p class="page-kind">{html.escape(page_kind)}</p>
   <p class="page-summary">{html.escape(summary)}</p>
 </div>
@@ -915,9 +942,8 @@ def build_page_meta(slug: str) -> str:
 
 def build_start_here_block(slug: str) -> str:
     links = [
-        ("Open The Lab", "open-the-lab.html", "Project overview and the main lab entry point."),
-        ("Docs Map", "docs-map.html", "Task-driven routing into the main Calabi workflow."),
-        ("On-Prem Docs", "on-prem-docs-map.html", "Experimental alternate host-preparation path before rejoining the main flow."),
+        ("Start The AWS Deployment", "prerequisites.html", "Supported AWS automation path. Follow this first."),
+        ("Docs Map", "docs-map.html", "Task-driven routing into the supported AWS workflow."),
     ]
 
     items = []
@@ -938,6 +964,32 @@ def build_start_here_block(slug: str) -> str:
 """
 
 
+def build_other_entry_points_block(slug: str) -> str:
+    links = [
+        ("Manual Process", "manual-process.html", "Teaching reference for understanding the automation under the hood."),
+        ("On-Prem Docs", "on-prem-docs-map.html", "Experimental developer sandbox. Not the supported deployment path."),
+    ]
+
+    items = []
+    for label, href, summary in links:
+        current = ' aria-current="page"' if filename_for_slug(slug) == href else ""
+        target_slug = href.removesuffix('.html') if href.endswith('.html') else slug
+        page_type, page_type_class = page_type_for_slug(target_slug)
+        items.append(
+            f'<li><a href="{href}"{current}><strong>{html.escape(label)}</strong>'
+            f'<span>{page_type_pill(page_type, page_type_class)} {html.escape(summary)}</span></a></li>'
+        )
+
+    return f"""
+<section class="context-block context-block--secondary">
+  <h2>Other Entry Points</h2>
+  <ul class="path-list">
+    {''.join(items)}
+  </ul>
+</section>
+"""
+
+
 def build_nearby_block(slug: str) -> str:
     links = PAGE_ADJACENCY.get(slug)
     if not links:
@@ -946,9 +998,11 @@ def build_nearby_block(slug: str) -> str:
     items = []
     for label, href in links[:3]:
         current = ' aria-current="page"' if filename_for_slug(slug) == href else ""
+        target_slug = href.removesuffix('.html') if href.endswith('.html') else slug
+        page_type, page_type_class = page_type_for_slug(target_slug)
         items.append(
             f'<li><a href="{href}"{current}><strong>{html.escape(label)}</strong>'
-            "<span>Curated nearby page for the next likely jump.</span></a></li>"
+            f'<span>{page_type_pill(page_type, page_type_class)} Curated nearby page for the next likely jump.</span></a></li>'
         )
 
     return f"""
@@ -975,11 +1029,12 @@ def build_project_links_block(source_path: Path) -> str:
 
 def build_page_type_block(slug: str) -> str:
     page_kind, summary = page_kind_for_slug(slug)
+    page_type, page_type_class = page_type_for_slug(slug)
     return f"""
-<section class="context-block context-block--meta">
+<section class="context-block context-block--meta context-block--{page_type_class}">
   <h2>Page Type</h2>
-  <p class="context-kicker">{html.escape(page_kind)}</p>
-  <p class="context-copy">{html.escape(summary)}</p>
+  <p class="context-kicker">{page_type_pill(page_type, page_type_class)}</p>
+  <p class="context-copy"><strong>{html.escape(page_kind)}.</strong> {html.escape(summary)}</p>
 </section>
 """
 
@@ -989,10 +1044,11 @@ def build_side_context(slug: str, source_path: Path) -> str:
     workflow_block = build_path_block(slug)
     if workflow_block:
         blocks.append(workflow_block)
+    blocks.append(build_start_here_block(slug))
+    blocks.append(build_other_entry_points_block(slug))
     nearby_block = build_nearby_block(slug)
     if nearby_block:
         blocks.append(nearby_block)
-    blocks.append(build_start_here_block(slug))
     blocks.append(build_project_links_block(source_path))
     return "".join(blocks)
 
@@ -1011,6 +1067,24 @@ def build_toc_block(body_html: str, toc_html: str) -> str:
 """
 
 
+def build_page_banner_html(slug: str) -> str:
+    if slug == "manual-process":
+        return """
+<section class="page-banner page-banner--teaching">
+  <strong>Teaching reference.</strong>
+  This page explains what the automation does step by step. Do not follow it as the primary build path; use <a href="automation-flow.html">Automation Flow</a> for the supported deployment sequence.
+</section>
+"""
+    if slug.startswith("on-prem-"):
+        return """
+<section class="page-banner page-banner--experimental">
+  <strong>Experimental.</strong>
+  The on-prem path is an unvalidated developer sandbox. For the supported deployment, use the <a href="docs-map.html">AWS docs map</a> and follow the golden path from there.
+</section>
+"""
+    return ""
+
+
 def build_source_block(slug: str, source_path: Path) -> str:
     if slug in {"index", "open-the-lab", "docs-map", "on-prem-docs-map"}:
         return ""
@@ -1023,12 +1097,13 @@ def build_source_block(slug: str, source_path: Path) -> str:
 
 
 def build_header_nav_html(source_path: Path) -> str:
-    header_nav = extract_header_nav(source_path)
-    if not header_nav:
-        return ""
+    links = [
+        ("Docs Map", "docs-map.html"),
+        ("GitHub", GITHUB_REPO_URL),
+    ]
     return "".join(
         f'<a href="{href}"><kbd>{html.escape(label)}</kbd></a>'
-        for label, href in header_nav
+        for label, href in links
     )
 
 
@@ -1089,6 +1164,7 @@ def build_site(output_dir: Path) -> None:
             body_html=rendered_body,
             breadcrumbs_html=build_breadcrumbs(slug),
             page_meta_html=build_page_meta(slug),
+            page_banner_html=build_page_banner_html(slug),
             header_nav_html=build_header_nav_html(source_path),
             side_context_html=build_side_context(slug, source_path),
             toc_block=build_toc_block(rendered_body, toc_html),

@@ -24,6 +24,7 @@ def render_page(
     body_html: str,
     breadcrumbs_html: str = "",
     page_meta_html: str = "",
+    page_banner_html: str = "",
     header_nav_html: str = "",
     side_context_html: str = "",
     toc_block: str = "",
@@ -82,6 +83,7 @@ def render_page(
           <article class="markdown-body">
             {breadcrumbs_html}
             {page_meta_html}
+            {page_banner_html}
             {body_html}
           </article>
           {pager_block}
