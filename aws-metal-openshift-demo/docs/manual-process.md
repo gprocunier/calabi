@@ -3694,24 +3694,48 @@ YAML
 EOF
 ```
 
-Create the object storage secret, `LokiStack`, and `FlowCollector`.
+Create the ODF-backed object bucket, derive the Loki object storage
+secret from the generated NooBaa credentials, and then apply `LokiStack` and
+`FlowCollector`.
 
 ```bash
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
 
 cat <<'YAML' | oc apply -f -
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: netobserv-loki
+  namespace: netobserv
+spec:
+  generateBucketName: netobserv-loki-
+  storageClassName: openshift-storage.noobaa.io
+YAML
+
+until [ "$(oc get obc netobserv-loki -n netobserv -o jsonpath='{.status.phase}' 2>/dev/null)" = "Bound" ]; do
+  sleep 5
+done
+
+access_key="$(oc get secret netobserv-loki -n netobserv -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 -d)"
+secret_key="$(oc get secret netobserv-loki -n netobserv -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d)"
+bucket_name="$(oc get configmap netobserv-loki -n netobserv -o jsonpath='{.data.BUCKET_NAME}')"
+bucket_host="$(oc get configmap netobserv-loki -n netobserv -o jsonpath='{.data.BUCKET_HOST}')"
+bucket_port="$(oc get configmap netobserv-loki -n netobserv -o jsonpath='{.data.BUCKET_PORT}')"
+
+cat <<YAML | oc apply -f -
 apiVersion: v1
 kind: Secret
 metadata:
   name: loki-object-storage
   namespace: netobserv
 stringData:
-  bucketnames: netobserv-loki
-  endpoint: https://s3.openshift-storage.svc
-  access_key_id: REPLACE_WITH_NOOBAA_ACCESS_KEY
-  access_key_secret: REPLACE_WITH_NOOBAA_SECRET_KEY
+  bucketnames: ${bucket_name}
+  endpoint: https://${bucket_host}:${bucket_port}
+  access_key_id: ${access_key}
+  access_key_secret: ${secret_key}
   region: us-east-1
+type: Opaque
 YAML
 
 cat <<'YAML' | oc apply -f -
