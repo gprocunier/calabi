@@ -3769,7 +3769,7 @@ spec:
   agent:
     type: eBPF
     ebpf:
-      sampling: 1
+      sampling: 100
       privileged: true
       features:
         - PacketDrop

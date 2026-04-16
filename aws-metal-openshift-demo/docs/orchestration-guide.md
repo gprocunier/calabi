@@ -866,9 +866,6 @@ Execution model:
   not CPU-starved
 - applies a `FlowCollector` using the default eBPF path, not the unsupported
   `EbpfManager` feature
-- sets `spec.agent.ebpf.sampling: 1` for demo fidelity when validating
-  short-lived high-throughput traffic such as `iperf3`
-
 Operational note:
 
 - NetObserv Topology is a summarized flow graph, not a raw throughput meter
