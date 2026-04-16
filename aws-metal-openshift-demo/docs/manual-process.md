@@ -950,7 +950,7 @@ kinit admin <<< '<lab-default-password>'
 ipa-kra-install -U -p '<lab-default-password>'
 
 ipa dnsconfig-mod --forwarder=8.8.8.8 --forwarder=1.1.1.1
-ipa group-add openshift-admin || true
+ipa group-add access-openshift-admin || true
 ipa group-add virt-admin || true
 ipa group-add developer || true
 
@@ -962,10 +962,10 @@ ipa pwpolicy-mod admins \
   --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
   --priority=40
 
-ipa pwpolicy-add openshift-admin \
+ipa pwpolicy-add access-openshift-admin \
   --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
   --priority=50 2>/dev/null || \
-ipa pwpolicy-mod openshift-admin \
+ipa pwpolicy-mod access-openshift-admin \
   --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
   --priority=50
 
@@ -1031,7 +1031,7 @@ systemctl restart named
 systemctl is-active named
 
 ipa group-add-member admins --users=sysop
-ipa group-add-member openshift-admin --users=sysop
+ipa group-add-member access-openshift-admin --users=sysop
 ipa group-add-member virt-admin --users=virtadm
 ipa group-add-member developer --users=dev
 
@@ -2926,7 +2926,7 @@ The supported default auth model is:
 4. federate Keycloak to IdM
 5. configure OpenShift OAuth for OIDC against Keycloak
 6. map the OIDC `groups` claim into OpenShift groups
-7. bind IdM group `openshift-admin` to OpenShift `cluster-admin`
+7. bind IdM group `access-openshift-admin` to OpenShift `cluster-admin`
 
 Direct OpenShift LDAP auth is no longer the default baseline. Keep it out of
 the cluster OAuth configuration unless you are deliberately validating that
@@ -2955,7 +2955,7 @@ cat <<'YAML' | /var/tmp/oc apply -f -
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: openshift-admin-cluster-admin
+  name: access-openshift-admin-cluster-admin
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -2963,14 +2963,14 @@ roleRef:
 subjects:
   - kind: Group
     apiGroup: rbac.authorization.k8s.io
-    name: openshift-admin
+    name: access-openshift-admin
 YAML
 
 # --- Move platform workloads to infra nodes ---
 
 /var/tmp/oc patch ingresscontroller/default -n openshift-ingress-operator \
   --type=merge -p \
-  '{"spec":{"nodePlacement":{"nodeSelector":{"matchLabels":{"node-role.kubernetes.io/infra":""}}}}}'
+  '{"spec":{"nodePlacement":{"nodeSelector":{"matchLabels":{"node-role.kubernetes.io/infra":""}},"tolerations":[{"key":"node.ocs.openshift.io/storage","value":"true","effect":"NoSchedule"}]}}}'
 
 cat <<'YAML' | /var/tmp/oc apply -f -
 apiVersion: v1
@@ -2983,28 +2983,56 @@ data:
     prometheusOperator:
       nodeSelector:
         node-role.kubernetes.io/infra: ""
+      tolerations:
+        - key: node.ocs.openshift.io/storage
+          value: "true"
+          effect: NoSchedule
     prometheusK8s:
       nodeSelector:
         node-role.kubernetes.io/infra: ""
+      tolerations:
+        - key: node.ocs.openshift.io/storage
+          value: "true"
+          effect: NoSchedule
     alertmanagerMain:
       nodeSelector:
         node-role.kubernetes.io/infra: ""
+      tolerations:
+        - key: node.ocs.openshift.io/storage
+          value: "true"
+          effect: NoSchedule
     kubeStateMetrics:
       nodeSelector:
         node-role.kubernetes.io/infra: ""
+      tolerations:
+        - key: node.ocs.openshift.io/storage
+          value: "true"
+          effect: NoSchedule
     openshiftStateMetrics:
       nodeSelector:
         node-role.kubernetes.io/infra: ""
+      tolerations:
+        - key: node.ocs.openshift.io/storage
+          value: "true"
+          effect: NoSchedule
     thanosQuerier:
       nodeSelector:
         node-role.kubernetes.io/infra: ""
+      tolerations:
+        - key: node.ocs.openshift.io/storage
+          value: "true"
+          effect: NoSchedule
     metricsServer:
       nodeSelector:
         node-role.kubernetes.io/infra: ""
+      tolerations:
+        - key: node.ocs.openshift.io/storage
+          value: "true"
+          effect: NoSchedule
 YAML
 
 /var/tmp/oc patch configs.imageregistry/cluster --type=merge \
-  -p '{"spec":{"nodeSelector":{"node-role.kubernetes.io/infra":""}}}'
+  -p '{"spec":{"nodeSelector":{"node-role.kubernetes.io/infra":""},"tolerations":[{"key":"node.ocs.openshift.io/storage","value":"true","effect":"NoSchedule"}]}}'
 EOF
 ```
 
@@ -3013,7 +3041,7 @@ EOF
 > validate a breakglass `HTPasswd` user before patching OAuth to use Keycloak.
 > Only after the breakglass login works should you retire `kubeadmin`.
 
-Start by establishing the breakglass OAuth identity provider:
+Start by establishing and validating the breakglass OAuth identity provider.
 
 ```bash
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
@@ -3039,6 +3067,42 @@ spec:
         fileData:
           name: breakglass-htpasswd
 YAML
+
+until [ "$(/var/tmp/oc get clusteroperator authentication -o jsonpath='{.status.conditions[?(@.type=="Available")].status},{.status.conditions[?(@.type=="Progressing")].status},{.status.conditions[?(@.type=="Degraded")].status}')" = "True,False,False" ]; do
+  sleep 10
+done
+
+until curl -skf "https://$(/var/tmp/oc get route oauth-openshift -n openshift-authentication -o jsonpath='{.spec.host}')/healthz" >/dev/null; do
+  sleep 10
+done
+
+/var/tmp/oc login https://api.ocp.workshop.lan:6443 \
+  --username=breakglass-admin \
+  --password='<lab-default-password>' \
+  --insecure-skip-tls-verify \
+  --kubeconfig=/tmp/kubeconfig-breakglass-test
+
+/var/tmp/oc whoami --kubeconfig=/tmp/kubeconfig-breakglass-test
+
+cat <<'YAML' | /var/tmp/oc apply -f -
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: breakglass-admin-cluster-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: breakglass-admin
+YAML
+
+/var/tmp/oc delete secret kubeadmin -n kube-system --ignore-not-found=true
+! /var/tmp/oc get secret kubeadmin -n kube-system
+/var/tmp/oc logout --kubeconfig=/tmp/kubeconfig-breakglass-test || true
+rm -f /tmp/kubeconfig-breakglass-test /tmp/htpasswd
 EOF
 ```
 
@@ -3054,16 +3118,296 @@ storage class. The intended state is:
 - LDAP federation against the IdM compat tree
 - a `groups` protocol mapper so OpenShift receives group membership claims
 
+Manual equivalent for the Keycloak install itself:
+
+```bash
+ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
+export KUBECONFIG=/var/tmp/ocp-kubeconfig
+
+oc create namespace keycloak || true
+
+cat <<'YAML' | oc apply -f -
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: keycloak
+  namespace: keycloak
+spec:
+  targetNamespaces:
+    - keycloak
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: rhbk-operator
+  namespace: keycloak
+spec:
+  channel: stable-v26.2
+  installPlanApproval: Manual
+  name: rhbk-operator
+  source: cs-redhat-operator-index-v4-20
+  sourceNamespace: openshift-marketplace
+YAML
+
+oc create secret generic workshop-keycloak-bootstrap-admin \
+  -n keycloak \
+  --from-literal=username=admin \
+  --from-literal=password='<lab-default-password>' \
+  --dry-run=client -o yaml | oc apply -f -
+
+oc create secret generic workshop-keycloak-db \
+  -n keycloak \
+  --from-literal=username=keycloak \
+  --from-literal=password='<lab-default-password>' \
+  --dry-run=client -o yaml | oc apply -f -
+
+oc extract -n openshift-ingress secret/ingress-default-idm-tls --to=/tmp/keycloak-tls --confirm
+oc create secret tls workshop-keycloak-tls \
+  -n keycloak \
+  --cert=/tmp/keycloak-tls/tls.crt \
+  --key=/tmp/keycloak-tls/tls.key \
+  --dry-run=client -o yaml | oc apply -f -
+
+until [ -n "$(oc get subscription rhbk-operator -n keycloak -o jsonpath='{.status.installplan.name}' 2>/dev/null)" ]; do
+  sleep 10
+done
+INSTALLPLAN="$(oc get subscription rhbk-operator -n keycloak -o jsonpath='{.status.installplan.name}')"
+oc patch installplan "$INSTALLPLAN" -n keycloak --type=merge -p '{"spec":{"approved":true}}'
+
+until [ "$(oc get subscription rhbk-operator -n keycloak -o jsonpath='{.status.currentCSV}' 2>/dev/null | xargs -r -I{} oc get csv {} -n keycloak -o jsonpath='{.status.phase}')" = "Succeeded" ]; do
+  sleep 10
+done
+
+cat <<'YAML' | oc apply -f -
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-db
+  namespace: keycloak
+spec:
+  serviceName: postgres-db
+  selector:
+    matchLabels:
+      app: postgres-db
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: postgres-db
+    spec:
+      containers:
+        - name: postgres-db
+          image: registry.redhat.io/rhel9/postgresql-15:latest
+          env:
+            - name: POSTGRESQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: workshop-keycloak-db
+                  key: username
+            - name: POSTGRESQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: workshop-keycloak-db
+                  key: password
+            - name: POSTGRESQL_DATABASE
+              value: keycloak
+          ports:
+            - containerPort: 5432
+              name: postgres
+          volumeMounts:
+            - mountPath: /var/lib/pgsql/data
+              name: pgdata
+  volumeClaimTemplates:
+    - metadata:
+        name: pgdata
+      spec:
+        storageClassName: ocs-storagecluster-ceph-rbd
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-db
+  namespace: keycloak
+spec:
+  selector:
+    app: postgres-db
+  ports:
+    - port: 5432
+      targetPort: 5432
+      name: postgres
+---
+apiVersion: k8s.keycloak.org/v2alpha1
+kind: Keycloak
+metadata:
+  name: workshop-keycloak
+  namespace: keycloak
+spec:
+  instances: 1
+  bootstrapAdmin:
+    user:
+      secret: workshop-keycloak-bootstrap-admin
+  db:
+    vendor: postgres
+    host: postgres-db
+    port: 5432
+    database: keycloak
+    usernameSecret:
+      name: workshop-keycloak-db
+      key: username
+    passwordSecret:
+      name: workshop-keycloak-db
+      key: password
+  http:
+    tlsSecret: workshop-keycloak-tls
+  hostname:
+    hostname: https://sso.apps.ocp.workshop.lan
+  ingress:
+    enabled: false
+  proxy:
+    headers: xforwarded
+YAML
+
+until [ "$(oc get keycloak workshop-keycloak -n keycloak -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" = "True" ]; do
+  sleep 10
+done
+
+oc create route reencrypt workshop-keycloak \
+  --service=workshop-keycloak-service \
+  --cert=/tmp/keycloak-tls/tls.crt \
+  --key=/tmp/keycloak-tls/tls.key \
+  --dest-ca-cert=/etc/ipa/ca.crt \
+  --ca-cert=/etc/ipa/ca.crt \
+  --hostname=sso.apps.ocp.workshop.lan \
+  -n keycloak \
+  --dry-run=client -o yaml | oc apply -f -
+
+until curl -skf https://sso.apps.ocp.workshop.lan/realms/master/.well-known/openid-configuration >/dev/null; do
+  sleep 10
+done
+EOF
+```
+
 OpenShift OAuth is then patched to trust Keycloak OIDC and map the `groups`
 claim into OpenShift groups. The resulting effective authorization model is:
 
 - IdM group membership is the source of truth
 - Keycloak emits `groups`
 - OpenShift maps `claims.groups`
-- `openshift-admin` is bound to `cluster-admin`
+- `access-openshift-admin` is bound to `cluster-admin`
+
+Manual equivalent for the OIDC federation and OAuth patch:
+
+```bash
+ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
+export KUBECONFIG=/var/tmp/ocp-kubeconfig
+OAUTH_HOST="$(oc get route oauth-openshift -n openshift-authentication -o jsonpath='{.spec.host}')"
+KEYCLOAK_ADMIN_TOKEN="$(curl --cacert /etc/ipa/ca.crt -sS   -X POST https://sso.apps.ocp.workshop.lan/realms/master/protocol/openid-connect/token   -H 'Content-Type: application/x-www-form-urlencoded'   --data-urlencode 'grant_type=password'   --data-urlencode 'client_id=admin-cli'   --data-urlencode 'username=admin'   --data-urlencode 'password=<lab-default-password>' | jq -r .access_token)"
+
+curl --cacert /etc/ipa/ca.crt -sS   -H "Authorization: Bearer ${KEYCLOAK_ADMIN_TOKEN}"   -H 'Content-Type: application/json'   -X POST https://sso.apps.ocp.workshop.lan/admin/realms   -d '{"realm":"openshift","enabled":true,"displayName":"OpenShift","sslRequired":"external","registrationAllowed":false,"resetPasswordAllowed":false,"rememberMe":false,"loginWithEmailAllowed":false}' || true
+
+CLIENT_ID="$(curl --cacert /etc/ipa/ca.crt -sS   -H "Authorization: Bearer ${KEYCLOAK_ADMIN_TOKEN}"   "https://sso.apps.ocp.workshop.lan/admin/realms/openshift/clients?clientId=openshift" | jq -r '.[0].id')"
+if [ -z "${CLIENT_ID}" ] || [ "${CLIENT_ID}" = "null" ]; then
+  cat >/tmp/keycloak-openshift-client.json <<JSON
+{
+  "clientId": "openshift",
+  "name": "OpenShift",
+  "enabled": true,
+  "protocol": "openid-connect",
+  "publicClient": false,
+  "secret": "<lab-default-password>",
+  "standardFlowEnabled": true,
+  "directAccessGrantsEnabled": true,
+  "serviceAccountsEnabled": false,
+  "frontchannelLogout": true,
+  "redirectUris": ["https://${OAUTH_HOST}/oauth2callback/Keycloak"],
+  "webOrigins": ["+"],
+  "defaultClientScopes": ["profile", "email", "roles", "web-origins"]
+}
+JSON
+  curl --cacert /etc/ipa/ca.crt -sS     -H "Authorization: Bearer ${KEYCLOAK_ADMIN_TOKEN}"     -H 'Content-Type: application/json'     -X POST https://sso.apps.ocp.workshop.lan/admin/realms/openshift/clients     --data-binary @/tmp/keycloak-openshift-client.json
+  CLIENT_ID="$(curl --cacert /etc/ipa/ca.crt -sS -H "Authorization: Bearer ${KEYCLOAK_ADMIN_TOKEN}" "https://sso.apps.ocp.workshop.lan/admin/realms/openshift/clients?clientId=openshift" | jq -r '.[0].id')"
+fi
+
+curl --cacert /etc/ipa/ca.crt -sS   -H "Authorization: Bearer ${KEYCLOAK_ADMIN_TOKEN}"   -H 'Content-Type: application/json'   -X POST "https://sso.apps.ocp.workshop.lan/admin/realms/openshift/clients/${CLIENT_ID}/protocol-mappers/models"   -d '{"name":"groups","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","config":{"full.path":"false","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true","claim.name":"groups","multivalued":"true"}}' || true
+
+REALM_ID="$(curl --cacert /etc/ipa/ca.crt -sS -H "Authorization: Bearer ${KEYCLOAK_ADMIN_TOKEN}" https://sso.apps.ocp.workshop.lan/admin/realms/openshift | jq -r .id)"
+curl --cacert /etc/ipa/ca.crt -sS   -H "Authorization: Bearer ${KEYCLOAK_ADMIN_TOKEN}"   -H 'Content-Type: application/json'   -X POST https://sso.apps.ocp.workshop.lan/admin/realms/openshift/components   -d '{"name":"idm-compat","parentId":"'"${REALM_ID}"'","providerId":"ldap","providerType":"org.keycloak.storage.UserStorageProvider","config":{"enabled":["true"],"priority":["0"],"fullSyncPeriod":["-1"],"changedSyncPeriod":["-1"],"cachePolicy":["DEFAULT"],"batchSizeForSync":["1000"],"importEnabled":["true"],"syncRegistrations":["false"],"editMode":["READ_ONLY"],"vendor":["other"],"usernameLDAPAttribute":["uid"],"rdnLDAPAttribute":["uid"],"uuidLDAPAttribute":["uid"],"userObjectClasses":["posixAccount"],"connectionUrl":["ldap://idm-01.workshop.lan"],"usersDn":["cn=users,cn=compat,dc=workshop,dc=lan"],"authType":["simple"],"bindDn":["cn=Directory Manager"],"bindCredential":["<lab-default-password>"],"searchScope":["2"],"validatePasswordPolicy":["false"],"trustEmail":["false"],"connectionPooling":["true"],"pagination":["true"],"startTls":["false"]}}' || true
+
+LDAP_ID="$(curl --cacert /etc/ipa/ca.crt -sS -H "Authorization: Bearer ${KEYCLOAK_ADMIN_TOKEN}" "https://sso.apps.ocp.workshop.lan/admin/realms/openshift/components?type=org.keycloak.storage.UserStorageProvider" | jq -r '.[] | select(.name=="idm-compat") | .id')"
+curl --cacert /etc/ipa/ca.crt -sS   -H "Authorization: Bearer ${KEYCLOAK_ADMIN_TOKEN}"   -H 'Content-Type: application/json'   -X POST "https://sso.apps.ocp.workshop.lan/admin/realms/openshift/components"   -d '{"name":"idm-compat-group-mapper","parentId":"'"${LDAP_ID}"'","providerId":"group-ldap-mapper","providerType":"org.keycloak.storage.ldap.mappers.LDAPStorageMapper","config":{"enabled":["true"],"priority":["0"],"fullSyncPeriod":["-1"],"changedSyncPeriod":["-1"],"cachePolicy":["DEFAULT"],"batchSizeForSync":["1000"],"mode":["LDAP_ONLY"],"groups.dn":["cn=groups,cn=compat,dc=workshop,dc=lan"],"group.name.ldap.attribute":["cn"],"group.object.classes":["posixGroup"],"preserve.group.inheritance":["false"],"membership.ldap.attribute":["memberUid"],"membership.attribute.type":["UID"],"groups.ldap.filter":[""],"user.roles.retrieve.strategy":["LOAD_GROUPS_BY_MEMBER_ATTRIBUTE"],"drop.non.existing.groups.during.sync":["false"]}}' || true
+
+oc create secret generic oidc-client-secret \
+  -n openshift-config \
+  --from-literal=clientSecret='<lab-default-password>' \
+  --dry-run=client -o yaml | oc apply -f -
+oc create configmap oidc-ca \
+  -n openshift-config \
+  --from-file=ca.crt=/etc/ipa/ca.crt \
+  --dry-run=client -o yaml | oc apply -f -
+
+cat <<'YAML' | oc apply -f -
+apiVersion: config.openshift.io/v1
+kind: OAuth
+metadata:
+  name: cluster
+spec:
+  identityProviders:
+    - name: Breakglass HTPasswd
+      mappingMethod: claim
+      type: HTPasswd
+      htpasswd:
+        fileData:
+          name: breakglass-htpasswd
+    - name: Keycloak
+      mappingMethod: claim
+      type: OpenID
+      openID:
+        clientID: openshift
+        clientSecret:
+          name: oidc-client-secret
+        issuer: https://sso.apps.ocp.workshop.lan/realms/openshift
+        ca:
+          name: oidc-ca
+        claims:
+          preferredUsername:
+            - preferred_username
+          name:
+            - name
+            - preferred_username
+          email:
+            - email
+            - preferred_username
+          groups:
+            - groups
+        extraScopes:
+          - email
+          - profile
+YAML
+
+cat <<'YAML' | oc apply -f -
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: access-openshift-admin-cluster-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: access-openshift-admin
+YAML
+EOF
+```
 
 That means adding a native IdM user, or a trusted AD user that lands in the
-same IdM role group, to `openshift-admin` makes that user a cluster admin once
+same IdM role group, to `access-openshift-admin` makes that user a cluster admin once
 they authenticate through Keycloak.
 
 Validate the end state with both a native IdM user and an AD-backed user.
@@ -3078,7 +3422,7 @@ done
 
 /var/tmp/oc get oauth cluster -o jsonpath='{range .spec.identityProviders[*]}{.name} => groups={.openID.claims.groups}{"\n"}{end}'
 /var/tmp/oc get groups
-/var/tmp/oc get clusterrolebinding openshift-admin-cluster-admin
+/var/tmp/oc get clusterrolebinding access-openshift-admin-cluster-admin
 EOF
 ```
 
@@ -3318,6 +3662,74 @@ EOF
 > (`MultipleOperatorGroupsFound`). The automation deletes any stale
 > OperatorGroups before applying the subscription. If you are running this
 > manually, check first.
+
+Before you apply the LocalVolume and `StorageCluster` CRs, install the Local
+Storage Operator and ODF operator so the APIs exist.
+
+```bash
+ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
+export KUBECONFIG=/var/tmp/ocp-kubeconfig
+
+oc create namespace openshift-local-storage || true
+oc create namespace openshift-storage || true
+
+for og in $(oc get operatorgroup -n openshift-local-storage -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+  oc delete operatorgroup "$og" -n openshift-local-storage --ignore-not-found=true
+done
+
+cat <<'YAML' | oc apply -f -
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: openshift-local-storage
+  namespace: openshift-local-storage
+spec:
+  targetNamespaces:
+    - openshift-local-storage
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: local-storage-operator
+  namespace: openshift-local-storage
+spec:
+  channel: stable
+  installPlanApproval: Automatic
+  name: local-storage-operator
+  source: cs-redhat-operator-index-v4-20
+  sourceNamespace: openshift-marketplace
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: openshift-storage
+  namespace: openshift-storage
+spec:
+  targetNamespaces:
+    - openshift-storage
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: odf-operator
+  namespace: openshift-storage
+spec:
+  channel: stable-4.20
+  installPlanApproval: Automatic
+  name: odf-operator
+  source: cs-redhat-operator-index-v4-20
+  sourceNamespace: openshift-marketplace
+YAML
+
+until [ "$(oc get subscription local-storage-operator -n openshift-local-storage -o jsonpath='{.status.currentCSV}' 2>/dev/null | xargs -r -I{} oc get csv {} -n openshift-local-storage -o jsonpath='{.status.phase}')" = "Succeeded" ]; do
+  sleep 10
+done
+
+until [ "$(oc get subscription odf-operator -n openshift-storage -o jsonpath='{.status.currentCSV}' 2>/dev/null | xargs -r -I{} oc get csv {} -n openshift-storage -o jsonpath='{.status.phase}')" = "Succeeded" ]; do
+  sleep 10
+done
+EOF
+```
 
 Current default:
 
@@ -4197,12 +4609,15 @@ operator installs (sections 25-32) use the disconnected catalog source names
 (`cs-redhat-operator-index-v4-20`, `cc-redhat-operator-index-v4-20`) instead
 of the upstream `redhat-operators` / `community-operators` defaults.
 
-Disable the default remote catalogs and apply the mirrored CatalogSource
-manifests that `oc-mirror` produced during section 15.
+Disable the default remote catalogs, merge mirror-registry auth into the
+cluster pull secret, attach a dedicated pull secret to the mirrored catalog
+pods, and wait for the mirrored sources to become `READY`.
 
 ```bash
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
+REGISTRY_HOST="mirror-registry.workshop.lan:8443"
+REGISTRY_AUTH="$(printf '%s' 'init:<lab-default-password>' | base64 -w0)"
 
 cat <<'YAML' | oc apply -f -
 apiVersion: config.openshift.io/v1
@@ -4213,8 +4628,52 @@ spec:
   disableAllDefaultSources: true
 YAML
 
+for node in $(oc get nodes -o jsonpath='{.items[*].metadata.name}'); do
+  oc debug "node/${node}" --quiet -- chroot /host getent ahostsv4 mirror-registry.workshop.lan | grep -q '^172.16.0.20\b'
+done
+
+oc extract secret/pull-secret -n openshift-config --to=/tmp/pull-secret --confirm
+jq --arg auth "${REGISTRY_AUTH}" '.auths["'"${REGISTRY_HOST}"'"] = {"auth":$auth,"email":"init@workshop.lan"}'   /tmp/pull-secret/.dockerconfigjson >/tmp/pull-secret-merged.json
+oc set data secret/pull-secret -n openshift-config   --from-file=.dockerconfigjson=/tmp/pull-secret-merged.json
+
+cat >/tmp/mirror-registry-auth.json <<JSON
+{
+  "auths": {
+    "${REGISTRY_HOST}": {
+      "auth": "${REGISTRY_AUTH}",
+      "email": "init@workshop.lan"
+    }
+  }
+}
+JSON
+
+oc create secret generic mirror-registry-catalog-pull-secret   -n openshift-marketplace   --type=kubernetes.io/dockerconfigjson   --from-file=.dockerconfigjson=/tmp/mirror-registry-auth.json   --dry-run=client -o yaml | oc apply -f -
+
 for manifest in /opt/openshift/oc-mirror/working-dir/cluster-resources/cs-*.yaml; do
   oc apply -f "$manifest"
+done
+
+for catalog in redhat-operators certified-operators community-operators redhat-marketplace; do
+  oc delete catalogsource "$catalog" -n openshift-marketplace --ignore-not-found=true
+done
+
+for clustercatalog in openshift-redhat-operators openshift-certified-operators openshift-community-operators openshift-redhat-marketplace; do
+  oc patch clustercatalog "$clustercatalog" --type=merge -p '{"spec":{"availabilityMode":"Unavailable"}}' || true
+done
+
+for catalog in cs-redhat-operator-index-v4-20; do
+  oc patch catalogsource "$catalog" -n openshift-marketplace --type=merge     -p '{"spec":{"secrets":["mirror-registry-catalog-pull-secret"]}}'
+  oc patch serviceaccount "$catalog" -n openshift-marketplace --type=merge     -p '{"imagePullSecrets":[{"name":"mirror-registry-catalog-pull-secret"}]}'
+  oc delete pod -n openshift-marketplace -l "olm.catalogSource=${catalog}" --ignore-not-found=true
+  until [ "$(oc get catalogsource "$catalog" -n openshift-marketplace -o jsonpath='{.status.connectionState.lastObservedState}' 2>/dev/null)" = "READY" ]; do
+    sleep 10
+  done
+done
+
+for pkg in kubernetes-nmstate-operator local-storage-operator; do
+  until [ "$(oc get packagemanifest "$pkg" -n openshift-marketplace -o jsonpath='{.status.catalogSource}' 2>/dev/null)" = "cs-redhat-operator-index-v4-20" ]; do
+    sleep 10
+  done
 done
 EOF
 ```
