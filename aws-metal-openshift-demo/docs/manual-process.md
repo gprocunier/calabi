@@ -307,7 +307,7 @@ Install the required host packages, enable the Red Hat fast-datapath repo for
 OVS, and turn on the core host services.
 
 ```bash
-# Log into the hypervisor, install the base packages, and enable the required services.
+# Log into the hypervisor, install the base packages, enable the required services, and reboot.
 ssh -i <operator-ssh-key> ec2-user@<hypervisor-public-ip>
 sudo -i
 
@@ -340,17 +340,18 @@ dnf -y install \
   jq
 
 dnf -y update
-reboot
 
-systemctl enable --now firewalld
-systemctl enable --now cockpit.socket
-systemctl enable --now openvswitch
-systemctl enable --now osbuild-composer.socket
-systemctl enable --now pmcd.service pmlogger.service pmproxy.service
-systemctl enable --now virtqemud.socket
-systemctl enable --now virtnetworkd.socket
-systemctl enable --now virtstoraged.socket
-systemctl enable --now virtlogd.socket
+systemctl enable firewalld
+systemctl enable cockpit.socket
+systemctl enable openvswitch
+systemctl enable osbuild-composer.socket
+systemctl enable pmcd.service pmlogger.service pmproxy.service
+systemctl enable virtqemud.socket
+systemctl enable virtnetworkd.socket
+systemctl enable virtstoraged.socket
+systemctl enable virtlogd.socket
+
+reboot
 ```
 
 ### Apply The Host Resource-Management Policy
