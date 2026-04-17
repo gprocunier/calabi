@@ -14,6 +14,7 @@ from typing import Iterable
 from bs4 import BeautifulSoup, NavigableString
 from cmarkgfm import Options, github_flavored_markdown_to_html
 
+from sitebuilder.codeblocks import replace_fenced_code_blocks
 from sitebuilder.shell import copy_shell_assets, render_page
 
 
@@ -1128,6 +1129,7 @@ def build_site(output_dir: Path) -> None:
         rewrite_links(soup, source_path)
         link_repo_paths(soup)
         render_execution_contexts(soup)
+        replace_fenced_code_blocks(soup)
         slug = slug_for(source_path)
         title = title_for_slug(slug)
         description = first_paragraph_text(soup)
