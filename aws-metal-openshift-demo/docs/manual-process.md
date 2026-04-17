@@ -152,6 +152,7 @@ the host substrate inside it. For a later `virt-01` rebuild inside an existing
 tenant, only repeat the host stack.
 
 ```bash
+# Create the tenant and host CloudFormation stacks and inspect their outputs.
 cd <project-root>
 
 cat <<'EOF' >cloudformation/parameters.tenant.json
@@ -229,12 +230,14 @@ hash is present. The orchestration now explicitly unlocks the account. The
 manual equivalent is:
 
 ```bash
+# Unlock ec2-user if the first-boot image left the account locked.
 ssh -i <operator-ssh-key> ec2-user@<hypervisor-public-ip> 'sudo usermod -U ec2-user'
 ```
 
 Ensure the hypervisor identity is correct.
 
 ```bash
+# Set the hypervisor hostname and ensure the local hosts entry is present.
 ssh -i <operator-ssh-key> ec2-user@<hypervisor-public-ip> <<'EOF'
 sudo hostnamectl set-hostname virt-01.workshop.lan
 grep -q '^127.0.1.1 virt-01.workshop.lan virt-01$' /etc/hosts || \
@@ -255,6 +258,7 @@ Derive the active guest-disk map from the current AWS attachments by
 avoids stale EBS volume IDs after a rebuild.
 
 ```bash
+# Create the /dev/ebs naming layer from the current AWS volume attachments.
 sudo install -d -m 0755 /dev/ebs
 
 cat <<'EOF' | sudo tee /etc/tmpfiles.d/ebs-friendly.conf
@@ -303,6 +307,7 @@ Install the required host packages, enable the Red Hat fast-datapath repo for
 OVS, and turn on the core host services.
 
 ```bash
+# Log into the hypervisor, install the base packages, and enable the required services.
 ssh -i <operator-ssh-key> ec2-user@<hypervisor-public-ip>
 sudo -i
 
@@ -361,6 +366,7 @@ Gold/Silver/Bronze slice units, but it does not set kernel affinity boot args
 or an `irqbalance` guest-domain ban by default.
 
 ```bash
+# Install the host CPU-placement and systemd slice policy.
 cat <<'EOF' >/etc/systemd/system.conf.d/90-aws-metal-openshift-demo-host-resource-management.conf
 [Manager]
 DefaultCPUAccounting=yes
@@ -401,6 +407,7 @@ systemctl daemon-reexec
 Validate the current host-policy shape.
 
 ```bash
+# Validate the current host CPU-placement policy.
 grep -E '^(DefaultCPUAccounting|CPUAffinity)=' \
   /etc/systemd/system.conf.d/90-aws-metal-openshift-demo-host-resource-management.conf
 
@@ -482,6 +489,7 @@ immediately released back to the host.
 #### THP
 
 ```bash
+# Set THP to madvise mode.
 echo madvise > /sys/kernel/mm/transparent_hugepage/enabled
 echo madvise > /sys/kernel/mm/transparent_hugepage/defrag
 ```
@@ -494,6 +502,7 @@ This avoids the pathological case where `always` mode triggers aggressive
 #### KSM
 
 ```bash
+# Set conservative KSM scan parameters and enable deduplication.
 echo 1000 > /sys/kernel/mm/ksm/pages_to_scan
 echo 20   > /sys/kernel/mm/ksm/sleep_millisecs
 echo 1    > /sys/kernel/mm/ksm/run
@@ -510,6 +519,7 @@ Rather than running these commands ad-hoc, the role installs a systemd
 oneshot service so the policy survives reboot.
 
 ```bash
+# Install and start the persistent host memory-oversubscription service.
 cat <<'EOF' >/etc/systemd/system/calabi-host-memory-oversubscription.service
 [Unit]
 Description=Apply Calabi host memory oversubscription policy
@@ -597,6 +607,7 @@ for extended periods, the scan rate may be too conservative.
 The project includes a monitoring script for continuous observation:
 
 ```bash
+# Run the host memory-overcommit dashboard.
 <project-root>/scripts/host-memory-overcommit-status.py \
   --host <hypervisor-public-ip> --user ec2-user
 ```
@@ -618,6 +629,7 @@ design._
 Remove `virbr0` so the lab only uses the explicit OVS/libvirt design.
 
 ```bash
+# Remove the default libvirt network.
 virsh net-destroy default || true
 virsh net-autostart default --disable || true
 virsh net-undefine default || true
@@ -692,6 +704,7 @@ Create the lab firewall zone, enable forwarding, and NAT the lab out of the
 host uplink.
 
 ```bash
+# Create the lab firewalld zone and enable forwarding and NAT.
 firewall-cmd --permanent --new-zone=lab || true
 firewall-cmd --permanent --zone=external --add-interface=enp125s0
 
@@ -720,6 +733,7 @@ bridge and the intended VLANs._
 Define the `lab-switch` libvirt network and the portgroups used by the VMs.
 
 ```bash
+# Define and start the OVS-backed libvirt network.
 cat <<'EOF' >/etc/libvirt/lab-switch.xml
 <network>
   <name>lab-switch</name>
@@ -783,6 +797,7 @@ Place the RHEL KVM guest image on the hypervisor so the support VMs can be
 seeded onto their raw EBS devices.
 
 ```bash
+# Copy the base RHEL guest image to the hypervisor.
 mkdir -p /root/images
 cp <rhel10-image-path> /root/images/rhel-10.1-x86_64-kvm.qcow2
 ```
@@ -792,6 +807,7 @@ straight to the hypervisor instead of being copied from the operator
 workstation.
 
 ```bash
+# Download the base RHEL guest image directly to the hypervisor.
 mkdir -p /root/images
 curl -L '<rhel10-kvm-direct-download-url>' \
   -o /root/images/rhel-10.1-x86_64-kvm.qcow2
@@ -906,6 +922,7 @@ Update the guest, install IdM, enable Cockpit and session recording, and create
 the core users and groups used by OpenShift.
 
 ```bash
+# Install and configure IdM in the guest.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key cloud-user@172.16.0.10
 sudo -i
 
@@ -1189,6 +1206,7 @@ The bastion staging phase also installs the execution-time Python requirements
 needed for Windows orchestration, including `pywinrm`.
 
 ```bash
+# Copy the project tree to bastion without overwriting generated output or secrets.
 rsync -a --delete \
   --exclude generated \
   --exclude secrets \
@@ -1220,6 +1238,7 @@ After the cluster artifacts exist, the manual equivalent of the helper layout
 is:
 
 ```bash
+# Create the bastion helper layout and local tool symlinks.
 ssh -i <operator-ssh-key> cloud-user@172.16.0.30 <<'EOF'
 set -euo pipefail
 mkdir -p "$HOME/bin" "$HOME/etc"
@@ -1347,6 +1366,7 @@ Validated guest identity:
 ### Confirm The Required Media On `virt-01`
 
 ```bash
+# Confirm the Windows media and target disk are present on virt-01.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1
 ls -l /root/images/26100.32230.260111-0550.lt_release_svc_refresh_SERVER_EVAL_x64FRE_en-us.iso
 ls -l /root/images/virtio-win.iso
@@ -1367,6 +1387,7 @@ Create a small `OEMDRV` ISO that provides the answer file to Windows Setup.
 This keeps the manual path aligned with the validated unattended install.
 
 ```bash
+# Create the AD answer-file media.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 set -euo pipefail
 
@@ -1569,6 +1590,7 @@ EOF
 ### Create The VM On `virt-01`
 
 ```bash
+# Create the AD guest on virt-01 and attach the Windows installer media.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 set -euo pipefail
 
@@ -1623,6 +1645,7 @@ Windows should then:
 From the bastion:
 
 ```bash
+# Verify that WinRM is reachable on the AD guest.
 curl -sI http://172.16.0.40:5985/wsman | head -n 1
 ```
 
@@ -1782,6 +1805,7 @@ From `virt-01`, detach the installation media once the guest configuration is
 complete:
 
 ```bash
+# Eject the Windows installer media from the AD guest.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 for target in $(virsh domblklist ad-01.corp.lan --details | awk '$2 == "cdrom" { print $3 }'); do
   virsh change-media ad-01.corp.lan "$target" --eject --config --live --force || true
@@ -1808,6 +1832,7 @@ Validated AD outputs:
 Quick verification from the bastion and hypervisor:
 
 ```bash
+# Validate WinRM and the AD guest power state.
 curl -sI http://172.16.0.40:5985/wsman | head -n 1
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 'virsh domstate ad-01.corp.lan'
 ```
@@ -1843,6 +1868,7 @@ Resolve-DnsName -Name 'idm-01.workshop.lan' -Server 127.0.0.1 -Type A
 ```
 
 ```bash
+# Confirm the AD trust records are visible before proceeding.
 host ad-01.corp.lan 127.0.0.1
 host -t SRV _ldap._tcp.dc._msdcs.corp.lan 127.0.0.1
 ipa trust-show corp.lan --all
@@ -1863,6 +1889,7 @@ From `bastion-01`, make sure the active IdM CA is trusted locally before the
 client install:
 
 ```bash
+# Install the IdM CA on bastion before the client join.
 curl -o /tmp/idm-ca.crt http://idm-01.workshop.lan/ipa/config/ca.crt
 sudo install -o root -g root -m 0644 \
   /tmp/idm-ca.crt /etc/ipa/ca.crt
@@ -1874,6 +1901,7 @@ sudo update-ca-trust extract
 Enroll the bastion into IdM:
 
 ```bash
+# Join bastion to IdM.
 sudo dnf -y install \
   ipa-client \
   oddjob \
@@ -1898,6 +1926,7 @@ DNS updates for its authoritative IdM records. Reassert and validate the A/PTR
 records explicitly:
 
 ```bash
+# Create the bastion DNS records in IdM.
 kinit admin <<< '<lab-default-password>'
 
 ipa dnsrecord-add workshop.lan bastion-01 --a-rec=172.16.0.30 \
@@ -1914,6 +1943,7 @@ dig +short @172.16.0.10 -x 172.16.0.30
 Enable the same client-side login behavior the automation expects:
 
 ```bash
+# Enable the expected SSSD login behavior on bastion.
 sudo systemctl enable --now oddjobd.service
 sudo authselect select sssd with-mkhomedir with-sudo --force
 sudo systemctl restart sssd
@@ -1923,6 +1953,7 @@ sudo sss_cache -E
 Validate the bastion is now using IdM:
 
 ```bash
+# Validate that bastion is using IdM for identity resolution.
 id admin@workshop.lan
 getent passwd admin@workshop.lan
 sudo sssctl domain-status workshop.lan
@@ -2039,6 +2070,7 @@ Configure the guest itself, install packages, join IdM, and install the mirror
 registry appliance.
 
 ```bash
+# Configure the mirror-registry guest and install the appliance prerequisites.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key cloud-user@172.16.0.20
 sudo -i
 
@@ -2093,6 +2125,7 @@ and validate its authoritative IdM records explicitly instead of relying on
 client-driven dynamic DNS updates:
 
 ```bash
+# Create the mirror-registry DNS records in IdM.
 kinit admin <<< '<lab-default-password>'
 
 ipa dnsrecord-add workshop.lan mirror-registry --a-rec=172.16.0.20 \
@@ -2110,6 +2143,7 @@ Request an IdM-issued certificate for the registry and install the registry with
 that certificate.
 
 ```bash
+# Request and install the mirror-registry certificate.
 kinit admin <<< '<lab-default-password>'
 ipa service-add HTTP/mirror-registry.workshop.lan || true
 
@@ -2183,6 +2217,7 @@ Install the matching client tools on the mirror registry, copy the Red Hat pull
 secret into place, render the `ImageSetConfiguration`, and run `oc-mirror`.
 
 ```bash
+# Download the required tools and mirror the OpenShift content.
 dnf -y install jq
 mkdir -p /opt/openshift/oc-mirror /opt/openshift/oc-mirror-archive /root/.config/containers
 
@@ -2265,6 +2300,7 @@ invocation). The manual equivalent is two separate commands — pull to disk,
 then push into Quay:
 
 ```bash
+# Import the mirrored archive into the local registry.
 oc-mirror --v2 \
   --config /opt/openshift/imageset-config.yaml \
   --authfile /root/.config/containers/auth.json \
@@ -2275,6 +2311,7 @@ oc-mirror --v2 \
 Track the workflow with the bastion helper that the orchestration now installs.
 
 ```bash
+# Open the mirror progress helpers.
 /usr/local/bin/track-mirror-progress
 /usr/local/bin/track-mirror-progress-tmux
 ```
@@ -2292,6 +2329,7 @@ The same information can also be gathered manually without the helper.
 From `bastion-01`, inspect the runner state and latest Ansible task.
 
 ```bash
+# Inspect the bastion-side mirror job state.
 tail -f /var/tmp/bastion-playbooks/mirror-registry.log
 cat /var/tmp/bastion-playbooks/mirror-registry.pid
 cat /var/tmp/bastion-playbooks/mirror-registry.rc
@@ -2301,6 +2339,7 @@ From `mirror-registry.workshop.lan`, inspect live `oc-mirror` activity, archive
 growth, and guest disk usage.
 
 ```bash
+# Inspect live mirror activity and archive growth on the registry host.
 pgrep -af oc-mirror
 df -h /
 du -sh /opt/openshift/oc-mirror-archive
@@ -2347,6 +2386,7 @@ Create the forward and reverse DNS zones and records in IdM for the cluster,
 nodes, and VIPs.
 
 ```bash
+# Create the OpenShift forward and reverse DNS zones and VIP records.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key cloud-user@172.16.0.10
 sudo -i
 kinit admin <<< '<lab-default-password>'
@@ -2375,6 +2415,7 @@ ipa dnsrecord-add ocp.workshop.lan ingress --a-rec=172.16.10.7 || true
 Create the node A and PTR records.
 
 ```bash
+# Create the OpenShift node A and PTR records.
 for entry in \
   "ocp-master-01 11 11" \
   "ocp-master-02 12 12" \
@@ -2415,6 +2456,7 @@ Download the exact matching OpenShift installer and client tools onto the
 bastion.
 
 ```bash
+# Download the exact matching OpenShift installer and client tools onto the bastion.
 mkdir -p /opt/openshift/generated/tools/4.20.15/downloads
 mkdir -p /opt/openshift/generated/tools/4.20.15/bin
 
@@ -2449,6 +2491,7 @@ Write the `install-config.yaml`, `agent-config.yaml`, and the IdM CA file that
 are used by the agent installer.
 
 ```bash
+# Write the OpenShift install config, agent config, and IdM CA bundle.
 mkdir -p /opt/openshift/generated/ocp
 curl -fsSL http://172.16.0.10/ipa/config/ca.crt >/opt/openshift/generated/ocp/idm-ca.crt
 
@@ -2565,6 +2608,7 @@ Generate the agent media on the bastion, then copy the ISO to `virt-01` and
 verify its checksum before using it.
 
 ```bash
+# Generate the agent ISO and copy it to virt-01.
 /opt/openshift/generated/tools/4.20.15/bin/openshift-install agent create image \
   --dir /opt/openshift/generated/ocp
 
@@ -2587,6 +2631,7 @@ Create the generated attachment plan that says every node should boot from the
 agent ISO.
 
 ```bash
+# Render the generated ISO attachment plan.
 cat <<'EOF' >/opt/openshift/generated/ocp/openshift_cluster_attachment_plan.yml
 openshift_cluster_node_attachment_plan:
   ocp-master-01:
@@ -2718,6 +2763,7 @@ installer wait phase from the bastion. This is the step that turns “VMs are
 running” into “the cluster finished bootstrap and install.”
 
 ```bash
+# Wait for the OpenShift installer to converge.
 /opt/openshift/generated/tools/4.20.15/bin/openshift-install \
   --dir /opt/openshift/generated/ocp \
   wait-for bootstrap-complete --log-level=debug
@@ -2740,6 +2786,7 @@ generated kubeconfig from inside the lab and validate the cluster from
 `virt-01`.
 
 ```bash
+# Validate the installed cluster from virt-01.
 scp -i /opt/openshift/secrets/hypervisor-admin.key \
   /opt/openshift/generated/ocp/auth/kubeconfig \
   root@172.16.0.1:/var/tmp/ocp-kubeconfig
@@ -2763,6 +2810,7 @@ current cluster state and import the live cluster CA bundle into bastion system
 trust so normal `oc login` works without `--insecure-skip-tls-verify`.
 
 ```bash
+# Refresh the bastion helper kubeconfigs and trust the cluster CA.
 ssh cloud-user@172.16.0.30 <<'EOF'
 set -euo pipefail
 cp /opt/openshift/aws-metal-openshift-demo/generated/ocp/auth/kubeconfig "$HOME/etc/kubeconfig"
@@ -2807,6 +2855,7 @@ empty CD-ROM shell does not need to be removed immediately, and trying to do so
 on a running node is not a reliable success criterion.
 
 ```bash
+# Verify that the support guests no longer have persistent CD-ROM devices.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 for domain in \
   idm-01.workshop.lan \
@@ -2845,6 +2894,7 @@ EOF
 Verify support guests no longer carry persistent CD-ROM devices:
 
 ```bash
+# Verify support guests no longer carry persistent CD-ROM devices.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 for domain in \
   idm-01.workshop.lan \
@@ -2860,6 +2910,7 @@ EOF
 Verify OpenShift guests have no attached agent ISO media and boot from disk:
 
 ```bash
+# Verify that the OpenShift guests boot from disk with no agent ISO attached.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 for domain in \
   ocp-master-01.ocp.workshop.lan \
@@ -2944,6 +2995,7 @@ later only for the ODF storage set
 (`node.ocs.openshift.io/storage`).
 
 ```bash
+# Label the infra nodes and move the core platform workloads onto them.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
 
@@ -3044,6 +3096,7 @@ EOF
 Start by establishing and validating the breakglass OAuth identity provider.
 
 ```bash
+# Create the breakglass identity provider, test it, and retire kubeadmin.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
 
@@ -3121,6 +3174,7 @@ storage class. The intended state is:
 Manual equivalent for the Keycloak install itself:
 
 ```bash
+# Install the Keycloak operator and base deployment.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
 
@@ -3303,6 +3357,7 @@ claim into OpenShift groups. The resulting effective authorization model is:
 Manual equivalent for the OIDC federation and OAuth patch:
 
 ```bash
+# Configure the Keycloak realm, client, LDAP federation, and OpenShift OAuth integration.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
 OAUTH_HOST="$(oc get route oauth-openshift -n openshift-authentication -o jsonpath='{.spec.host}')"
@@ -3413,6 +3468,7 @@ they authenticate through Keycloak.
 Validate the end state with both a native IdM user and an AD-backed user.
 
 ```bash
+# Validate the Keycloak OIDC login path.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
 
@@ -3443,6 +3499,7 @@ live-migration networking._
 Install the NMState operator and create the singleton `NMState` instance.
 
 ```bash
+# Install the Kubernetes NMState operator.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
 
@@ -3490,6 +3547,7 @@ Create the VLAN policies used later by OpenShift Virtualization and VM
 workloads.
 
 ```bash
+# Apply the nmstate desired state policy.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
 
@@ -3633,6 +3691,7 @@ infra nodes for storage, configure Local Storage discovery, create the
 The manual equivalent on the hypervisor:
 
 ```bash
+# Wipe the ODF data disks on the infra nodes.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 for dev in /dev/ebs/ocp-infra-01-data /dev/ebs/ocp-infra-02-data /dev/ebs/ocp-infra-03-data; do
   size_mb=$(( $(blockdev --getsize64 "$dev") / 1024 / 1024 ))
@@ -3667,6 +3726,7 @@ Before you apply the LocalVolume and `StorageCluster` CRs, install the Local
 Storage Operator and ODF operator so the APIs exist.
 
 ```bash
+# Install the local storage and ODF operators.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
 
@@ -3745,6 +3805,7 @@ Reason:
   requirements
 
 ```bash
+# Label the infra nodes and deploy the ODF storage resources.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
 
@@ -3865,6 +3926,7 @@ Install CNV, set its default storage class, and install the workload
 availability operators.
 
 ```bash
+# Install OpenShift Virtualization and the recovery operators.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
 
@@ -3963,6 +4025,7 @@ Install the operator, build the custom tooling image in the mirror registry, and
 patch the Web Terminal tooling template to use it.
 
 ```bash
+# Install the Web Terminal operator.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
 
@@ -3985,6 +4048,7 @@ EOF
 Build and push the tooling image from the mirror registry host.
 
 ```bash
+# Build and push the web terminal tooling image.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key cloud-user@172.16.0.20 <<'EOF'
 sudo -i
 mkdir -p /var/tmp/web-terminal-tooling
@@ -4012,6 +4076,7 @@ EOF
 Patch the pull secret and the terminal tooling template.
 
 ```bash
+# Patch the cluster pull secret and the web terminal tooling template.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
 REGISTRY_AUTH="$(printf '%s' 'init:<lab-default-password>' | base64 -w0)"
@@ -4053,6 +4118,7 @@ Install the operators, create an ODF-backed `LokiStack`, and create a tuned
 `FlowCollector`.
 
 ```bash
+# Install the Network Observability operators.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
 
@@ -4111,6 +4177,7 @@ secret from the generated NooBaa credentials, and then apply `LokiStack` and
 `FlowCollector`.
 
 ```bash
+# Create the object bucket, derive the Loki credentials, and deploy Network Observability.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
 
@@ -4239,6 +4306,7 @@ Install AAP on OpenShift and wire it to the same Keycloak realm already used
 for the cluster OAuth path.
 
 ```bash
+# Install Ansible Automation Platform and its operator dependencies.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
 
@@ -4290,6 +4358,7 @@ EOF
 Append the IdM CA and create the AAP instance.
 
 ```bash
+# Install the IdM CA into the cluster for AAP trust.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 \
   "curl -fsSL http://172.16.0.10/ipa/config/ca.crt >>/tmp/aap-idm-ca.yaml"
 
@@ -4327,6 +4396,7 @@ The validated clean-build path uses:
 - required AAP admin group: `access-openshift-admin`
 
 ```bash
+# Configure Keycloak SSO for AAP.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
 AAP_ROUTE="$(oc -n aap get route workshop-aap -o jsonpath='{.spec.host}')"
@@ -4473,6 +4543,7 @@ If the lab trust path is enabled, the validated user is
 instead.
 
 ```bash
+# Validate the AAP SSO entry and token flow.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
 AAP_ROUTE="$(oc -n aap get route workshop-aap -o jsonpath='{.spec.host}')"
@@ -4504,6 +4575,7 @@ Install Tekton, make sure there is a default storage class, and install the
 Windows EFI installer pipeline.
 
 ```bash
+# Install OpenShift Pipelines and the Windows builder pipeline.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
 
@@ -4545,6 +4617,7 @@ lane is in place._
 Set a real Windows ISO URL, then apply the `PipelineRun` directly.
 
 ```bash
+# Launch the Windows EFI image build.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
 
@@ -4614,6 +4687,7 @@ cluster pull secret, attach a dedicated pull secret to the mirrored catalog
 pods, and wait for the mirrored sources to become `READY`.
 
 ```bash
+# Pivot OperatorHub to the disconnected catalog sources.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
 REGISTRY_HOST="mirror-registry.workshop.lan:8443"
@@ -4697,6 +4771,7 @@ The supported certificate customization path is the ingress wildcard, not the
 cluster API serving certificate.
 
 ```bash
+# Roll out the IdM wildcard ingress certificate.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 export KUBECONFIG=/var/tmp/ocp-kubeconfig
 ssh -i /opt/openshift/secrets/hypervisor-admin.key cloud-user@172.16.0.10 <<'INNER'
@@ -4902,6 +4977,7 @@ destroy only the OpenShift cluster and preserve the healthy support services._
 Automation shortcut for the preferred fresh-cluster rebuild:
 
 ```bash
+# Run the cleanup playbooks and destroy the lab resources.
 ansible-playbook -i inventory/hosts.yml playbooks/maintenance/cleanup.yml \
   -e cleanup_destroy_openshift_cluster=true
 
@@ -4913,6 +4989,7 @@ Destroy the OpenShift cluster shells, optionally wipe the disks, and clean up
 the support VM and lab-switch state.
 
 ```bash
+# Wipe the support-service disks on virt-01.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 for domain in \
   ocp-master-01.ocp.workshop.lan \
@@ -4945,6 +5022,7 @@ When tearing all the way back to the post-OVS support-services boundary, wipe
 the support guest block devices too:
 
 ```bash
+# Wipe the support-service disks on virt-01.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 <<'EOF'
 for disk in /dev/ebs/bastion-01 /dev/ebs/ad-01 /dev/ebs/idm-01 /dev/ebs/mirror-registry; do
   wipefs -a "$disk" || true
@@ -4960,6 +5038,7 @@ These commands are useful when teaching or troubleshooting the manual process.
 Check cluster status from the correct side of the network boundary:
 
 ```bash
+# Check the basic cluster state.
 export KUBECONFIG=/opt/openshift/aws-metal-openshift-demo/generated/ocp/auth/kubeconfig
 /opt/openshift/aws-metal-openshift-demo/generated/tools/4.20.15/bin/oc get clusterversion
 /opt/openshift/aws-metal-openshift-demo/generated/tools/4.20.15/bin/oc get nodes
@@ -4969,6 +5048,7 @@ export KUBECONFIG=/opt/openshift/aws-metal-openshift-demo/generated/ocp/auth/kub
 Check libvirt state on `virt-01`:
 
 ```bash
+# Inspect the libvirt domain state on virt-01.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 \
   "virsh list --all"
 ```
@@ -4976,6 +5056,7 @@ ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 \
 Check ODF storage state:
 
 ```bash
+# Inspect the ODF status.
 oc -n openshift-storage get storagecluster
 oc -n openshift-storage get cephcluster
 oc -n openshift-local-storage get localvolumediscovery
@@ -4985,6 +5066,7 @@ oc -n openshift-local-storage get localvolumeset
 Check NetObserv and Loki:
 
 ```bash
+# Inspect the Network Observability status.
 oc -n netobserv get flowcollector
 oc -n netobserv get lokistack
 oc -n netobserv get pods
@@ -4993,6 +5075,7 @@ oc -n netobserv get pods
 Check AAP:
 
 ```bash
+# Inspect the AAP status and login entry.
 oc -n aap get pods
 oc -n aap get route
 curl -sk https://aap.apps.ocp.workshop.lan/api/gateway/v1/ui_auth/ | jq .
@@ -5001,6 +5084,7 @@ curl -sk https://aap.apps.ocp.workshop.lan/api/gateway/v1/ui_auth/ | jq .
 Check Tekton and Windows build lane:
 
 ```bash
+# Inspect the Pipelines and Windows builder status.
 oc -n openshift-pipelines get tektonconfig
 oc -n windows-image-builder get pipeline
 oc -n windows-image-builder get pipelinerun
