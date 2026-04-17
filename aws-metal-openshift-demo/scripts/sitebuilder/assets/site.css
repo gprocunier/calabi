@@ -719,7 +719,9 @@ a {
   }
 
   .side-column {
-    order: -1;
+    order: 0;
+    position: static;
+    top: auto;
   }
 }
 
@@ -729,5 +731,15 @@ a {
   .page-shell {
     padding-left: 1rem;
     padding-right: 1rem;
+  }
+
+  .content-column {
+    padding: 1.35rem 1rem 2rem;
+  }
+
+  .context-block,
+  .toc-block,
+  .source-block {
+    padding: 0.9rem;
   }
 }
