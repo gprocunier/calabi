@@ -11,3 +11,6 @@ _site/
 
 # Local refactor checklist
 CALABI-REFACTOR-CHECKLIST.md
+
+# Publish-tree export helper should not live in the derived publish repo
+scripts/export_publish_tree.sh
