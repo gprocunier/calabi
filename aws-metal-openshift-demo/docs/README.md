@@ -6,7 +6,9 @@ project is; this page routes you into the correct workflow lane.
 
 The docs below reflect the current validated posture:
 
-- `playbooks/site-bootstrap.yml` has been re-proven from a zero-VM boundary
+- `./scripts/run_local_playbook.sh`
+  <a href="../playbooks/site-bootstrap.yml"><kbd>playbooks/site-bootstrap.yml</kbd></a>
+  has been re-proven from a zero-VM boundary
 - the current cluster/day-2 path has converged on the live lab
 - the supported auth baseline is:
   - OpenShift: `HTPasswd` breakglass plus Keycloak OIDC
@@ -16,8 +18,9 @@ The docs below reflect the current validated posture:
   - Keycloak into AAP
 
 The remaining certification bar is still one uninterrupted fresh
-`playbooks/site-lab.yml` run on the current codebase without live repair during
-that attempt.
+`./scripts/run_remote_bastion_playbook.sh`
+<a href="../playbooks/site-lab.yml"><kbd>playbooks/site-lab.yml</kbd></a> run
+on the current codebase without live repair during that attempt.
 
 ## Choose Your Path
 
@@ -28,7 +31,7 @@ that attempt.
 | understand the supported auth and policy model | [Authentication Model](./authentication-model.md) | [AD / IdM Policy Model](./ad-idm-policy-model.md) (`Teaching Reference`) |
 | understand the underlying design (`Teaching Reference`) | [Network Topology](./network-topology.md) | [Host Resource Management](./host-resource-management.md), [AWS IaaS Resource Model](./iaas-resource-model.md), [OpenShift Cluster Matrix](./openshift-cluster-matrix.md), [ODF Declarative Plan](./odf-declarative-plan.md) |
 | troubleshoot or resume work | [Investigating](./investigating.md) | [Issues Ledger](./issues.md), [Secrets And Sanitization](./secrets-and-sanitization.md) |
-| change the code (`Teaching Reference`) | [Orchestration Guide](./orchestration-guide.md) | [`playbooks/site-bootstrap.yml`](../playbooks/site-bootstrap.yml), [`playbooks/site-lab.yml`](../playbooks/site-lab.yml) |
+| change the code (`Teaching Reference`) | [Orchestration Guide](./orchestration-guide.md) | `./scripts/run_local_playbook.sh` <a href="../playbooks/site-bootstrap.yml"><kbd>playbooks/site-bootstrap.yml</kbd></a>, `./scripts/run_remote_bastion_playbook.sh` <a href="../playbooks/site-lab.yml"><kbd>playbooks/site-lab.yml</kbd></a> |
 
 ## AWS Golden Path Reading Order
 

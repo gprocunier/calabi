@@ -1,8 +1,119 @@
 ---
-- name: Stage the primary on-prem project onto the bastion
-  import_playbook: ../../../aws-metal-openshift-demo/playbooks/bootstrap/bastion-stage.yml
+- name: Stage the project and lab execution inputs onto the bastion
+  hosts: aws_metal
+  become: false
+  gather_facts: false
+  vars:
+    bastion_stage_project_lab_credentials_path: >-
+      {{ lab_execution_project_root }}/inventory/group_vars/all/
+      lab_credentials.yml
+    bastion_stage_manager_lab_credentials_path: >-
+      {{ lookup('env', 'HOME') }}/.local/state/calabi-manager/secrets/
+      lab_credentials.yml
+  vars_files:
+    - ../../../aws-metal-openshift-demo/vars/guests/bastion_vm.yml
+    - >-
+      ../../../aws-metal-openshift-demo/vars/cluster/openshift_install_cluster.yml
+    - ../../../aws-metal-openshift-demo/vars/global/execution_environment.yml
+    - ../../../aws-metal-openshift-demo/vars/global/name_resolution.yml
 
-- name: Ensure the staged stock AWS-target subtree exists on the bastion
+  pre_tasks:
+    - name: Load optional project-local lab credentials for bastion bootstrap
+      ansible.builtin.set_fact:
+        bastion_stage_bootstrap_project_lab_credentials: >-
+          {{
+            (
+              lookup(
+                'file',
+                bastion_stage_project_lab_credentials_path,
+                errors='ignore'
+              )
+              | default('', true)
+              | trim
+            ) | from_yaml
+          }}
+      when:
+        - >-
+          (
+            lookup(
+              'file',
+              bastion_stage_project_lab_credentials_path,
+              errors='ignore'
+            )
+            | default('', true)
+            | trim
+          ) | length > 0
+
+    - name: Load optional calabi-manager lab credentials for bastion bootstrap
+      ansible.builtin.set_fact:
+        bastion_stage_bootstrap_manager_lab_credentials: >-
+          {{
+            (
+              lookup(
+                'file',
+                bastion_stage_manager_lab_credentials_path,
+                errors='ignore'
+              )
+              | default('', true)
+              | trim
+            ) | from_yaml
+          }}
+      when:
+        - >-
+          (
+            lookup(
+              'file',
+              bastion_stage_manager_lab_credentials_path,
+              errors='ignore'
+            )
+            | default('', true)
+            | trim
+          ) | length > 0
+
+    - name: Derive the bootstrap lab default password for bastion staging
+      ansible.builtin.set_fact:
+        lab_default_password: >-
+          {{
+            lab_default_password
+            | default(
+              bastion_stage_bootstrap_project_lab_credentials
+              .lab_default_password
+              | default(
+                bastion_stage_bootstrap_manager_lab_credentials
+                .lab_default_password
+                | default('', true),
+                true
+              ),
+              true
+            )
+          }}
+
+    - name: Register the bastion host as a temporary Ansible host
+      ansible.builtin.add_host:
+        name: bastion_stage_target
+        groups:
+          - bastion_stage_hosts
+        ansible_host: "{{ bastion_vm.network.ipv4_address }}"
+        ansible_user: "{{ bastion_vm.access.admin_user }}"
+        ansible_ssh_private_key_file: >-
+          {{ bastion_client.controller_ssh_private_key_file }}
+        ansible_ssh_common_args: >-
+          -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null
+          -o ProxyCommand="ssh -i {{
+          hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{
+          hostvars[inventory_hostname].ansible_user }}@{{
+          hostvars[inventory_hostname].ansible_host }} -W %h:%p"
+
+    - name: Wait for the bastion guest to accept SSH connections
+      ansible.builtin.wait_for:
+        host: "{{ bastion_vm.network.ipv4_address }}"
+        port: 22
+        timeout: 900
+        sleep: 10
+
+- name: Prepare the bastion as the on-prem lab execution host
   hosts: bastion_stage_hosts
   become: true
   gather_facts: false
@@ -49,7 +160,9 @@
           on_prem_bastion_stage_source_stock_root }} was not found on the
           bootstrap controller.
 
-    - name: Synchronize the stock AWS-target subtree while preserving generated content
+    - name: >-
+        Synchronize the stock AWS-target subtree while preserving generated
+        content
       ansible.builtin.command:
         argv:
           - rsync
@@ -67,16 +180,56 @@
             ssh -i {{ bastion_client.controller_ssh_private_key_file }}
             -o IdentitiesOnly=yes
             -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-            -o ProxyCommand="ssh -i {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
-            -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-            {{ hostvars[inventory_hostname].ansible_user }}@{{ hostvars[inventory_hostname].ansible_host }}
-            -W %h:%p"
+            -o ProxyCommand="ssh -i {{
+            hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+            -o IdentitiesOnly=yes -o StrictHostKeyChecking=no
+            -o UserKnownHostsFile=/dev/null {{
+            hostvars[inventory_hostname].ansible_user }}@{{
+            hostvars[inventory_hostname].ansible_host }} -W %h:%p"
           - "{{ on_prem_bastion_stage_source_stock_root }}/"
-          - "{{ bastion_vm.access.admin_user }}@{{ bastion_vm.network.ipv4_address }}:{{ on_prem_bastion_stage_remote_stock_root }}/"
+          - >-
+            {{ bastion_vm.access.admin_user }}@{{
+            bastion_vm.network.ipv4_address }}:{{
+            on_prem_bastion_stage_remote_stock_root }}/
       register: on_prem_bastion_stage_stock_sync
       changed_when: on_prem_bastion_stage_stock_sync.stdout | trim | length > 0
       delegate_to: localhost
       become: false
+
+- name: Prepare the bastion as the on-prem lab execution host
+  hosts: bastion_stage_hosts
+  become: true
+  gather_facts: true
+  vars_files:
+    - ../../../aws-metal-openshift-demo/vars/guests/bastion_vm.yml
+    - ../../../aws-metal-openshift-demo/vars/guests/idm_vm.yml
+    - ../../../aws-metal-openshift-demo/vars/guests/mirror_registry_vm.yml
+    - >-
+      ../../../aws-metal-openshift-demo/vars/cluster/openshift_install_cluster.yml
+    - ../../../aws-metal-openshift-demo/vars/global/execution_environment.yml
+    - ../../../aws-metal-openshift-demo/vars/global/mirror_content.yml
+    - ../../../aws-metal-openshift-demo/vars/global/name_resolution.yml
+  vars:
+    on_prem_bastion_stage_remote_project_root: >-
+      {{ bastion_client.project_parent }}/on-prem-openshift-demo
+    on_prem_bastion_client_overrides:
+      project_root: "{{ on_prem_bastion_stage_remote_project_root }}"
+      workspace_root: "{{ on_prem_bastion_stage_remote_project_root }}"
+      artifact_root: "{{ on_prem_bastion_stage_remote_project_root }}/generated"
+      cluster_artifact_root: >-
+        {{ on_prem_bastion_stage_remote_project_root }}/generated/ocp
+      tools_root: >-
+        {{ on_prem_bastion_stage_remote_project_root }}/generated/tools
+    bastion_client: >-
+      {{
+        bastion_client | combine(
+          on_prem_bastion_client_overrides,
+          recursive=True
+        )
+      }}
+  roles:
+    - role: on_prem_bastion_stage
+    - role: lab_name_resolution
 
 - name: Render bastion-side hypervisor inventory for the on-prem runtime path
   hosts: bastion_stage_hosts
@@ -88,6 +241,8 @@
   vars:
     on_prem_bastion_stage_hypervisor_inventory_host: >-
       {{ (groups['aws_metal'] | default([])) | first | default('') }}
+    on_prem_bastion_stage_remote_project_root: >-
+      {{ bastion_client.project_parent }}/on-prem-openshift-demo
     on_prem_bastion_stage_runtime_hypervisor_host: >-
       {{
         hostvars[on_prem_bastion_stage_hypervisor_inventory_host]
@@ -110,12 +265,18 @@
           aws_metal:
             hosts:
               metal-01:
-                ansible_host: {{ on_prem_bastion_stage_runtime_hypervisor_host }}
-                ansible_user: {{ on_prem_bastion_stage_runtime_hypervisor_user }}
-                ansible_ssh_private_key_file: {{ bastion_client.project_root }}/secrets/id_ed25519
-                ansible_ssh_common_args: -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+                ansible_host: >-
+                  {{ on_prem_bastion_stage_runtime_hypervisor_host }}
+                ansible_user: {{
+                  on_prem_bastion_stage_runtime_hypervisor_user
+                }}
+                ansible_ssh_private_key_file: >-
+                  {{ bastion_client.project_root }}/secrets/id_ed25519
+                ansible_ssh_common_args: >-
+                  -o StrictHostKeyChecking=no
+                  -o UserKnownHostsFile=/dev/null
     on_prem_bastion_stage_runtime_inventory_targets:
-      - "{{ bastion_client.project_root }}/inventory/hosts.yml"
+      - "{{ on_prem_bastion_stage_remote_project_root }}/inventory/hosts.yml"
       - "{{ bastion_client.project_parent }}/aws-metal-openshift-demo/inventory/hosts.yml"
   tasks:
     - name: Validate the on-prem hypervisor inventory host exists
@@ -126,7 +287,9 @@
           The on-prem bastion-stage wrapper requires an aws_metal inventory
           host so it can render the bastion-side hypervisor inventory.
 
-    - name: Write the bastion-side hypervisor inventory for both staged project trees
+    - name: >-
+        Write the bastion-side hypervisor inventory for both staged project
+        trees
       ansible.builtin.copy:
         dest: "{{ item }}"
         content: "{{ on_prem_bastion_stage_runtime_inventory }}"

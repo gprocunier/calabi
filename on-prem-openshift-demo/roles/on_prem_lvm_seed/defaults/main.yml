@@ -1,0 +1,12 @@
+---
+on_prem_lvm_seed_enabled: false
+on_prem_lvm_seed_device: ""
+on_prem_lvm_seed_force: false
+on_prem_lvm_seed_head_wipe_mb: 2048
+on_prem_lvm_seed_tail_wipe_mb: 256
+on_prem_lvm_seed_deep_wipe_offsets_mb:
+  - 0
+  - 1024
+  - 10240
+  - 102400
+  - 1024000

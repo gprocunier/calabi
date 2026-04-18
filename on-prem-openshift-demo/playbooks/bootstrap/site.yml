@@ -9,7 +9,8 @@
     - ../../../aws-metal-openshift-demo/vars/global/lab_switch_ports.yml
     - ../../../aws-metal-openshift-demo/vars/global/rhsm.yml
     - ../../../aws-metal-openshift-demo/vars/guests/idm_vm.yml
-    - ../../../aws-metal-openshift-demo/cloudformation/virt-01-volume-inventory.yml
+    - >-
+      ../../../aws-metal-openshift-demo/cloudformation/virt-01-volume-inventory.yml
 
   vars:
     lab_bridge_name: lab-switch
@@ -45,6 +46,10 @@
       - virtstoraged.socket
       - virtinterfaced.socket
       - firewalld.service
+    lab_routed_ports: >-
+      {{ lab_switch_ports | dict2items
+      | selectattr('value.routable', 'equalto', true)
+      | list }}
     lab_packages:
       - NetworkManager
       - "{{ lab_ovs_package }}"
@@ -64,16 +69,33 @@
       - virt-top
       - firewalld
 
+  pre_tasks:
+    - name: Load the full guest volume inventory for host-side /dev/ebs naming
+      ansible.builtin.include_vars:
+        file: >-
+          ../../../aws-metal-openshift-demo/cloudformation/virt-01-volume-inventory.yml
+        name: on_prem_guest_volume_inventory
+
+    - name: Publish the active guest volume inventory
+      ansible.builtin.set_fact:
+        lab_active_guest_volumes: >-
+          {{
+            on_prem_guest_volume_inventory.guest_volumes | default([])
+          }}
+
   roles:
     - role: lab_host_base
     - role: lab_host_resource_management
     - role: lab_switch
     - role: lab_firewall
     - role: lab_libvirt
+    - role: on_prem_lvm_seed
     - role: on_prem_lvm_guest_storage
 
   post_tasks:
-    - name: Check whether the local guest base image is available on the operator host
+    - name: >-
+        Check whether the local guest base image is available on the operator
+        host
       ansible.builtin.stat:
         path: "{{ lab_execution_guest_base_image_file }}"
       delegate_to: localhost
@@ -88,7 +110,8 @@
         group: root
         mode: "0755"
 
-    - name: Check whether the guest base image is already present on the hypervisor
+    - name: >-
+        Check whether the guest base image is already present on the hypervisor
       ansible.builtin.stat:
         path: >-
           {{ lab_execution_hypervisor_guest_image_dir }}/{{
@@ -108,7 +131,9 @@
         - lab_execution_guest_base_image_local_stat.stat.exists
         - not lab_execution_guest_base_image_remote_stat.stat.exists
 
-    - name: Download the guest base image directly to the hypervisor when a signed URL is provided
+    - name: >-
+        Download the guest base image directly to the hypervisor when a signed
+        URL is provided
       ansible.builtin.get_url:
         url: "{{ lab_execution_guest_base_image_url }}"
         dest: >-
@@ -124,7 +149,9 @@
         - lab_execution_guest_base_image_url | default('') | length > 0
       no_log: true
 
-    - name: Recheck whether the guest base image is present on the hypervisor after staging
+    - name: >-
+        Recheck whether the guest base image is present on the hypervisor after
+        staging
       ansible.builtin.stat:
         path: >-
           {{ lab_execution_hypervisor_guest_image_dir }}/{{
@@ -137,8 +164,8 @@
           - lab_execution_guest_base_image_ready_stat.stat.exists
         fail_msg: >-
           Guest base image {{
-          lab_execution_hypervisor_guest_image_dir }}/{{ lab_execution_guest_base_image_file
-          | basename }} is not present on the hypervisor, no local staging
-          file was found at {{ lab_execution_guest_base_image_file }}, and no
-          usable direct-download URL was supplied in
-          lab_execution_guest_base_image_url.
+          lab_execution_hypervisor_guest_image_dir }}/{{
+          lab_execution_guest_base_image_file | basename }} is not present on
+          the hypervisor, no local staging file was found at {{
+          lab_execution_guest_base_image_file }}, and no usable direct-download
+          URL was supplied in lab_execution_guest_base_image_url.

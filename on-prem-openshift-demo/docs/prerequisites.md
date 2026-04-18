@@ -67,6 +67,11 @@ The current group-wide on-prem settings live in:
 
 - <a href="../inventory/group_vars/all.yml"><kbd>on-prem-openshift-demo/inventory/group_vars/all.yml</kbd></a>
 
+For a smaller host that should stop before the cluster build, start from the
+example override at:
+
+- <a href="../inventory/overrides/precluster-64g.yml.example"><kbd>on-prem-openshift-demo/inventory/overrides/precluster-64g.yml.example</kbd></a>
+
 Keep the access paths separate:
 
 - `inventory/hosts.yml` describes how **you** reach the hypervisor from the
@@ -84,8 +89,20 @@ Required inputs:
 - optional `on_prem_lvm_lv_name_prefix`
 - optional `on_prem_lvm_guest_symlink_root`
 
+Optional seed inputs for a dedicated lab disk:
+
+- `on_prem_lvm_seed_enabled`
+- `on_prem_lvm_seed_device`
+- `on_prem_lvm_seed_force`
+
 The on-prem bootstrap validates that volume group and checks free space before
-any `lvcreate` runs.
+any `lvcreate` runs. When the optional seed path is enabled, bootstrap can
+create the requested guest volume group directly from one explicit block
+device. That path is disabled by default and fails closed unless you opt into
+it. When forced, it uses the same destructive whole-device wipe profile the
+project uses for ODF backing-disk recovery: discard if possible, remove
+signatures, clear the first 2 GiB, wipe fixed deeper offsets, and clear the
+device tail before creating the guest VG.
 
 Current full-footprint guest storage requirement from the stock volume
 inventory is approximately:
@@ -184,7 +201,17 @@ From the repo:
 ```bash
 cd <project-root>/on-prem-openshift-demo
 ansible-playbook --syntax-check playbooks/site-bootstrap.yml
+ansible-playbook --syntax-check playbooks/site-precluster.yml
 ansible-playbook --syntax-check playbooks/site-lab.yml
+```
+
+For the smaller pre-cluster profile, copy the example override and edit it
+before the first run:
+
+```bash
+cd <project-root>/on-prem-openshift-demo
+cp inventory/overrides/precluster-64g.yml.example \
+  inventory/overrides/precluster-64g.yml
 ```
 
 ## Where To Go Next

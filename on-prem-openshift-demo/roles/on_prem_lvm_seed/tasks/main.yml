@@ -1,0 +1,234 @@
+---
+- name: Skip on-prem LVM seed when disabled
+  ansible.builtin.meta: end_role
+  when: not (on_prem_lvm_seed_enabled | bool)
+
+- name: Validate on-prem LVM seed inputs
+  ansible.builtin.assert:
+    that:
+      - on_prem_lvm_volume_group | default('') | length > 0
+      - on_prem_lvm_seed_device | default('') | length > 0
+    fail_msg: >-
+      On-prem LVM seed requires both on_prem_lvm_volume_group and
+      on_prem_lvm_seed_device when enabled.
+
+- name: Validate the requested on-prem LVM seed device exists
+  ansible.builtin.stat:
+    path: "{{ on_prem_lvm_seed_device }}"
+  register: on_prem_lvm_seed_device_stat
+
+- name: Fail when the requested on-prem LVM seed device is missing
+  ansible.builtin.assert:
+    that:
+      - on_prem_lvm_seed_device_stat.stat.exists
+      - on_prem_lvm_seed_device_stat.stat.isblk | default(false)
+    fail_msg: >-
+      On-prem LVM seed device {{ on_prem_lvm_seed_device }} was not found as a
+      block device on the hypervisor.
+
+- name: Check whether the requested on-prem guest volume group already exists
+  ansible.builtin.command:
+    argv:
+      - vgs
+      - --noheadings
+      - --options
+      - vg_name
+      - "{{ on_prem_lvm_volume_group }}"
+  register: on_prem_lvm_seed_vg_exists
+  changed_when: false
+  failed_when: false
+
+- name: Check whether the seed device is already an LVM physical volume
+  ansible.builtin.command:
+    argv:
+      - pvs
+      - --noheadings
+      - --separator
+      - "|"
+      - --options
+      - pv_name,vg_name
+      - "{{ on_prem_lvm_seed_device }}"
+  register: on_prem_lvm_seed_device_pvs
+  changed_when: false
+  failed_when: false
+  when: on_prem_lvm_seed_vg_exists.rc != 0
+
+- name: Check for existing child partitions on the seed device
+  ansible.builtin.command:
+    argv:
+      - lsblk
+      - --noheadings
+      - --raw
+      - --output
+      - NAME,TYPE
+      - "{{ on_prem_lvm_seed_device }}"
+  register: on_prem_lvm_seed_device_lsblk
+  changed_when: false
+  when: on_prem_lvm_seed_vg_exists.rc != 0
+
+- name: Check for existing filesystem signatures on the seed device
+  ansible.builtin.command:
+    argv:
+      - wipefs
+      - --noheadings
+      - "{{ on_prem_lvm_seed_device }}"
+  register: on_prem_lvm_seed_device_wipefs
+  changed_when: false
+  failed_when: false
+  when: on_prem_lvm_seed_vg_exists.rc != 0
+
+- name: Derive the on-prem LVM seed safety facts
+  ansible.builtin.set_fact:
+    on_prem_lvm_seed_existing_vg: >-
+      {{
+        (
+          on_prem_lvm_seed_device_pvs.stdout_lines
+          | default([])
+          | reject('equalto', '')
+          | map('split', '|')
+          | map('last')
+          | map('trim')
+          | reject('equalto', '')
+          | list
+          | first
+        ) | default('')
+      }}
+    on_prem_lvm_seed_has_partitions: >-
+      {{
+        (
+          on_prem_lvm_seed_device_lsblk.stdout_lines
+          | default([])
+          | select('search', ' part$')
+          | list
+          | length
+        ) > 0
+      }}
+    on_prem_lvm_seed_has_signatures: >-
+      {{
+        (
+          on_prem_lvm_seed_device_wipefs.stdout
+          | default('')
+          | trim
+          | length
+        ) > 0
+      }}
+  when: on_prem_lvm_seed_vg_exists.rc != 0
+
+- name: Fail when the seed device is not clean and force is disabled
+  ansible.builtin.assert:
+    that:
+      - on_prem_lvm_seed_existing_vg | default('') | length == 0
+      - not (on_prem_lvm_seed_has_partitions | default(false) | bool)
+      - not (on_prem_lvm_seed_has_signatures | default(false) | bool)
+    fail_msg: >-
+      Seed device {{ on_prem_lvm_seed_device }} already contains LVM metadata,
+      child partitions, or filesystem signatures. Set on_prem_lvm_seed_force
+      true only when you intend to wipe that device for the on-prem lab VG.
+  when:
+    - on_prem_lvm_seed_vg_exists.rc != 0
+    - not (on_prem_lvm_seed_force | bool)
+
+- name: Remove filesystem signatures from the seed device when force is enabled
+  ansible.builtin.shell: |
+    set -euo pipefail
+
+    DEVICE_REAL="$(readlink -f "{{ on_prem_lvm_seed_device }}")"
+    SIZE_MB=$(( $(blockdev --getsize64 "${DEVICE_REAL}") / 1024 / 1024 ))
+
+    blkdiscard "${DEVICE_REAL}" || true
+    wipefs --all --force "${DEVICE_REAL}" || true
+
+    # Follow the same destructive wipe profile the project uses for ODF
+    # backing-disk recovery: clear the first 2 GiB, fixed deeper offsets, and
+    # the device tail before creating a new lab VG.
+    dd if=/dev/zero of="${DEVICE_REAL}" bs=4M \
+      count=$(( {{ on_prem_lvm_seed_head_wipe_mb }} / 4 )) \
+      oflag=direct conv=fsync,notrunc status=none
+
+    for OFFSET_MB in {{ on_prem_lvm_seed_deep_wipe_offsets_mb | join(' ') }}; do
+      if (( OFFSET_MB < SIZE_MB )); then
+        dd if=/dev/zero of="${DEVICE_REAL}" bs=1M \
+          seek="${OFFSET_MB}" count=64 \
+          oflag=direct conv=fsync,notrunc status=none
+      fi
+    done
+
+    if (( SIZE_MB > {{ on_prem_lvm_seed_tail_wipe_mb }} )); then
+      dd if=/dev/zero of="${DEVICE_REAL}" bs=1M \
+        seek=$(( SIZE_MB - {{ on_prem_lvm_seed_tail_wipe_mb }} )) \
+        count="{{ on_prem_lvm_seed_tail_wipe_mb }}" \
+        oflag=direct conv=fsync,notrunc status=none
+    fi
+
+    partprobe "${DEVICE_REAL}" || true
+  args:
+    executable: /bin/bash
+  when:
+    - on_prem_lvm_seed_vg_exists.rc != 0
+    - on_prem_lvm_seed_force | bool
+    - >-
+      (on_prem_lvm_seed_has_signatures | default(false) | bool)
+      or (on_prem_lvm_seed_has_partitions | default(false) | bool)
+  changed_when: true
+
+- name: Remove existing PV metadata from the seed device when force is enabled
+  ansible.builtin.command:
+    argv:
+      - pvremove
+      - --force
+      - --force
+      - --yes
+      - "{{ on_prem_lvm_seed_device }}"
+  when:
+    - on_prem_lvm_seed_vg_exists.rc != 0
+    - on_prem_lvm_seed_force | bool
+    - on_prem_lvm_seed_existing_vg | default('') | length > 0
+  changed_when: true
+
+- name: Re-read child partition layout after a forced destructive wipe
+  ansible.builtin.command:
+    argv:
+      - lsblk
+      - --noheadings
+      - --raw
+      - --output
+      - NAME,TYPE
+      - "{{ on_prem_lvm_seed_device }}"
+  register: on_prem_lvm_seed_device_lsblk_after_wipe
+  changed_when: false
+  when:
+    - on_prem_lvm_seed_vg_exists.rc != 0
+    - on_prem_lvm_seed_force | bool
+    - >-
+      (on_prem_lvm_seed_has_signatures | default(false) | bool)
+      or (on_prem_lvm_seed_has_partitions | default(false) | bool)
+
+- name: Fail when child partitions remain after the forced destructive wipe
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          on_prem_lvm_seed_device_lsblk_after_wipe.stdout_lines
+          | default([])
+          | select('search', ' part$')
+          | list
+          | length
+        ) == 0
+    fail_msg: >-
+      Seed device {{ on_prem_lvm_seed_device }} still reports child partitions
+      after the destructive wipe. Inspect the host disk state manually before
+      retrying the on-prem bootstrap.
+  when:
+    - on_prem_lvm_seed_vg_exists.rc != 0
+    - on_prem_lvm_seed_force | bool
+    - >-
+      (on_prem_lvm_seed_has_signatures | default(false) | bool)
+      or (on_prem_lvm_seed_has_partitions | default(false) | bool)
+
+- name: Create the on-prem guest volume group from the seed device
+  community.general.lvg:
+    vg: "{{ on_prem_lvm_volume_group }}"
+    pvs:
+      - "{{ on_prem_lvm_seed_device }}"
+    state: present
+  when: on_prem_lvm_seed_vg_exists.rc != 0

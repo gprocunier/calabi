@@ -29,8 +29,12 @@ documented separately in:
 
 - <a href="./host-resource-management.md"><kbd>RESOURCE MANAGEMENT</kbd></a>
 
-The two entrypoints are `playbooks/site-bootstrap.yml` and
-`playbooks/site-lab.yml`.
+The two primary operator entrypoints are:
+
+- `./scripts/run_local_playbook.sh`
+  <a href="../playbooks/site-bootstrap.yml"><kbd>playbooks/site-bootstrap.yml</kbd></a>
+- `./scripts/run_remote_bastion_playbook.sh`
+  <a href="../playbooks/site-lab.yml"><kbd>playbooks/site-lab.yml</kbd></a>
 
 If you need the internal execution model behind that split, including
 workstation validation, bastion staging, runner-state files, and dashboard
@@ -136,10 +140,6 @@ experiences in practice.
    - Example:
      - `RUN LOCALLY`
        ```bash
-       ansible-playbook -i inventory/hosts.yml playbooks/site-bootstrap.yml
-       ```
-     - Or with tracked local runner state for workstation-side dashboarding:
-       ```bash
        ./scripts/run_local_playbook.sh playbooks/site-bootstrap.yml
        ```
 1. `playbooks/bootstrap/site.yml`
@@ -147,7 +147,7 @@ experiences in practice.
    - Example:
      - `RUN LOCALLY`
        ```bash
-       ansible-playbook -i inventory/hosts.yml playbooks/bootstrap/site.yml
+       ./scripts/run_local_playbook.sh playbooks/bootstrap/site.yml
        ```
 1. `playbooks/bootstrap/bastion.yml`
    - Builds `bastion-01` on VLAN 100.
@@ -157,7 +157,7 @@ experiences in practice.
    - Example:
      - `RUN LOCALLY`
        ```bash
-       ansible-playbook -i inventory/hosts.yml playbooks/bootstrap/bastion.yml
+       ./scripts/run_local_playbook.sh playbooks/bootstrap/bastion.yml
        ```
 1. `playbooks/bootstrap/bastion-stage.yml`
    - Synchronizes the repo onto the bastion with `rsync`, preserving bastion-side `generated/` content and restaging the pull secret and SSH key.
@@ -168,7 +168,7 @@ experiences in practice.
    - Example:
      - `RUN LOCALLY`
        ```bash
-       ansible-playbook -i inventory/hosts.yml playbooks/bootstrap/bastion-stage.yml
+       ./scripts/run_local_playbook.sh playbooks/bootstrap/bastion-stage.yml
        ```
 ---
 
@@ -217,7 +217,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
    - Example:
      - `RUN ON BASTION`
        ```bash
-       ansible-playbook -i inventory/hosts.yml playbooks/site-lab.yml
+       ./scripts/run_bastion_playbook.sh playbooks/site-lab.yml
        ```
      - Alternatively, from the workstation:
        ```bash
@@ -234,7 +234,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
    - Example:
      - `RUN ON BASTION`
        ```bash
-       ansible-playbook -i inventory/hosts.yml playbooks/bootstrap/ad-server.yml \
+       ./scripts/run_bastion_playbook.sh playbooks/bootstrap/ad-server.yml \
          -e lab_build_ad_server=true
        ```
      - Alternatively, from the workstation:
@@ -252,7 +252,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
    - Example:
      - `RUN ON BASTION`
        ```bash
-       ansible-playbook -i inventory/hosts.yml playbooks/bootstrap/idm.yml
+       ./scripts/run_bastion_playbook.sh playbooks/bootstrap/idm.yml
        ```
      - Alternatively, from the workstation:
        ```bash
@@ -268,7 +268,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
    - Example:
      - `RUN ON BASTION`
        ```bash
-       ansible-playbook -i inventory/hosts.yml playbooks/bootstrap/idm-ad-trust.yml \
+       ./scripts/run_bastion_playbook.sh playbooks/bootstrap/idm-ad-trust.yml \
          -e lab_build_ad_server=true
        ```
      - Alternatively, from the workstation:
@@ -285,7 +285,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
    - Example:
      - `RUN ON BASTION`
        ```bash
-       ansible-playbook -i inventory/hosts.yml playbooks/bootstrap/bastion-join.yml
+       ./scripts/run_bastion_playbook.sh playbooks/bootstrap/bastion-join.yml
        ```
      - Alternatively, from the workstation:
        ```bash
@@ -310,7 +310,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
    - Example:
      - `RUN ON BASTION`
        ```bash
-       ansible-playbook -i inventory/hosts.yml playbooks/lab/mirror-registry.yml
+       ./scripts/run_bastion_playbook.sh playbooks/lab/mirror-registry.yml
        ```
      - Alternatively, from the workstation:
        ```bash
@@ -321,7 +321,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
     - Example:
       - `RUN ON BASTION`
         ```bash
-        ansible-playbook -i inventory/hosts.yml playbooks/lab/openshift-dns.yml
+        ./scripts/run_bastion_playbook.sh playbooks/lab/openshift-dns.yml
         ```
       - Alternatively, from the workstation:
         ```bash
@@ -332,7 +332,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
     - Example:
       - `RUN ON BASTION`
         ```bash
-        ansible-playbook -i inventory/hosts.yml playbooks/cluster/openshift-installer-binaries.yml
+        ./scripts/run_bastion_playbook.sh playbooks/cluster/openshift-installer-binaries.yml
         ```
       - Alternatively, from the workstation:
         ```bash
@@ -346,7 +346,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
     - Example:
       - `RUN ON BASTION`
         ```bash
-        ansible-playbook -i inventory/hosts.yml playbooks/cluster/openshift-install-artifacts.yml
+        ./scripts/run_bastion_playbook.sh playbooks/cluster/openshift-install-artifacts.yml
         ```
       - Alternatively, from the workstation:
         ```bash
@@ -357,7 +357,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
     - Example:
       - `RUN ON BASTION`
         ```bash
-        ansible-playbook -i inventory/hosts.yml playbooks/cluster/openshift-agent-media.yml
+        ./scripts/run_bastion_playbook.sh playbooks/cluster/openshift-agent-media.yml
         ```
       - Alternatively, from the workstation:
         ```bash
@@ -368,7 +368,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
     - Example:
       - `RUN ON BASTION`
         ```bash
-        ansible-playbook -i inventory/hosts.yml playbooks/cluster/openshift-cluster.yml
+        ./scripts/run_bastion_playbook.sh playbooks/cluster/openshift-cluster.yml
         ```
       - Alternatively, from the workstation:
         ```bash
@@ -384,7 +384,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
     - Example:
       - `RUN ON BASTION`
         ```bash
-        ansible-playbook -i inventory/hosts.yml playbooks/cluster/openshift-install-wait.yml
+        ./scripts/run_bastion_playbook.sh playbooks/cluster/openshift-install-wait.yml
         ```
       - Alternatively, from the workstation:
         ```bash
@@ -396,7 +396,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
     - Example:
       - `RUN ON BASTION`
         ```bash
-        ansible-playbook -i inventory/hosts.yml playbooks/day2/openshift-post-install-validate.yml
+        ./scripts/run_bastion_playbook.sh playbooks/day2/openshift-post-install-validate.yml
         ```
       - Alternatively, from the workstation:
         ```bash
@@ -416,7 +416,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
     - Example:
       - `RUN ON BASTION`
         ```bash
-        ansible-playbook -i inventory/hosts.yml playbooks/day2/openshift-post-install.yml
+        ./scripts/run_bastion_playbook.sh playbooks/day2/openshift-post-install.yml
         ```
       - Alternatively, from the workstation:
         ```bash
@@ -436,11 +436,11 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
     - Example:
       - `RUN ON BASTION`
         ```bash
-        ansible-playbook -i inventory/hosts.yml playbooks/maintenance/detach-install-media.yml
+        ./scripts/run_bastion_playbook.sh playbooks/maintenance/detach-install-media.yml
         ```
       - Alternatively, from the workstation:
         ```bash
-        ansible-playbook -i inventory/hosts.yml playbooks/maintenance/detach-install-media.yml
+        ./scripts/run_remote_bastion_playbook.sh playbooks/maintenance/detach-install-media.yml
         ```
 
 ## Certificate Design
@@ -459,8 +459,10 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
 - the workflow has four operator entrypoints:
   - `cloudformation/deploy-stack.sh tenant`
   - `cloudformation/deploy-stack.sh host`
-  - `playbooks/site-bootstrap.yml`
-  - `playbooks/site-lab.yml`
+  - `./scripts/run_local_playbook.sh`
+    <a href="../playbooks/site-bootstrap.yml"><kbd>playbooks/site-bootstrap.yml</kbd></a>
+  - `./scripts/run_remote_bastion_playbook.sh`
+    <a href="../playbooks/site-lab.yml"><kbd>playbooks/site-lab.yml</kbd></a>
 - once the bastion is staged, guest-side management on VLAN 100 is performed
   directly from the bastion rather than proxied back through `virt-01`
 - `playbooks/site-lab.yml` now begins with support services in this order:
@@ -490,8 +492,11 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
   - Keycloak is deployed from mirrored content
   - OpenShift OAuth uses Keycloak OIDC and `groups` claim sync
   - `openshift-admin` is bound to `cluster-admin`
-- the remaining confidence step is one uninterrupted `site-lab.yml` run on the
-  current codebase from a deliberate teardown boundary, without live fixes
+- the remaining confidence step is one uninterrupted
+  `./scripts/run_remote_bastion_playbook.sh`
+  <a href="../playbooks/site-lab.yml"><kbd>playbooks/site-lab.yml</kbd></a>
+  run on the current codebase from a deliberate teardown boundary, without live
+  fixes
 - support-service DNS publication is now explicit and authoritative:
   - static-IP bastion and mirror-registry enrollment does not depend on client
     DNS updates

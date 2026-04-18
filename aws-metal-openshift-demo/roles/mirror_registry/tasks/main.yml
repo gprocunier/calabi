@@ -134,6 +134,16 @@
       found. Ensure the EBS volume is attached and mapped before running the
       mirror registry role.
 
+- name: Resolve the mirror registry block device path for host-side
+  # partition reloads
+  ansible.builtin.command:
+    argv:
+      - readlink
+      - -f
+      - "{{ mirror_registry_vm.disk_path }}"
+  register: mirror_registry_role_block_device_realpath
+  changed_when: false
+
 - name: Check whether the base QCOW2 image is present
   ansible.builtin.stat:
     path: "{{ mirror_registry_vm.source_image }}"
@@ -274,7 +284,7 @@
     argv:
       - blockdev
       - --rereadpt
-      - "{{ mirror_registry_vm.disk_path }}"
+      - "{{ mirror_registry_role_block_device_realpath.stdout | trim }}"
   when: mirror_registry_role_seed_disk_from_image | bool
   changed_when: true
 

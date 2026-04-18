@@ -302,6 +302,11 @@ _Prepare the hypervisor base OS, repositories, and core services for the lab._
 
 > [!NOTE]
 > Automation reference: `playbooks/bootstrap/site.yml`, role `lab_host_base`.
+>
+> Update `redhat-release` before the main system update. This ensures the
+> current Red Hat Post-Quantum Cryptography public keys are present before
+> DNF validates newer packages. See:
+> <https://access.redhat.com/solutions/3449341>
 
 Install the required host packages, enable the Red Hat fast-datapath repo for
 OVS, and turn on the core host services.
@@ -339,6 +344,7 @@ dnf -y install \
   tmux \
   jq
 
+dnf -y update redhat-release
 dnf -y update
 
 systemctl enable firewalld
@@ -918,6 +924,11 @@ supporting services, and create the initial identity data the lab depends on._
 
 > [!NOTE]
 > Automation reference: `playbooks/bootstrap/idm.yml`, role `idm_guest`.
+>
+> Update `redhat-release` before the main system update. This ensures the
+> current Red Hat Post-Quantum Cryptography public keys are present before
+> DNF validates newer packages. See:
+> <https://access.redhat.com/solutions/3449341>
 
 Update the guest, install IdM, enable Cockpit and session recording, and create
 the core users and groups used by OpenShift.
@@ -927,6 +938,7 @@ the core users and groups used by OpenShift.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key cloud-user@172.16.0.10
 sudo -i
 
+dnf -y update redhat-release
 dnf -y update
 reboot
 
@@ -2070,11 +2082,18 @@ iothreadpin0.iothread=1,iothreadpin0.cpuset=2-5,26-29,50-53,74-77 \
 Configure the guest itself, install packages, join IdM, and install the mirror
 registry appliance.
 
+> [!NOTE]
+> Update `redhat-release` before the main system update here as well. This
+> ensures the current Red Hat Post-Quantum Cryptography public keys are present
+> before DNF validates newer packages. See:
+> <https://access.redhat.com/solutions/3449341>
+
 ```bash
 # Configure the mirror-registry guest and install the appliance prerequisites.
 ssh -i /opt/openshift/secrets/hypervisor-admin.key cloud-user@172.16.0.20
 sudo -i
 
+dnf -y update redhat-release
 dnf -y update
 reboot
 
@@ -4972,8 +4991,9 @@ destroy only the OpenShift cluster and preserve the healthy support services._
 > For a true fresh support-services redeploy, removing the support VMs is not
 > enough. Also wipe the support guest block devices (`/dev/ebs/bastion-01`,
 > `/dev/ebs/ad-01`, `/dev/ebs/idm-01`, and `/dev/ebs/mirror-registry`) before
-> replaying `playbooks/site-bootstrap.yml`, otherwise the next run can inherit
-> stale guest state.
+> replaying `./scripts/run_local_playbook.sh`
+> <a href="../playbooks/site-bootstrap.yml"><kbd>playbooks/site-bootstrap.yml</kbd></a>,
+> otherwise the next run can inherit stale guest state.
 
 Automation shortcut for the preferred fresh-cluster rebuild:
 

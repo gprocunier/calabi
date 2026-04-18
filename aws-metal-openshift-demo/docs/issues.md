@@ -5,8 +5,10 @@ Executive summary:
 - all issues listed below are closed
 - the cluster build plus current day-2/auth path have been validated on a live
   environment
-- the zero-intervention end-to-end `playbooks/site-lab.yml` certification run
-  was achieved on `v1.2.0`
+- the zero-intervention end-to-end
+  `./scripts/run_remote_bastion_playbook.sh`
+  <a href="../playbooks/site-lab.yml"><kbd>playbooks/site-lab.yml</kbd></a>
+  certification run was achieved on `v1.2.0`
 - this page is now a historical record of fixes, not an open-triage queue
 
 This ledger records problems that showed up during real rebuild and validation

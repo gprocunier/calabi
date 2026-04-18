@@ -1,0 +1,844 @@
+---
+- name: Derive bastion execution staging facts
+  ansible.builtin.set_fact:
+    on_prem_bastion_stage_remote_project_root: >-
+      {{ bastion_client.project_root }}
+    on_prem_bastion_stage_source_stock_root: >-
+      {{ lab_execution_project_root | dirname }}/aws-metal-openshift-demo
+    on_prem_bastion_stage_remote_stock_root: >-
+      {{ bastion_client.project_parent }}/aws-metal-openshift-demo
+    on_prem_bastion_stage_remote_secrets_root: >-
+      {{ bastion_client.secrets_root }}
+    on_prem_bastion_stage_current_tools_link: >-
+      {{ bastion_client.tools_root }}/current
+    on_prem_bastion_stage_user_bin_links:
+      - link_name: oc
+        target: "{{ bastion_client.tools_root }}/current/bin/oc"
+      - link_name: kubectl
+        target: "{{ bastion_client.tools_root }}/current/bin/kubectl"
+      - link_name: openshift-install
+        target: "{{ bastion_client.tools_root }}/current/bin/openshift-install"
+      - link_name: track-mirror-progress-onprem
+        target: /usr/local/bin/track-mirror-progress-onprem
+      - link_name: track-mirror-progress-tmux-onprem
+        target: /usr/local/bin/track-mirror-progress-tmux-onprem
+      - link_name: lab-dashboard-onprem
+        target: /usr/local/bin/lab-dashboard-onprem
+      - link_name: run-bastion-playbook-onprem
+        target: >-
+          {{ bastion_client.project_root }}/scripts/run_bastion_playbook.sh
+    on_prem_bastion_stage_user_etc_links:
+      - link_name: idm-ca.crt
+        target: "{{ bastion_client.cluster_artifact_root }}/idm-ca.crt"
+    on_prem_bastion_stage_user_etc_files:
+      - file_name: kubeconfig
+        src: "{{ bastion_client.cluster_artifact_root }}/auth/kubeconfig"
+        mode: "0600"
+      - file_name: kubeconfig.local
+        src: "{{ bastion_client.cluster_artifact_root }}/auth/kubeconfig"
+        mode: "0600"
+    on_prem_bastion_stage_project_lab_credentials_path: >-
+      {{ lab_execution_project_root }}/inventory/group_vars/all/
+      lab_credentials.yml
+    on_prem_bastion_stage_manager_lab_credentials_path: >-
+      {{ lookup('env', 'HOME') }}/.local/state/calabi-manager/secrets/
+      lab_credentials.yml
+    on_prem_bastion_stage_controller_ssh_public_key: >-
+      {{
+        lookup(
+          'file',
+          bastion_client.controller_ssh_public_key_file,
+          errors='ignore'
+        )
+        | default('', true)
+        | trim
+      }}
+    on_prem_bastion_stage_hypervisor_host: >-
+      {{ (groups['aws_metal'] | default([])) | first | default('') }}
+
+- name: Validate bastion staging hypervisor inventory is present
+  ansible.builtin.assert:
+    that:
+      - on_prem_bastion_stage_hypervisor_host | length > 0
+    fail_msg: >-
+      bastion staging requires an aws_metal hypervisor inventory host so the
+      workstation can proxy through virt-01 to reach the lab bastion.
+
+- name: Derive bastion staging hypervisor SSH facts
+  ansible.builtin.set_fact:
+    on_prem_bastion_stage_hypervisor_ssh_key: >-
+      {{
+        hostvars[on_prem_bastion_stage_hypervisor_host]
+        .ansible_ssh_private_key_file
+      }}
+    on_prem_bastion_stage_hypervisor_user: >-
+      {{ hostvars[on_prem_bastion_stage_hypervisor_host].ansible_user }}
+    on_prem_bastion_stage_hypervisor_address: >-
+      {{ hostvars[on_prem_bastion_stage_hypervisor_host].ansible_host }}
+    on_prem_bastion_stage_runtime_hypervisor_host: >-
+      {{
+        hostvars[on_prem_bastion_stage_hypervisor_host]
+        .on_prem_bastion_hypervisor_host
+        | default('172.16.0.1')
+      }}
+    on_prem_bastion_stage_runtime_hypervisor_user: >-
+      {{
+        hostvars[on_prem_bastion_stage_hypervisor_host]
+        .on_prem_bastion_hypervisor_user
+        | default(
+          hostvars[on_prem_bastion_stage_hypervisor_host].ansible_user
+        )
+      }}
+
+- name: Ensure bastion execution prerequisites are installed
+  ansible.builtin.package:
+    name:
+      - ansible-core
+      - rsync
+      - python3-pip
+      - tar
+    state: present
+
+- name: Validate local bastion staging source files
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ lab_execution_project_root }}"
+    - "{{ on_prem_bastion_stage_source_stock_root }}/requirements.yml"
+    - "{{ on_prem_bastion_stage_source_stock_root }}/requirements-pip.txt"
+    - "{{ bastion_client.controller_pull_secret_file }}"
+    - "{{ bastion_client.controller_ssh_private_key_file }}"
+    - "{{ bastion_client.controller_ssh_public_key_file }}"
+  delegate_to: localhost
+  become: false
+  register: on_prem_bastion_stage_source_stats
+
+- name: Fail when required local bastion staging source files are missing
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists
+    fail_msg: >-
+      Bastion staging source {{ item.stat.path | default(item.item) }} was not
+      found on the bootstrap controller.
+  loop: "{{ on_prem_bastion_stage_source_stats.results }}"
+
+- name: Ensure bastion project and secrets directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ bastion_vm.access.admin_user }}"
+    group: "{{ bastion_vm.access.admin_user }}"
+    mode: "0755"
+  loop:
+    - "{{ bastion_client.project_parent }}"
+    - "{{ on_prem_bastion_stage_remote_stock_root }}"
+    - "{{ bastion_client.secrets_root }}"
+    - "{{ bastion_client.collection_root }}"
+
+- name: Ensure the bastion tracked-run state directory exists
+  ansible.builtin.file:
+    path: /var/tmp/bastion-playbooks-onprem
+    state: directory
+    owner: "{{ bastion_vm.access.admin_user }}"
+    group: "{{ bastion_vm.access.admin_user }}"
+    mode: "0755"
+
+- name: Remove stale tracked-run state files from the bastion
+  ansible.builtin.shell: |
+    set -euo pipefail
+    find /var/tmp/bastion-playbooks-onprem -maxdepth 1 -type f \
+      \( -name '*.pid' -o -name '*.rc' -o -name '*.log' \
+      -o -name '*.runner.sh' \) \
+      -delete
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Ensure the staged project root exists on the bastion
+  ansible.builtin.file:
+    path: "{{ on_prem_bastion_stage_remote_project_root }}"
+    state: directory
+    owner: "{{ bastion_vm.access.admin_user }}"
+    group: "{{ bastion_vm.access.admin_user }}"
+    mode: "0755"
+
+- name: >-
+    Synchronize the project onto the bastion while preserving generated
+    content
+  ansible.builtin.command:
+    argv:
+      - rsync
+      - -a
+      - --itemize-changes
+      - --delete
+      - --exclude=.git
+      - --exclude=generated
+      - --exclude=secrets
+      - --exclude=__pycache__
+      - --exclude=.ansible
+      - --rsync-path=sudo rsync
+      - -e
+      - >-
+        ssh -i {{ bastion_client.controller_ssh_private_key_file }}
+        -o IdentitiesOnly=yes
+        -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+        -o ProxyCommand="ssh -i {{ on_prem_bastion_stage_hypervisor_ssh_key }}
+        -o IdentitiesOnly=yes -o StrictHostKeyChecking=no
+        -o UserKnownHostsFile=/dev/null
+        {{ on_prem_bastion_stage_hypervisor_user }}@{{
+        on_prem_bastion_stage_hypervisor_address }} -W %h:%p"
+      - "{{ lab_execution_project_root }}/"
+      - >-
+        {{ bastion_vm.access.admin_user }}@{{
+        bastion_vm.network.ipv4_address }}:{{
+        on_prem_bastion_stage_remote_project_root }}/
+  register: on_prem_bastion_stage_project_sync
+  changed_when: on_prem_bastion_stage_project_sync.stdout | trim | length > 0
+  delegate_to: localhost
+  become: false
+
+- name: >-
+    Remove archived project-local secrets directory so staged secrets can be
+    recreated safely
+  ansible.builtin.file:
+    path: "{{ on_prem_bastion_stage_remote_project_root }}/secrets"
+    state: absent
+
+- name: Recreate the staged project-local secrets directory
+  ansible.builtin.file:
+    path: "{{ on_prem_bastion_stage_remote_project_root }}/secrets"
+    state: directory
+    owner: "{{ bastion_vm.access.admin_user }}"
+    group: "{{ bastion_vm.access.admin_user }}"
+    mode: "0700"
+
+- name: Ensure the staged generated workspace exists and is bastion-writable
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ bastion_vm.access.admin_user }}"
+    group: "{{ bastion_vm.access.admin_user }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - path: "{{ on_prem_bastion_stage_remote_project_root }}/generated"
+      mode: "0755"
+    - path: "{{ on_prem_bastion_stage_remote_project_root }}/generated/tools"
+      mode: "0755"
+
+- name: Ensure the staged generated workspace contents are bastion-writable
+  ansible.builtin.file:
+    path: "{{ on_prem_bastion_stage_remote_project_root }}/generated"
+    state: directory
+    owner: "{{ bastion_vm.access.admin_user }}"
+    group: "{{ bastion_vm.access.admin_user }}"
+    mode: "0755"
+    recurse: true
+
+- name: Load optional project-local lab credentials
+  ansible.builtin.set_fact:
+    on_prem_bastion_stage_project_lab_credentials: >-
+      {{
+        (
+          lookup(
+            'file',
+            on_prem_bastion_stage_project_lab_credentials_path,
+            errors='ignore'
+          )
+          | default('', true)
+          | trim
+        ) | from_yaml
+      }}
+  when:
+    - >-
+      (
+        lookup(
+          'file',
+          on_prem_bastion_stage_project_lab_credentials_path,
+          errors='ignore'
+        )
+        | default('', true)
+        | trim
+      ) | length > 0
+
+- name: Load optional calabi-manager lab credentials
+  ansible.builtin.set_fact:
+    on_prem_bastion_stage_manager_lab_credentials: >-
+      {{
+        (
+          lookup(
+            'file',
+            on_prem_bastion_stage_manager_lab_credentials_path,
+            errors='ignore'
+          )
+          | default('', true)
+          | trim
+        ) | from_yaml
+      }}
+  when:
+    - >-
+      (
+        lookup(
+          'file',
+          on_prem_bastion_stage_manager_lab_credentials_path,
+          errors='ignore'
+        )
+        | default('', true)
+        | trim
+      ) | length > 0
+
+- name: Derive normalized bastion-side lab credentials
+  ansible.builtin.set_fact:
+    on_prem_bastion_stage_rendered_lab_default_password: >-
+      {{
+        lab_default_password
+        | default(
+          on_prem_bastion_stage_project_lab_credentials.lab_default_password
+          | default(
+            on_prem_bastion_stage_manager_lab_credentials.lab_default_password
+            | default(''),
+            true
+          ),
+          true
+        )
+      }}
+    on_prem_bastion_stage_rendered_lab_rhsm_activation_key: >-
+      {{
+        on_prem_bastion_stage_project_lab_credentials.lab_rhsm_activation_key
+        | default(
+          on_prem_bastion_stage_manager_lab_credentials.lab_rhsm.activation_key
+          | default(''),
+          true
+        )
+      }}
+    on_prem_bastion_stage_rendered_lab_rhsm_organization_id: >-
+      {{
+        on_prem_bastion_stage_project_lab_credentials.lab_rhsm_organization_id
+        | default(
+          on_prem_bastion_stage_manager_lab_credentials.lab_rhsm.organization_id
+          | default(''),
+          true
+        )
+      }}
+    on_prem_bastion_stage_rendered_lab_rhsm_username: >-
+      {{
+        on_prem_bastion_stage_project_lab_credentials.lab_rhsm_username
+        | default(
+          on_prem_bastion_stage_manager_lab_credentials.lab_rhsm.username
+          | default(''),
+          true
+        )
+      }}
+    on_prem_bastion_stage_rendered_lab_rhsm_password: >-
+      {{
+        on_prem_bastion_stage_project_lab_credentials.lab_rhsm_password
+        | default(
+          on_prem_bastion_stage_manager_lab_credentials.lab_rhsm.password
+          | default(''),
+          true
+        )
+      }}
+    on_prem_bastion_stage_rendered_lab_rhsm_server_hostname: >-
+      {{
+        on_prem_bastion_stage_project_lab_credentials.lab_rhsm_server_hostname
+        | default(
+          on_prem_bastion_stage_manager_lab_credentials.lab_rhsm.server_hostname
+          | default(''),
+          true
+        )
+      }}
+    on_prem_bastion_stage_rendered_lab_operator_ssh_public_key: >-
+      {{
+        lab_operator_ssh_public_key
+        | default(
+          on_prem_bastion_stage_project_lab_credentials
+          .lab_operator_ssh_public_key
+          | default(
+            on_prem_bastion_stage_manager_lab_credentials
+            .lab_operator_ssh_public_key
+            | default(
+              on_prem_bastion_stage_controller_ssh_public_key,
+              true
+            ),
+            true
+          ),
+          true
+        )
+      }}
+
+- name: >-
+    Assert a lab default password is available for bastion-side orchestration
+    when required
+  ansible.builtin.assert:
+    that:
+      - on_prem_bastion_stage_rendered_lab_default_password | length > 0
+    fail_msg: >-
+      Bastion staging requires lab_default_password for this orchestration, but
+      no value was supplied via `-e`,
+      `inventory/group_vars/all/lab_credentials.yml`, or calabi-manager
+      credentials.
+  when: bastion_stage_require_lab_default_password | default(false) | bool
+
+- name: >-
+    Assert RHSM credentials are available for bastion-side support-service
+    rebuilds when required
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          on_prem_bastion_stage_rendered_lab_rhsm_activation_key
+          | length > 0 and
+          on_prem_bastion_stage_rendered_lab_rhsm_organization_id | length > 0
+        ) or (
+          on_prem_bastion_stage_rendered_lab_rhsm_username | length > 0 and
+          on_prem_bastion_stage_rendered_lab_rhsm_password | length > 0
+        )
+    fail_msg: >-
+      Bastion staging requires support-service RHSM credentials for this
+      orchestration, but no valid activation-key/org-id or username/password
+      combination was available from the local credential sources.
+  when:
+    - bastion_stage_requires_support_service_rhsm | default(false) | bool
+    - >-
+      bastion_vm.subscription.enabled | bool or
+      idm_vm.subscription.enabled | bool or
+      mirror_registry_vm.subscription.enabled | bool
+
+- name: >-
+    Assert an operator SSH public key is available for bastion-side guest
+    bootstrap when required
+  ansible.builtin.assert:
+    that:
+      - on_prem_bastion_stage_rendered_lab_operator_ssh_public_key | length > 0
+    fail_msg: >-
+      Bastion staging requires lab_operator_ssh_public_key for guest SSH
+      bootstrap, but no value was supplied via `-e`,
+      `inventory/group_vars/all/lab_credentials.yml`, calabi-manager
+      credentials, or {{ bastion_client.controller_ssh_public_key_file }}.
+  when: bastion_stage_require_operator_ssh_public_key | default(false) | bool
+
+- name: Ensure bastion-side inventory group_vars directory exists
+  ansible.builtin.file:
+    path: >-
+      {{ on_prem_bastion_stage_remote_project_root }}/inventory/group_vars/all
+    state: directory
+    owner: "{{ bastion_vm.access.admin_user }}"
+    group: "{{ bastion_vm.access.admin_user }}"
+    mode: "0750"
+
+- name: Ensure the staged project root has the expected path
+  ansible.builtin.assert:
+    that:
+      - >-
+        on_prem_bastion_stage_remote_project_root
+        == bastion_client.project_root
+    fail_msg: >-
+      The staged project path {{
+      on_prem_bastion_stage_remote_project_root }} did not match the bastion
+      execution root contract.
+
+- name: Copy pull secret to the bastion
+  ansible.builtin.copy:
+    src: "{{ bastion_client.controller_pull_secret_file }}"
+    dest: "{{ bastion_client.secrets_root }}/pull-secret.txt"
+    owner: "{{ bastion_vm.access.admin_user }}"
+    group: "{{ bastion_vm.access.admin_user }}"
+    mode: "0600"
+
+- name: Copy pull secret into the staged project secrets directory
+  ansible.builtin.copy:
+    src: "{{ bastion_client.controller_pull_secret_file }}"
+    dest: >-
+      {{ on_prem_bastion_stage_remote_project_root }}/secrets/pull-secret.txt
+    owner: "{{ bastion_vm.access.admin_user }}"
+    group: "{{ bastion_vm.access.admin_user }}"
+    mode: "0600"
+
+- name: Copy hypervisor SSH private key to the bastion
+  ansible.builtin.copy:
+    src: "{{ bastion_client.controller_ssh_private_key_file }}"
+    dest: "{{ bastion_client.secrets_root }}/id_ed25519"
+    owner: "{{ bastion_vm.access.admin_user }}"
+    group: "{{ bastion_vm.access.admin_user }}"
+    mode: "0600"
+
+- name: >-
+    Copy hypervisor SSH private key into the staged project secrets directory
+  ansible.builtin.copy:
+    src: "{{ bastion_client.controller_ssh_private_key_file }}"
+    dest: "{{ on_prem_bastion_stage_remote_project_root }}/secrets/id_ed25519"
+    owner: "{{ bastion_vm.access.admin_user }}"
+    group: "{{ bastion_vm.access.admin_user }}"
+    mode: "0600"
+
+- name: Normalize bastion hypervisor SSH private key permissions
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: "{{ bastion_vm.access.admin_user }}"
+    group: "{{ bastion_vm.access.admin_user }}"
+    mode: "0600"
+  loop:
+    - "{{ bastion_client.secrets_root }}/id_ed25519"
+    - "{{ on_prem_bastion_stage_remote_project_root }}/secrets/id_ed25519"
+
+- name: Copy hypervisor SSH public key to the bastion
+  ansible.builtin.copy:
+    src: "{{ bastion_client.controller_ssh_public_key_file }}"
+    dest: "{{ bastion_client.secrets_root }}/id_ed25519.pub"
+    owner: "{{ bastion_vm.access.admin_user }}"
+    group: "{{ bastion_vm.access.admin_user }}"
+    mode: "0644"
+
+- name: Copy hypervisor SSH public key into the staged project secrets directory
+  ansible.builtin.copy:
+    src: "{{ bastion_client.controller_ssh_public_key_file }}"
+    dest: >-
+      {{ on_prem_bastion_stage_remote_project_root }}/secrets/id_ed25519.pub
+    owner: "{{ bastion_vm.access.admin_user }}"
+    group: "{{ bastion_vm.access.admin_user }}"
+    mode: "0644"
+
+- name: Render the bastion-side inventory
+  ansible.builtin.template:
+    src: bastion-hosts.yml.j2
+    dest: "{{ on_prem_bastion_stage_remote_project_root }}/inventory/hosts.yml"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Render bastion-side lab credentials
+  ansible.builtin.template:
+    src: bastion-lab-credentials.yml.j2
+    dest: >-
+      {{ on_prem_bastion_stage_remote_project_root }}/inventory/group_vars/all/
+      lab_credentials.yml
+    owner: "{{ bastion_vm.access.admin_user }}"
+    group: "{{ bastion_vm.access.admin_user }}"
+    mode: "0600"
+
+- name: Install the mirror progress helper on the bastion
+  ansible.builtin.copy:
+    src: >-
+      {{ on_prem_bastion_stage_remote_project_root }}/scripts/{{
+      'track_mirror_progress.sh' }}
+    dest: /usr/local/bin/track-mirror-progress-onprem
+    owner: root
+    group: root
+    mode: "0755"
+    remote_src: true
+
+- name: Install the tmux mirror progress helper on the bastion
+  ansible.builtin.copy:
+    src: >-
+      {{ on_prem_bastion_stage_remote_project_root }}/scripts/{{
+      'track_mirror_progress_tmux.sh' }}
+    dest: /usr/local/bin/track-mirror-progress-tmux-onprem
+    owner: root
+    group: root
+    mode: "0755"
+    remote_src: true
+
+- name: Install the lab dashboard helper on the bastion
+  ansible.builtin.copy:
+    src: >-
+      {{ on_prem_bastion_stage_remote_project_root }}/scripts/lab-dashboard.sh
+    dest: /usr/local/bin/lab-dashboard-onprem
+    owner: root
+    group: root
+    mode: "0755"
+    remote_src: true
+
+- name: Stage stock AWS-target requirement manifests on the bastion
+  ansible.builtin.copy:
+    src: >-
+      {{ on_prem_bastion_stage_source_stock_root }}/{{ item }}
+    dest: >-
+      {{ on_prem_bastion_stage_remote_stock_root }}/{{ item }}
+    owner: "{{ bastion_vm.access.admin_user }}"
+    group: "{{ bastion_vm.access.admin_user }}"
+    mode: "0644"
+  loop:
+    - requirements.yml
+    - requirements-pip.txt
+
+- name: Install required Ansible collections on the bastion
+  ansible.builtin.command:
+    argv:
+      - ansible-galaxy
+      - collection
+      - install
+      - -r
+      - "{{ on_prem_bastion_stage_remote_stock_root }}/requirements.yml"
+      - -p
+      - "{{ bastion_client.collection_root }}"
+  environment:
+    ANSIBLE_COLLECTIONS_PATH: "{{ bastion_client.collection_root }}"
+  changed_when: false
+
+- name: Install required Python packages for WinRM control on the bastion
+  ansible.builtin.pip:
+    requirements: >-
+      {{ on_prem_bastion_stage_remote_stock_root }}/requirements-pip.txt
+    extra_args: --user
+  become: false
+  changed_when: false
+
+- name: Discover the latest rendered OpenShift tool version on the bastion
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if [ ! -d "{{ bastion_client.tools_root }}" ]; then
+      exit 0
+    fi
+    find "{{ bastion_client.tools_root }}" -mindepth 1 -maxdepth 1 -type d \
+      ! -name current -printf '%f\n' | sort -V | tail -n 1
+  args:
+    executable: /bin/bash
+  register: on_prem_bastion_stage_latest_tools_version_cmd
+  changed_when: false
+
+- name: Derive the latest rendered OpenShift tool version fact
+  ansible.builtin.set_fact:
+    on_prem_bastion_stage_latest_tools_version: >-
+      {{ on_prem_bastion_stage_latest_tools_version_cmd.stdout | trim }}
+
+- name: Publish the stable current OpenShift tool symlink on the bastion
+  ansible.builtin.file:
+    src: >-
+      {{ bastion_client.tools_root }}/{{
+      on_prem_bastion_stage_latest_tools_version }}
+    dest: "{{ on_prem_bastion_stage_current_tools_link }}"
+    state: link
+    owner: "{{ bastion_vm.access.admin_user }}"
+    group: "{{ bastion_vm.access.admin_user }}"
+  when: on_prem_bastion_stage_latest_tools_version | length > 0
+
+- name: Install the bastion OpenShift shell profile
+  ansible.builtin.template:
+    src: openshift-bastion.sh.j2
+    dest: /etc/profile.d/openshift-bastion.sh
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: >-
+    Ensure shared OpenShift client artifacts are readable by cloud-user and the
+    IdM Linux access group
+  ansible.builtin.command:
+    argv:
+      - setfacl
+      - -m
+      - "{{ item.acl }}"
+      - "{{ item.path }}"
+  loop:
+    - path: "{{ bastion_client.cluster_artifact_root }}/auth/kubeconfig"
+      acl: u:cloud-user:r
+    - path: "{{ bastion_client.cluster_artifact_root }}/auth/kubeconfig"
+      acl: g:access-linux-admin:r
+    - path: "{{ bastion_client.cluster_artifact_root }}/idm-ca.crt"
+      acl: u:cloud-user:r
+    - path: "{{ bastion_client.cluster_artifact_root }}/idm-ca.crt"
+      acl: g:access-linux-admin:r
+  changed_when: true
+  failed_when: false
+
+- name: Check whether the staged OpenShift kubeconfig already exists
+  ansible.builtin.stat:
+    path: "{{ bastion_client.cluster_artifact_root }}/auth/kubeconfig"
+  register: on_prem_bastion_stage_cluster_kubeconfig_stat
+  changed_when: false
+
+- name: >-
+    Derive the skeleton etc files that should be seeded for future admin
+    logins
+  ansible.builtin.set_fact:
+    on_prem_bastion_stage_user_etc_files: >-
+      {{
+        (
+          [
+            {
+              'file_name': 'kubeconfig',
+              'src': bastion_client.cluster_artifact_root ~ '/auth/kubeconfig',
+              'mode': '0600'
+            },
+            {
+              'file_name': 'kubeconfig.local',
+              'src': bastion_client.cluster_artifact_root ~ '/auth/kubeconfig',
+              'mode': '0600'
+            }
+          ]
+          if on_prem_bastion_stage_cluster_kubeconfig_stat.stat.exists
+          else []
+        )
+      }}
+
+- name: Discover current members of the IdM Linux access group on the bastion
+  ansible.builtin.command:
+    argv:
+      - getent
+      - group
+      - access-linux-admin
+  register: on_prem_bastion_stage_linux_access_group
+  changed_when: false
+  failed_when: false
+
+- name: Derive the list of users who should receive local bastion helper links
+  ansible.builtin.set_fact:
+    on_prem_bastion_stage_home_link_users: >-
+      {{
+        (
+          [bastion_vm.access.admin_user] +
+          (
+            (
+              on_prem_bastion_stage_linux_access_group.stdout
+              .split(':')[-1].split(',')
+              if on_prem_bastion_stage_linux_access_group.rc == 0 and
+              (on_prem_bastion_stage_linux_access_group.stdout | length > 0)
+              else []
+            )
+          )
+        ) | reject('equalto', '') | unique | list
+      }}
+
+- name: Seed the skeleton helper directories for future admin logins
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /etc/skel/bin
+    - /etc/skel/etc
+
+- name: Seed the skeleton bastion helper links for future admin logins
+  ansible.builtin.file:
+    src: "{{ item.target }}"
+    dest: "/etc/skel/bin/{{ item.link_name }}"
+    state: link
+    force: true
+  loop: "{{ on_prem_bastion_stage_user_bin_links }}"
+
+- name: Seed the skeleton bastion etc links for future admin logins
+  ansible.builtin.file:
+    src: "{{ item.target }}"
+    dest: "/etc/skel/etc/{{ item.link_name }}"
+    state: link
+    force: true
+  loop: "{{ on_prem_bastion_stage_user_etc_links }}"
+
+- name: Seed the skeleton bastion etc files for future admin logins
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "/etc/skel/etc/{{ item.file_name }}"
+    owner: root
+    group: root
+    mode: "0644"
+    remote_src: true
+    force: true
+  loop: "{{ on_prem_bastion_stage_user_etc_files }}"
+
+- name: Gather passwd entries for users who should receive helper links
+  ansible.builtin.command:
+    argv:
+      - getent
+      - passwd
+      - "{{ item }}"
+  loop: "{{ on_prem_bastion_stage_home_link_users }}"
+  register: on_prem_bastion_stage_passwd_entries
+  changed_when: false
+  failed_when: false
+
+- name: Build structured home-directory targets for helper-link users
+  ansible.builtin.set_fact:
+    on_prem_bastion_stage_home_link_targets: >-
+      {{
+        (on_prem_bastion_stage_home_link_targets | default([]))
+        + [{
+          'user': item.item,
+          'gid': (item.stdout.split(':')[3]),
+          'home': (item.stdout.split(':')[5])
+        }]
+      }}
+  loop: "{{ on_prem_bastion_stage_passwd_entries.results }}"
+  when: item.rc == 0
+
+- name: Ensure per-user helper directories exist on the bastion
+  ansible.builtin.file:
+    path: "{{ item.0.home }}/{{ item.1 }}"
+    state: directory
+    owner: "{{ item.0.user }}"
+    group: "{{ item.0.gid }}"
+    mode: "0755"
+  loop: >-
+    {{ (on_prem_bastion_stage_home_link_targets | default([])) |
+    product(['bin', 'etc']) | list }}
+
+- name: Install per-user bastion helper links
+  ansible.builtin.file:
+    src: "{{ item.1.target }}"
+    dest: "{{ item.0.home }}/bin/{{ item.1.link_name }}"
+    state: link
+    owner: "{{ item.0.user }}"
+    group: "{{ item.0.gid }}"
+    force: true
+  loop: >-
+    {{ (on_prem_bastion_stage_home_link_targets | default([])) |
+    product(on_prem_bastion_stage_user_bin_links) | list }}
+
+- name: Install per-user bastion etc links
+  ansible.builtin.file:
+    src: "{{ item.1.target }}"
+    dest: "{{ item.0.home }}/etc/{{ item.1.link_name }}"
+    state: link
+    owner: "{{ item.0.user }}"
+    group: "{{ item.0.gid }}"
+    force: true
+  loop: >-
+    {{ (on_prem_bastion_stage_home_link_targets | default([])) |
+    product(on_prem_bastion_stage_user_etc_links) | list }}
+
+- name: Install per-user bastion etc files
+  ansible.builtin.copy:
+    src: "{{ item.1.src }}"
+    dest: "{{ item.0.home }}/etc/{{ item.1.file_name }}"
+    owner: "{{ item.0.user }}"
+    group: "{{ item.0.gid }}"
+    mode: "{{ item.1.mode | default('0644') }}"
+    remote_src: true
+    force: true
+  loop: >-
+    {{ (on_prem_bastion_stage_home_link_targets | default([])) |
+    product(on_prem_bastion_stage_user_etc_files) | list }}
+
+- name: Verify SSH access from the bastion to the hypervisor management address
+  ansible.builtin.command:
+    argv:
+      - ssh
+      - -i
+      - "{{ on_prem_bastion_stage_remote_project_root }}/secrets/id_ed25519"
+      - -o
+      - BatchMode=yes
+      - -o
+      - IdentitiesOnly=yes
+      - -o
+      - StrictHostKeyChecking=no
+      - -o
+      - UserKnownHostsFile=/dev/null
+      - >-
+        {{ on_prem_bastion_stage_runtime_hypervisor_user }}@{{
+        on_prem_bastion_stage_runtime_hypervisor_host }}
+      - hostnamectl
+      - --static
+  register: on_prem_bastion_stage_hypervisor_ssh_check
+  changed_when: false
+  retries: 12
+  delay: 5
+  until: on_prem_bastion_stage_hypervisor_ssh_check.rc == 0
+
+- name: Assert bastion can reach the hypervisor over the lab management network
+  ansible.builtin.assert:
+    that:
+      - on_prem_bastion_stage_hypervisor_ssh_check.rc == 0
+    fail_msg: >-
+      The bastion could not SSH to the hypervisor on
+      {{ on_prem_bastion_stage_runtime_hypervisor_host }} as
+      {{ on_prem_bastion_stage_runtime_hypervisor_user }} with the staged key.
