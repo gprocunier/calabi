@@ -1,5 +1,7 @@
 # Local secrets (intentionally untracked)
 aws-metal-openshift-demo/inventory/group_vars/all/lab_credentials.yml
+on-prem-openshift-demo/inventory/group_vars/all/lab_credentials.yml
+on-prem-openshift-demo/inventory/overrides/*.yml
 
 # Common Ansible artifacts
 *.retry
@@ -9,3 +11,6 @@ _site/
 
 # Local refactor checklist
 CALABI-REFACTOR-CHECKLIST.md
+
+# Publish-tree export helper should not live in the derived publish repo
+scripts/export_publish_tree.sh

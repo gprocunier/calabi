@@ -1,0 +1,12 @@
+---
+all:
+  children:
+    aws_metal:
+      hosts:
+        metal-01:
+          ansible_host: {{ on_prem_bastion_stage_runtime_hypervisor_host }}
+          ansible_user: {{ on_prem_bastion_stage_runtime_hypervisor_user }}
+          ansible_ssh_private_key_file: >-
+            {{ bastion_client.project_root }}/secrets/id_ed25519
+          ansible_ssh_common_args: >-
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null

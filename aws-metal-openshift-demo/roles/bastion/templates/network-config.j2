@@ -11,6 +11,6 @@ ethernets:
         via: {{ bastion_vm.network.gateway }}
     nameservers:
       addresses:
-{% for dns_server in bastion_vm.network.dns_servers %}
+{% for dns_server in (bastion_role_initial_dns_servers | default(bastion_vm.network.dns_servers)) %}
         - {{ dns_server }}
 {% endfor %}

@@ -55,6 +55,7 @@ ansible-galaxy collection install -r requirements.yml
 
 cd <project-root>/on-prem-openshift-demo
 ansible-playbook --syntax-check playbooks/site-bootstrap.yml
+ansible-playbook --syntax-check playbooks/site-precluster.yml
 ansible-playbook --syntax-check playbooks/site-lab.yml
 ```
 
@@ -123,6 +124,18 @@ What the repo does own:
 - creating the missing guest LVs
 - publishing the `/dev/ebs/*` compatibility symlinks the stock guest roles use
 
+If you want the on-prem subtree to seed a dedicated guest VG from one explicit
+lab disk, use the optional override inputs:
+
+- `on_prem_lvm_seed_enabled: true`
+- `on_prem_lvm_seed_device: /dev/nvme0n1`
+- `on_prem_lvm_seed_force: false`
+
+That path is opt-in and additive. It does not change the stock on-prem
+defaults, and it fails closed unless you explicitly enable it. When forced, it
+uses the same destructive whole-device wipe profile the project uses for ODF
+backing-disk recovery before creating the guest VG.
+
 ## 4. Configure The On-Prem Inventory And Group Vars
 
 The current on-prem target keeps the stock `aws_metal` inventory-group name on
@@ -132,6 +145,10 @@ Edit these files before the first run:
 
 - <a href="../inventory/hosts.yml"><kbd>inventory/hosts.yml</kbd></a>
 - <a href="../inventory/group_vars/all.yml"><kbd>inventory/group_vars/all.yml</kbd></a>
+
+For a smaller host that should stop at mirror-registry, start from:
+
+- <a href="../inventory/overrides/precluster-64g.yml.example"><kbd>inventory/overrides/precluster-64g.yml.example</kbd></a>
 
 What must be correct:
 
@@ -143,6 +160,15 @@ What must be correct:
 - `on_prem_bastion_hypervisor_user`
 - any optional `on_prem_lvm_lv_name_prefix`
 - any project-local credential overrides
+
+If you are using the reduced pre-cluster profile, copy the example override and
+edit the actual device path before the first run:
+
+```bash
+cd <project-root>/on-prem-openshift-demo
+cp inventory/overrides/precluster-64g.yml.example \
+  inventory/overrides/precluster-64g.yml
+```
 
 At this stage, the on-prem subtree reuses the stock guest and day-2 vars and
 playbooks from `aws-metal-openshift-demo` through local wrappers. It does not
@@ -157,7 +183,16 @@ Run:
 ```bash
 cd <project-root>/on-prem-openshift-demo
 
-ansible-playbook playbooks/bootstrap/site.yml
+./scripts/run_local_playbook.sh playbooks/bootstrap/site.yml
+```
+
+For the reduced pre-cluster profile:
+
+```bash
+cd <project-root>/on-prem-openshift-demo
+
+./scripts/run_local_playbook.sh playbooks/bootstrap/site.yml \
+  -e @inventory/overrides/precluster-64g.yml
 ```
 
 This is the on-prem equivalent of the early AWS host steps:
@@ -168,6 +203,12 @@ This is the on-prem equivalent of the early AWS host steps:
 - guest base-image staging
 - LVM guest LV validation and creation
 - `/dev/ebs/*` compatibility symlink publication
+
+> [!NOTE]
+> The shared host bootstrap now updates `redhat-release` before the full system
+> update. This ensures the current Red Hat Post-Quantum Cryptography public
+> keys are present before DNF validates newer packages. See:
+> <https://access.redhat.com/solutions/3449341>
 
 When it succeeds, the host should satisfy the same effective guest-disk
 contract the stock guest roles already expect.
@@ -197,7 +238,16 @@ Run:
 ```bash
 cd <project-root>/on-prem-openshift-demo
 
-ansible-playbook playbooks/site-bootstrap.yml
+./scripts/run_local_playbook.sh playbooks/site-bootstrap.yml
+```
+
+For the reduced pre-cluster profile:
+
+```bash
+cd <project-root>/on-prem-openshift-demo
+
+./scripts/run_local_playbook.sh playbooks/site-bootstrap.yml \
+  -e @inventory/overrides/precluster-64g.yml
 ```
 
 After this, the bastion should exist and the project should be staged.
@@ -217,5 +267,14 @@ For automation rather than the hand-run sequence, use:
 
 ```bash
 cd <project-root>/on-prem-openshift-demo
-ansible-playbook playbooks/site-lab.yml
+./scripts/run_remote_bastion_playbook.sh playbooks/site-lab.yml
+```
+
+For the reduced pre-cluster profile, stop at mirror-registry instead of
+continuing into cluster build:
+
+```bash
+cd <staged-on-prem-project-root>
+./scripts/run_bastion_playbook.sh playbooks/site-precluster.yml \
+  -e @inventory/overrides/precluster-64g.yml
 ```

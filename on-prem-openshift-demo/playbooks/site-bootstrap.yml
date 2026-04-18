@@ -5,7 +5,8 @@
     - bootstrap-host
 
 - name: Build or refresh the bastion support VM
-  import_playbook: ../../aws-metal-openshift-demo/playbooks/bootstrap/bastion.yml
+  import_playbook: >-
+    ../../aws-metal-openshift-demo/playbooks/bootstrap/bastion.yml
   tags:
     - bastion
     - support-vms

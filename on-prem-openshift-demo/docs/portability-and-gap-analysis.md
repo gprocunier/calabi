@@ -18,10 +18,12 @@ Nearby docs:
 This page separates what is already portable from what still depends on the
 current AWS-shaped host contract.
 
-The repo now ships an initial on-prem target under:
+The repo now ships an initial on-prem operator path through:
 
-- <a href="../playbooks/site-bootstrap.yml"><kbd>on-prem-openshift-demo/playbooks/site-bootstrap.yml</kbd></a>
-- <a href="../playbooks/site-lab.yml"><kbd>on-prem-openshift-demo/playbooks/site-lab.yml</kbd></a>
+- `./scripts/run_local_playbook.sh`
+  <a href="../playbooks/site-bootstrap.yml"><kbd>playbooks/site-bootstrap.yml</kbd></a>
+- `./scripts/run_remote_bastion_playbook.sh`
+  <a href="../playbooks/site-lab.yml"><kbd>playbooks/site-lab.yml</kbd></a>
 
 The AWS-specific part is mostly the substrate that creates `virt-01` and its
 attached guest block devices. Once your host exists and presents the expected

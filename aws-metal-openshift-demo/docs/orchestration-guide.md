@@ -84,7 +84,14 @@ Use this when you need to answer "where should I look" before you answer
 
 ## Top-Level Playbooks
 
-The canonical entrypoints are:
+The canonical operator entrypoints are:
+
+- `./scripts/run_local_playbook.sh`
+  <a href="../playbooks/site-bootstrap.yml"><kbd>playbooks/site-bootstrap.yml</kbd></a>
+- `./scripts/run_remote_bastion_playbook.sh`
+  <a href="../playbooks/site-lab.yml"><kbd>playbooks/site-lab.yml</kbd></a>
+
+The top-level playbook artifacts behind those entrypoints are:
 
 - `playbooks/site-bootstrap.yml`
 - `playbooks/site-lab.yml`
@@ -139,7 +146,9 @@ Execution model:
 - support VMs (`ad-01`, `idm-01`, `bastion-01`, and `mirror-registry`) default to
   preserving existing disks and libvirt domains on rerun
 - a true fresh support-services rebuild now means both removing the support VMs
-  and wiping their backing block devices before replaying `site-bootstrap.yml`
+  and wiping their backing block devices before replaying
+  `./scripts/run_local_playbook.sh`
+  <a href="../playbooks/site-bootstrap.yml"><kbd>playbooks/site-bootstrap.yml</kbd></a>
 - the mirror-registry phase now caches successful mirror completion for the
   rendered content set and skips the expensive `oc-mirror` work on rerun unless
   forced

@@ -1,6 +1,7 @@
 ---
 - name: Bootstrap the optional AD support VM
-  import_playbook: ../../aws-metal-openshift-demo/playbooks/bootstrap/ad-server.yml
+  import_playbook: >-
+    ../../aws-metal-openshift-demo/playbooks/bootstrap/ad-server.yml
   tags:
     - ad-server
     - support-vms
@@ -12,67 +13,78 @@
     - support-vms
 
 - name: Configure IdM to AD trust integration
-  import_playbook: ../../aws-metal-openshift-demo/playbooks/bootstrap/idm-ad-trust.yml
+  import_playbook: >-
+    ../../aws-metal-openshift-demo/playbooks/bootstrap/idm-ad-trust.yml
   tags:
     - idm-ad-trust
     - support-vms
 
 - name: Join and prepare the bastion
-  import_playbook: ../../aws-metal-openshift-demo/playbooks/bootstrap/bastion-join.yml
+  import_playbook: >-
+    ../../aws-metal-openshift-demo/playbooks/bootstrap/bastion-join.yml
   tags:
     - bastion-join
     - support-vms
 
 - name: Build or refresh the disconnected mirror registry
-  import_playbook: ../../aws-metal-openshift-demo/playbooks/lab/mirror-registry.yml
+  import_playbook: >-
+    ../../aws-metal-openshift-demo/playbooks/lab/mirror-registry.yml
   tags:
     - mirror-registry
     - support-vms
 
 - name: Publish OpenShift DNS records in IdM
-  import_playbook: ../../aws-metal-openshift-demo/playbooks/lab/openshift-dns.yml
+  import_playbook: >-
+    ../../aws-metal-openshift-demo/playbooks/lab/openshift-dns.yml
   tags:
     - openshift-dns
     - cluster-prep
 
 - name: Render the pinned OpenShift installer binaries
-  import_playbook: ../../aws-metal-openshift-demo/playbooks/cluster/openshift-installer-binaries.yml
+  import_playbook: >-
+    ../../aws-metal-openshift-demo/playbooks/cluster/openshift-installer-binaries.yml
   tags:
     - installer-binaries
     - cluster-prep
 
 - name: Generate the OpenShift install artifacts
-  import_playbook: ../../aws-metal-openshift-demo/playbooks/cluster/openshift-install-artifacts.yml
+  import_playbook: >-
+    ../../aws-metal-openshift-demo/playbooks/cluster/openshift-install-artifacts.yml
   tags:
     - install-artifacts
     - cluster-prep
 
 - name: Build the OpenShift agent boot media
-  import_playbook: ../../aws-metal-openshift-demo/playbooks/cluster/openshift-agent-media.yml
+  import_playbook: >-
+    ../../aws-metal-openshift-demo/playbooks/cluster/openshift-agent-media.yml
   tags:
     - agent-media
     - cluster-prep
 
 - name: Provision the OpenShift cluster virtual machines
-  import_playbook: ../../aws-metal-openshift-demo/playbooks/cluster/openshift-cluster.yml
+  import_playbook: >-
+    ../../aws-metal-openshift-demo/playbooks/cluster/openshift-cluster.yml
   tags:
     - cluster-vms
     - cluster-build
 
 - name: Wait for the OpenShift install to complete
-  import_playbook: ../../aws-metal-openshift-demo/playbooks/cluster/openshift-install-wait.yml
+  import_playbook: >-
+    ../../aws-metal-openshift-demo/playbooks/cluster/openshift-install-wait.yml
   tags:
     - install-wait
     - cluster-build
 
 - name: Validate the post-install prerequisites
-  import_playbook: ../../aws-metal-openshift-demo/playbooks/day2/openshift-post-install-validate.yml
+  import_playbook: >-
+    ../../aws-metal-openshift-demo/playbooks/day2/openshift-post-install-validate.yml
   tags:
     - day2-validate
     - day2
 
 - name: Apply the OpenShift day-2 configuration
-  import_playbook: ../../aws-metal-openshift-demo/playbooks/day2/openshift-post-install.yml
+  import_playbook: >-
+    ../../aws-metal-openshift-demo/playbooks/day2/openshift-post-install.yml
   tags:
     - day2-post-install
     - day2

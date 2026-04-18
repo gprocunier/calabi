@@ -135,3 +135,74 @@
           }}/{{ idm_vm.name }}/{{ idm_vm.name }}-cidata.iso
         libvirt_cdrom_cleanup_remove_media_file: true
         libvirt_cdrom_cleanup_reset_boot_to_hd_only: true
+
+- name: Prefer authoritative IdM DNS on the hypervisor uplink
+  hosts: aws_metal
+  become: true
+  gather_facts: true
+  vars_files:
+    - ../../vars/guests/idm_vm.yml
+
+  tasks:
+    - name: Determine the active NetworkManager connection for the hypervisor uplink
+      ansible.builtin.command:
+        argv:
+          - nmcli
+          - -t
+          - -f
+          - NAME,DEVICE
+          - connection
+          - show
+          - --active
+      register: idm_hypervisor_active_connections
+      changed_when: false
+
+    - name: Store the active hypervisor uplink connection name
+      ansible.builtin.set_fact:
+        idm_hypervisor_uplink_connection_name: >-
+          {{
+            (
+              idm_hypervisor_active_connections.stdout_lines
+              | select('search', ':' ~ ansible_default_ipv4.interface ~ '$')
+              | map('split', ':')
+              | map('first')
+              | list
+              | first
+            ) | default('')
+          }}
+
+    - name: Wait for authoritative IdM DNS on the management network
+      ansible.builtin.wait_for:
+        host: "{{ idm_vm.network.ipv4_address }}"
+        port: 53
+        timeout: 120
+        connect_timeout: 1
+        sleep: 2
+      changed_when: false
+      when: idm_hypervisor_uplink_connection_name | length > 0
+
+    - name: Configure the hypervisor uplink to use IdM DNS first
+      ansible.builtin.command:
+        argv:
+          - nmcli
+          - connection
+          - modify
+          - "{{ idm_hypervisor_uplink_connection_name }}"
+          - ipv4.dns
+          - >-
+            {{ ([idm_vm.network.ipv4_address] + (idm_vm.network.dns_servers
+            | default([]))) | join(' ') }}
+          - ipv4.ignore-auto-dns
+          - "yes"
+      changed_when: true
+      when: idm_hypervisor_uplink_connection_name | length > 0
+
+    - name: Reapply the hypervisor uplink connection after IdM DNS changes
+      ansible.builtin.command:
+        argv:
+          - nmcli
+          - connection
+          - up
+          - "{{ idm_hypervisor_uplink_connection_name }}"
+      changed_when: true
+      when: idm_hypervisor_uplink_connection_name | length > 0

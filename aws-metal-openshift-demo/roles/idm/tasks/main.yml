@@ -108,6 +108,15 @@
       IDM block device {{ idm_vm.disk_path }} was not found. Ensure the EBS
       volume is attached and mapped before running the IDM role.
 
+- name: Resolve the IDM block device path for host-side partition reloads
+  ansible.builtin.command:
+    argv:
+      - readlink
+      - -f
+      - "{{ idm_vm.disk_path }}"
+  register: idm_role_block_device_realpath
+  changed_when: false
+
 - name: Check whether the base QCOW2 image is present
   ansible.builtin.stat:
     path: "{{ idm_vm.source_image }}"
@@ -265,7 +274,7 @@
     argv:
       - blockdev
       - --rereadpt
-      - "{{ idm_vm.disk_path }}"
+      - "{{ idm_role_block_device_realpath.stdout | trim }}"
   when: idm_role_seed_disk_from_image | bool
   changed_when: true
 

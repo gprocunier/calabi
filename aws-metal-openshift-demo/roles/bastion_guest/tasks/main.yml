@@ -45,6 +45,160 @@
       bastion guest configuration requires an aws_metal hypervisor inventory
       host.
 
+- name: Determine the active NetworkManager connection on the bastion guest
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - -t
+      - -f
+      - NAME,DEVICE
+      - connection
+      - show
+      - --active
+  register: bastion_guest_active_connections
+  changed_when: false
+
+- name: Store the active bastion uplink connection name
+  ansible.builtin.set_fact:
+    bastion_guest_uplink_connection_name: >-
+      {{
+        (
+          bastion_guest_active_connections.stdout_lines
+          | select(
+              'search',
+              ':' ~ bastion_vm.network.interface_name ~ '$'
+            )
+          | map('split', ':')
+          | map('first')
+          | list
+          | first
+        ) | default('')
+      }}
+
+- name: Check whether authoritative IdM DNS is reachable from the bastion guest
+  ansible.builtin.wait_for:
+    host: "{{ idm_vm.network.ipv4_address }}"
+    port: 53
+    timeout: 3
+    connect_timeout: 1
+    sleep: 1
+  register: bastion_guest_idm_dns_reachable
+  changed_when: false
+  ignore_errors: true
+  when: bastion_guest_uplink_connection_name | length > 0
+
+- name: Derive the bastion guest DNS servers for the current bootstrap stage
+  ansible.builtin.set_fact:
+    bastion_guest_bootstrap_dns_servers: >-
+      {{
+        (
+          [idm_vm.network.ipv4_address]
+          + (
+            bastion_vm.network.dns_servers
+            | reject('equalto', idm_vm.network.ipv4_address)
+            | list
+          )
+        )
+        if (bastion_guest_idm_dns_reachable is succeeded)
+        else (
+          bastion_vm.network.dns_servers
+          | reject('equalto', idm_vm.network.ipv4_address)
+          | list
+        )
+      }}
+  when: bastion_guest_uplink_connection_name | length > 0
+
+- name: Configure the bastion guest DNS servers for the current bootstrap stage
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - connection
+      - modify
+      - "{{ bastion_guest_uplink_connection_name }}"
+      - ipv4.dns
+      - "{{ bastion_guest_bootstrap_dns_servers | join(' ') }}"
+      - ipv4.ignore-auto-dns
+      - "yes"
+  changed_when: true
+  when:
+    - bastion_guest_uplink_connection_name | length > 0
+    - (bastion_guest_bootstrap_dns_servers | default([])) | length > 0
+
+- name: Reapply the bastion guest interface after bootstrap DNS changes
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - device
+      - reapply
+      - "{{ bastion_vm.network.interface_name }}"
+  changed_when: true
+  when:
+    - bastion_guest_uplink_connection_name | length > 0
+    - (bastion_guest_bootstrap_dns_servers | default([])) | length > 0
+
+- name: Check whether the bastion guest already has an RHSM consumer certificate
+  ansible.builtin.stat:
+    path: /etc/pki/consumer/cert.pem
+  register: bastion_guest_rhsm_consumer_cert
+  when: bastion_vm.subscription.enabled | bool
+
+- name: Register the bastion guest with RHSM using activation key
+  ansible.builtin.command:
+    argv:
+      - subscription-manager
+      - register
+      - --org
+      - "{{ bastion_vm.subscription.organization_id }}"
+      - --activationkey
+      - "{{ bastion_vm.subscription.activation_key }}"
+  register: bastion_guest_rhsm_register_activation_key
+  changed_when: bastion_guest_rhsm_register_activation_key.rc == 0
+  failed_when: >-
+    bastion_guest_rhsm_register_activation_key.rc != 0 and
+    'already registered'
+    not in (bastion_guest_rhsm_register_activation_key.stderr | lower)
+  when:
+    - bastion_vm.subscription.enabled | bool
+    - not bastion_guest_rhsm_consumer_cert.stat.exists
+    - bastion_vm.subscription.activation_key | default('') | length > 0
+    - bastion_vm.subscription.organization_id | default('') | length > 0
+
+- name: Register the bastion guest with RHSM using username and password
+  ansible.builtin.command:
+    argv:
+      - subscription-manager
+      - register
+      - --username
+      - "{{ bastion_vm.subscription.username }}"
+      - --password
+      - "{{ bastion_vm.subscription.password }}"
+  register: bastion_guest_rhsm_register_userpass
+  changed_when: bastion_guest_rhsm_register_userpass.rc == 0
+  failed_when: >-
+    bastion_guest_rhsm_register_userpass.rc != 0 and
+    'already registered'
+    not in (bastion_guest_rhsm_register_userpass.stderr | lower)
+  when:
+    - bastion_vm.subscription.enabled | bool
+    - not bastion_guest_rhsm_consumer_cert.stat.exists
+    - not (
+        bastion_vm.subscription.activation_key | default('') | length > 0
+        and
+        bastion_vm.subscription.organization_id | default('') | length > 0
+      )
+    - bastion_vm.subscription.username | default('') | length > 0
+    - bastion_vm.subscription.password | default('') | length > 0
+
+- name: Enable subscription-manager CDN repo management on the bastion guest
+  ansible.builtin.command:
+    argv:
+      - subscription-manager
+      - config
+      - --rhsm.manage_repos=1
+  register: bastion_guest_manage_repos
+  changed_when: "'manage_repos = 1' in bastion_guest_manage_repos.stdout"
+  when: bastion_vm.subscription.enabled | bool
+
 - name: Ensure insights-client is installed on the bastion guest
   ansible.builtin.package:
     name: insights-client
@@ -224,6 +378,78 @@
 - name: Enroll the bastion guest into IdM when requested
   when: bastion_guest_join_idm_enabled | bool
   block:
+    - name: Determine the active NetworkManager connection on the bastion guest
+      ansible.builtin.command:
+        argv:
+          - nmcli
+          - -t
+          - -f
+          - NAME,DEVICE
+          - connection
+          - show
+          - --active
+      register: bastion_guest_active_connections
+      changed_when: false
+
+    - name: Store the active bastion uplink connection name
+      ansible.builtin.set_fact:
+        bastion_guest_uplink_connection_name: >-
+          {{
+            (
+              bastion_guest_active_connections.stdout_lines
+              | select(
+                  'search',
+                  ':' ~ bastion_vm.network.interface_name ~ '$'
+                )
+              | map('split', ':')
+              | map('first')
+              | list
+              | first
+            ) | default('')
+          }}
+
+    - name: Wait for authoritative IdM DNS from the bastion guest network
+      ansible.builtin.wait_for:
+        host: "{{ idm_vm.network.ipv4_address }}"
+        port: 53
+        timeout: 120
+        connect_timeout: 1
+        sleep: 2
+      changed_when: false
+      when: bastion_guest_uplink_connection_name | length > 0
+
+    - name: Configure the bastion guest to use IdM DNS first
+      ansible.builtin.command:
+        argv:
+          - nmcli
+          - connection
+          - modify
+          - "{{ bastion_guest_uplink_connection_name }}"
+          - ipv4.dns
+          - >-
+            {{
+              ([idm_vm.network.ipv4_address]
+              + (
+                bastion_vm.network.dns_servers
+                | reject('equalto', idm_vm.network.ipv4_address)
+                | list
+              )) | join(' ')
+            }}
+          - ipv4.ignore-auto-dns
+          - "yes"
+      changed_when: true
+      when: bastion_guest_uplink_connection_name | length > 0
+
+    - name: Reapply the bastion guest interface after IdM DNS changes
+      ansible.builtin.command:
+        argv:
+          - nmcli
+          - device
+          - reapply
+          - "{{ bastion_vm.network.interface_name }}"
+      changed_when: true
+      when: bastion_guest_uplink_connection_name | length > 0
+
     - name: Check whether the bastion guest is already enrolled in IdM
       ansible.builtin.stat:
         path: /etc/ipa/default.conf

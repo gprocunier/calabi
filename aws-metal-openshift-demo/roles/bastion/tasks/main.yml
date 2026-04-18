@@ -104,6 +104,37 @@
       + organization_id or username + password in vars/guests/bastion_vm.yml.
   when: bastion_vm.subscription.enabled | bool
 
+- name: Check whether authoritative IdM DNS is already reachable for bastion boot
+  ansible.builtin.wait_for:
+    host: "{{ idm_vm.network.ipv4_address }}"
+    port: 53
+    timeout: 3
+    connect_timeout: 1
+    sleep: 1
+  register: bastion_role_idm_dns_reachable
+  changed_when: false
+  ignore_errors: true
+
+- name: Derive the initial bastion guest DNS servers
+  ansible.builtin.set_fact:
+    bastion_role_initial_dns_servers: >-
+      {{
+        (
+          [idm_vm.network.ipv4_address]
+          + (
+            bastion_vm.network.dns_servers
+            | reject('equalto', idm_vm.network.ipv4_address)
+            | list
+          )
+        )
+        if (bastion_role_idm_dns_reachable is succeeded)
+        else (
+          bastion_vm.network.dns_servers
+          | reject('equalto', idm_vm.network.ipv4_address)
+          | list
+        )
+      }}
+
 - name: Install packages needed for the bastion VM build workflow
   ansible.builtin.package:
     name:
@@ -124,6 +155,15 @@
       - bastion_role_block_device_stat.stat.exists
     fail_msg: >-
       Bastion block device {{ bastion_vm.disk_path }} was not found.
+
+- name: Resolve the bastion block device path for host-side partition reloads
+  ansible.builtin.command:
+    argv:
+      - readlink
+      - -f
+      - "{{ bastion_vm.disk_path }}"
+  register: bastion_role_block_device_realpath
+  changed_when: false
 
 - name: Check whether the base QCOW2 image is present
   ansible.builtin.stat:
@@ -257,9 +297,14 @@
     argv:
       - blockdev
       - --rereadpt
-      - "{{ bastion_vm.disk_path }}"
+      - "{{ bastion_role_block_device_realpath.stdout | trim }}"
+  register: bastion_role_rereadpt
   when: bastion_role_seed_disk_from_image | bool
-  changed_when: true
+  failed_when: >-
+    bastion_role_rereadpt.rc != 0 and
+    'BLKRRPART: Invalid argument'
+    not in (bastion_role_rereadpt.stderr | default(''))
+  changed_when: bastion_role_rereadpt.rc == 0
 
 - name: Inject bastion access credentials into the reseeded guest disk
   ansible.builtin.command:

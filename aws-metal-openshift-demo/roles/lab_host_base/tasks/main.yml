@@ -240,6 +240,15 @@
     - not lab_host_base_insights_registered.stat.exists
   changed_when: true
 
+- name: Update redhat-release before the full host package update
+  ansible.builtin.dnf:
+    name: redhat-release
+    state: latest
+    update_cache: true
+  register: lab_host_base_redhat_release_update
+  # noqa: package-latest
+  when: not (lab_host_base_skip_package_updates | default(false) | bool)
+
 - name: Update all host packages to the latest available versions
   ansible.builtin.dnf:
     name: "*"
@@ -306,7 +315,32 @@
         ) | default('')
       }}
 
-- name: Configure the hypervisor uplink to use IdM DNS first
+- name: Check whether authoritative IdM DNS is already reachable
+  ansible.builtin.wait_for:
+    host: "{{ idm_vm.network.ipv4_address }}"
+    port: 53
+    timeout: 3
+    connect_timeout: 1
+    sleep: 1
+  register: lab_host_base_idm_dns_reachable
+  changed_when: false
+  ignore_errors: true
+  when: lab_host_base_uplink_connection_name | length > 0
+
+- name: Derive the hypervisor uplink DNS servers for the current bootstrap stage
+  ansible.builtin.set_fact:
+    lab_host_base_uplink_dns_servers: >-
+      {{
+        (
+          [idm_vm.network.ipv4_address]
+          + (idm_vm.network.dns_servers | default([]))
+        )
+        if (lab_host_base_idm_dns_reachable is succeeded)
+        else (idm_vm.network.dns_servers | default([]))
+      }}
+  when: lab_host_base_uplink_connection_name | length > 0
+
+- name: Configure the hypervisor uplink DNS servers for the current bootstrap stage
   ansible.builtin.command:
     argv:
       - nmcli
@@ -314,12 +348,14 @@
       - modify
       - "{{ lab_host_base_uplink_connection_name }}"
       - ipv4.dns
-      - "{{ idm_vm.network.ipv4_address }} 1.1.1.1"
+      - "{{ lab_host_base_uplink_dns_servers | join(' ') }}"
       - ipv4.ignore-auto-dns
       - "yes"
   register: lab_host_base_dns_modify
   changed_when: true
-  when: lab_host_base_uplink_connection_name | length > 0
+  when:
+    - lab_host_base_uplink_connection_name | length > 0
+    - (lab_host_base_uplink_dns_servers | default([])) | length > 0
 
 - name: Reapply the hypervisor uplink connection after DNS changes
   ansible.builtin.command:

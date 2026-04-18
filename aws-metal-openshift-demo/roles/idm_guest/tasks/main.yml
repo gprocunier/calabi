@@ -39,6 +39,69 @@
       vars/guests/idm_vm.yml is missing required idm_server settings for guest
       configuration.
 
+- name: Check whether the IDM guest already has an RHSM consumer certificate
+  ansible.builtin.stat:
+    path: /etc/pki/consumer/cert.pem
+  register: idm_guest_rhsm_consumer_cert
+  when: idm_vm.subscription.enabled | bool
+
+- name: Register the IDM guest with RHSM using activation key
+  ansible.builtin.command:
+    argv:
+      - subscription-manager
+      - register
+      - --org
+      - "{{ idm_vm.subscription.organization_id }}"
+      - --activationkey
+      - "{{ idm_vm.subscription.activation_key }}"
+  register: idm_guest_rhsm_register_activation_key
+  changed_when: idm_guest_rhsm_register_activation_key.rc == 0
+  failed_when: >-
+    idm_guest_rhsm_register_activation_key.rc != 0 and
+    'already registered'
+    not in (idm_guest_rhsm_register_activation_key.stderr | lower)
+  when:
+    - idm_vm.subscription.enabled | bool
+    - not idm_guest_rhsm_consumer_cert.stat.exists
+    - idm_vm.subscription.activation_key | default('') | length > 0
+    - idm_vm.subscription.organization_id | default('') | length > 0
+
+- name: Register the IDM guest with RHSM using username and password
+  ansible.builtin.command:
+    argv:
+      - subscription-manager
+      - register
+      - --username
+      - "{{ idm_vm.subscription.username }}"
+      - --password
+      - "{{ idm_vm.subscription.password }}"
+  register: idm_guest_rhsm_register_userpass
+  changed_when: idm_guest_rhsm_register_userpass.rc == 0
+  failed_when: >-
+    idm_guest_rhsm_register_userpass.rc != 0 and
+    'already registered'
+    not in (idm_guest_rhsm_register_userpass.stderr | lower)
+  when:
+    - idm_vm.subscription.enabled | bool
+    - not idm_guest_rhsm_consumer_cert.stat.exists
+    - not (
+        idm_vm.subscription.activation_key | default('') | length > 0
+        and
+        idm_vm.subscription.organization_id | default('') | length > 0
+      )
+    - idm_vm.subscription.username | default('') | length > 0
+    - idm_vm.subscription.password | default('') | length > 0
+
+- name: Enable subscription-manager CDN repo management on the IDM guest
+  ansible.builtin.command:
+    argv:
+      - subscription-manager
+      - config
+      - --rhsm.manage_repos=1
+  register: idm_guest_manage_repos
+  changed_when: "'manage_repos = 1' in idm_guest_manage_repos.stdout"
+  when: idm_vm.subscription.enabled | bool
+
 - name: Ensure insights-client is installed on the IDM guest
   ansible.builtin.package:
     name: insights-client

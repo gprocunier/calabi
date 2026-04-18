@@ -1,0 +1,31 @@
+---
+- name: Bootstrap the optional AD support VM
+  import_playbook: >-
+    ../../aws-metal-openshift-demo/playbooks/bootstrap/ad-server.yml
+  tags:
+    - ad-server
+    - support-vms
+
+- name: Build or reuse the IdM support VM
+  import_playbook: ../../aws-metal-openshift-demo/playbooks/bootstrap/idm.yml
+  tags:
+    - idm
+    - support-vms
+
+- name: Configure IdM to AD trust integration
+  import_playbook: >-
+    ../../aws-metal-openshift-demo/playbooks/bootstrap/idm-ad-trust.yml
+  tags:
+    - idm-ad-trust
+    - support-vms
+
+- name: Join and prepare the bastion
+  import_playbook: >-
+    ../../aws-metal-openshift-demo/playbooks/bootstrap/bastion-join.yml
+  tags:
+    - bastion-join
+    - support-vms
+
+- name: Build or refresh the disconnected mirror registry
+  import_playbook: >-
+    ../../aws-metal-openshift-demo/playbooks/lab/mirror-registry.yml

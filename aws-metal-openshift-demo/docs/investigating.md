@@ -21,8 +21,13 @@ Current validated release:
 
 What is now proven on the current release:
 
-- zero-VM teardown and rebuild through `playbooks/site-bootstrap.yml`
-- uninterrupted `playbooks/site-lab.yml` convergence on the current codebase
+- zero-VM teardown and rebuild through
+  `./scripts/run_local_playbook.sh`
+  <a href="../playbooks/site-bootstrap.yml"><kbd>playbooks/site-bootstrap.yml</kbd></a>
+- uninterrupted
+  `./scripts/run_remote_bastion_playbook.sh`
+  <a href="../playbooks/site-lab.yml"><kbd>playbooks/site-lab.yml</kbd></a>
+  convergence on the current codebase
 - mirrored content, cluster install, and day-2 convergence
 - OpenShift auth on:
   - `HTPasswd` breakglass
@@ -49,8 +54,11 @@ Status:
 What was required:
 
 - zero-VM teardown and network reset
-- `playbooks/site-bootstrap.yml`
-- uninterrupted `playbooks/site-lab.yml` without live code repair
+- `./scripts/run_local_playbook.sh`
+  <a href="../playbooks/site-bootstrap.yml"><kbd>playbooks/site-bootstrap.yml</kbd></a>
+- uninterrupted `./scripts/run_remote_bastion_playbook.sh`
+  <a href="../playbooks/site-lab.yml"><kbd>playbooks/site-lab.yml</kbd></a>
+  without live code repair
 
 Final result:
 
