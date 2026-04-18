@@ -1,10 +1,10 @@
-cff-version: 1.2.0
+cff-version: 1.2.1
 title: Calabi
 message: If you reference this project, please cite it using the metadata below.
 type: software
 license: GPL-3.0
 repository-code: https://github.com/gprocunier/calabi
-version: 1.2.0
+version: 1.2.1
 date-released: 2026-04-09
 url: https://github.com/gprocunier/calabi
 authors:

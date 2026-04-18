@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.2.1 (2026-04-18)
+
+Maintenance release of Calabi focused on bootstrap reliability and publishable
+operator flow after the experimental on-prem release.
+
+Highlights:
+
+- Hardened the staged DNS bootstrap path so the hypervisor and bastion prefer
+  authoritative IdM DNS as soon as it is reachable, while retaining safe
+  fallback behavior earlier in bootstrap.
+- Improved bastion and guest bring-up behavior around RHSM registration,
+  package management, and disk reseed handling during staged deployment.
+- Fixed on-prem bastion-stage runtime issues that affected wrapper-driven
+  `site-bootstrap` runs, including inventory staging and bastion-to-hypervisor
+  handoff behavior.
+- Added tracked runner wrappers and `lab-dashboard` support for the on-prem
+  path, then aligned the AWS and on-prem operator docs to use those wrappers as
+  the primary execution entrypoints.
+- Published sanitized inventory defaults and docs-site content for the GitHub
+  release tree.
+
+Release notes:
+
+- `releases/v1.2.1.md`
+
 ## v1.2.0 (2026-04-09)
 
 Third tagged release of Calabi, centered on the experimental on-prem target
