@@ -8,16 +8,12 @@
     "ParameterValue": "us-east-2a"
   },
   {
-    "ParameterKey": "ExistingVpcId",
-    "ParameterValue": "vpc-REPLACE_WITH_EXISTING_VPC_ID"
+    "ParameterKey": "VpcCidr",
+    "ParameterValue": "10.0.0.0/16"
   },
   {
-    "ParameterKey": "ExistingSubnetId",
-    "ParameterValue": "subnet-REPLACE_WITH_EXISTING_SUBNET_ID"
-  },
-  {
-    "ParameterKey": "PersistentPublicIpAllocationId",
-    "ParameterValue": "eipalloc-REPLACE_WITH_EXISTING_EIP_OR_LEAVE_EMPTY"
+    "ParameterKey": "PublicSubnetCidr",
+    "ParameterValue": "10.0.0.0/20"
   },
   {
     "ParameterKey": "VirtHostPrivateIp",

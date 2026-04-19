@@ -283,12 +283,22 @@
           cleanup_destroy_lab_networking | default(false) | bool
         )
       }}
+    # Child cleanup should not run after a parent teardown has removed or is
+    # about to remove the resources it depends on.
+    cleanup_idm_certs_prereqs_available: >-
+      {{
+        not (
+          cleanup_destroy_bastion | default(false) | bool or
+          cleanup_destroy_idm | default(false) | bool or
+          cleanup_destroy_openshift_cluster | default(false) | bool
+        )
+      }}
 
   roles:
     - role: openshift_post_install_idm_certs_cleanup
       when:
         - cleanup_scope_all or (cleanup_destroy_idm_certs | default(false) | bool)
-        - not (cleanup_destroy_bastion | default(false) | bool)
+        - cleanup_idm_certs_prereqs_available
       tags:
         - openshift_post_install_idm_certs_cleanup
 

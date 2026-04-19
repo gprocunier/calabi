@@ -1,6 +1,7 @@
 ---
 exclude_paths:
   - cloudformation/
+  - node_modules/
 
 warn_list:
   - jinja[spacing]

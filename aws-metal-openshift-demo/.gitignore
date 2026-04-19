@@ -7,3 +7,6 @@ generated/
 # Interpreter caches and bytecode.
 __pycache__/
 *.pyc
+
+# Local JavaScript dependencies for the docs builder.
+node_modules/

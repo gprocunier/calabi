@@ -1,0 +1,8 @@
+{
+  "name": "calabi-docs-site",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "shiki": "^4.0.2"
+  }
+}

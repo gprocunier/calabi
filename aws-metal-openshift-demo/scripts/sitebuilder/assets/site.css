@@ -625,49 +625,18 @@ a {
   background: var(--_selected-text-background);
 }
 
-.markdown-body rh-code-block .token.atrule { color: var(--_at-rule-color); }
-.markdown-body rh-code-block .token.attr-name { color: var(--_attr-name-color); }
-.markdown-body rh-code-block .token.attr-value { color: var(--_attr-value-color); }
-.markdown-body rh-code-block .token.bold { font-weight: var(--rh-font-weight-code-semibold, 500); }
-.markdown-body rh-code-block .token.boolean { color: var(--_boolean-color); }
-.markdown-body rh-code-block .token.builtin { color: var(--_built-in-color); }
-.markdown-body rh-code-block .token.cdata { color: var(--_cdata-color); }
-.markdown-body rh-code-block .token.char { color: var(--_character-color); }
-.markdown-body rh-code-block .token.class-name { color: var(--_class-name-color); }
-.markdown-body rh-code-block .token.comment { color: var(--_comment-color); }
-.markdown-body rh-code-block .token.constant { color: var(--_constant-color); }
-.markdown-body rh-code-block .token.deleted { color: var(--_deleted-color); }
-.markdown-body rh-code-block .token.function { color: var(--_function-name-color); }
-.markdown-body rh-code-block .token.important { color: var(--_important-color); }
-.markdown-body rh-code-block .token.inserted { color: var(--_inserted-color); }
-.markdown-body rh-code-block .token.keyword { color: var(--_keyword-color); }
-.markdown-body rh-code-block .token.namespace { color: var(--_namespace-color); }
-.markdown-body rh-code-block .token.number { color: var(--_number-color); }
-.markdown-body rh-code-block .token.operator { color: var(--_operator-color); }
-.markdown-body rh-code-block .token.property { color: var(--_property-color); }
-.markdown-body rh-code-block .token.punctuation { color: var(--_punctuation-color); }
-.markdown-body rh-code-block .token.regex { color: var(--_regex-color); }
-.markdown-body rh-code-block .token.selector { color: var(--_selector-color); }
-.markdown-body rh-code-block .token.string { color: var(--_string-color); }
-.markdown-body rh-code-block .token.symbol { color: var(--_symbol-color); }
-.markdown-body rh-code-block .token.tag { color: var(--_tag-color); }
-.markdown-body rh-code-block .token.url { color: var(--_url-color); }
-.markdown-body rh-code-block .token.variable { color: var(--_variable-color); }
-.markdown-body rh-code-block .token.italic { font-style: italic; }
-
-.markdown-body rh-code-block .token.entity {
-  color: var(--_entity-color);
-  cursor: help;
+.markdown-body rh-code-block pre.shiki {
+  margin: 0;
+  overflow-x: auto;
 }
 
-.markdown-body rh-code-block .token.prolog,
-.markdown-body rh-code-block .token.doctype {
-  color: var(--_doctype-color);
+.markdown-body rh-code-block pre.shiki code {
+  display: block;
+  font-family: "Red Hat Mono", Consolas, monospace;
 }
 
-.markdown-body rh-code-block .language-css .token.string,
-.markdown-body rh-code-block .style .token.string {
-  color: var(--_operator-color);
+.markdown-body rh-code-block pre.shiki .line {
+  display: block;
 }
 
 .markdown-body blockquote {

@@ -29,16 +29,26 @@
     - "{{ openshift_post_install_idm_certs_cleanup_kubeconfig_local_path }}"
   register: openshift_post_install_idm_certs_cleanup_local_stats
 
-- name: Fail when cleanup inputs are missing
-  ansible.builtin.assert:
-    that:
-      - >-
+- name: Derive whether cluster-facing cleanup inputs are still available
+  ansible.builtin.set_fact:
+    openshift_post_install_idm_certs_cleanup_inputs_available: >-
+      {{
         openshift_post_install_idm_certs_cleanup_local_stats.results
         | map(attribute='stat.exists')
         | min
-    fail_msg: >-
-      Expected pinned oc and generated kubeconfig to exist before running
-      OpenShift IdM certificate cleanup.
+      }}
+
+- name: Explain why OpenShift IdM certificate cleanup is being skipped
+  ansible.builtin.debug:
+    msg: >-
+      Skipping OpenShift IdM certificate cleanup because the pinned oc binary
+      or generated kubeconfig is absent. This usually means the cluster
+      artifacts were already removed by a higher-level teardown path.
+  when: not (openshift_post_install_idm_certs_cleanup_inputs_available | bool)
+
+- name: End OpenShift IdM certificate cleanup when cluster inputs are absent
+  ansible.builtin.meta: end_host
+  when: not (openshift_post_install_idm_certs_cleanup_inputs_available | bool)
 
 - name: Ensure remote cleanup workspace exists
   ansible.builtin.file:

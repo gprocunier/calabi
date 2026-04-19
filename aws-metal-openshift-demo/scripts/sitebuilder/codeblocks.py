@@ -2,114 +2,234 @@
 
 from __future__ import annotations
 
+import json
+import re
+import subprocess
+from pathlib import Path
+
 from bs4 import BeautifulSoup
-from pygments import lex
-from pygments.lexers import BashLexer, PowerShellLexer
-from pygments.token import Token
+from pygments.lexers import ClassNotFound, guess_lexer
+
+DEFAULT_LANGUAGE = "bash"
+SHIKI_THEME = "github-dark-high-contrast"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+SHIKI_HELPER = Path(__file__).resolve().with_name("shiki_highlight.mjs")
 
 LANGUAGE_ALIASES = {
-    "": "plain",
+    "": "text",
     "bash": "bash",
     "console": "bash",
-    "shell": "bash",
-    "sh": "bash",
+    "plaintext": "text",
     "powershell": "powershell",
     "ps1": "powershell",
     "pwsh": "powershell",
-    "plaintext": "plain",
-    "text": "plain",
+    "python": "python",
+    "py": "python",
+    "javascript": "javascript",
+    "js": "javascript",
+    "json": "json",
+    "shell": "bash",
+    "sh": "bash",
+    "text": "text",
+    "toml": "toml",
+    "ts": "typescript",
+    "typescript": "typescript",
+    "xml": "xml",
+    "html": "html",
+    "xhtml": "html",
+    "svg": "xml",
+    "yaml": "yaml",
+    "yml": "yaml",
 }
 
-LEXERS = {
-    "bash": BashLexer(),
-    "powershell": PowerShellLexer(),
-}
+POWERSHELL_MARKERS = (
+    "write-host",
+    "get-ad",
+    "get-childitem",
+    "new-",
+    "set-",
+    "add-",
+    "remove-",
+    "restart-",
+    "stop-",
+    "start-",
+    "out-null",
+    "$env:",
+    "$psscriptroot",
+    "-erroraction",
+)
 
-TOKEN_CLASS_MAP = [
-    (Token.Comment, "comment"),
-    (Token.Keyword, "keyword"),
-    (Token.Name.Builtin, "builtin"),
-    (Token.Name.Function, "function"),
-    (Token.Name.Class, "class-name"),
-    (Token.Name.Namespace, "namespace"),
-    (Token.Name.Attribute, "attr-name"),
-    (Token.Name.Tag, "tag"),
-    (Token.Name.Entity, "entity"),
-    (Token.Name.Variable, "variable"),
-    (Token.Name.Constant, "constant"),
-    (Token.Literal.String, "string"),
-    (Token.Literal.Number, "number"),
-    (Token.Operator, "operator"),
-    (Token.Punctuation, "punctuation"),
-    (Token.Generic.Deleted, "deleted"),
-    (Token.Generic.Inserted, "inserted"),
-]
+YAML_LINE_RE = re.compile(r"^\s*([A-Za-z0-9_.-]+:|- [A-Za-z0-9_.-]+:)")
 
 
 def normalize_language(language: str | None) -> str:
     raw = (language or "").strip().lower()
-    return LANGUAGE_ALIASES.get(raw, raw or "plain")
+    return LANGUAGE_ALIASES.get(raw, raw or "text")
 
 
-
-def prism_class_for_token(token_type: Token) -> str | None:
-    for pygments_type, prism_class in TOKEN_CLASS_MAP:
-        if token_type in pygments_type:
-            return prism_class
-    return None
-
-
-
-def extract_pre_language(pre_tag) -> str:
+def extract_pre_language(pre_tag) -> tuple[str, bool]:
     for tag in filter(None, [pre_tag, pre_tag.find("code")]):
         for class_name in tag.get("class", []):
             if class_name.startswith("language-"):
-                return normalize_language(class_name.removeprefix("language-"))
-    return "plain"
+                return normalize_language(class_name.removeprefix("language-")), True
+    return "text", False
 
 
+def infer_language(raw_code: str) -> str:
+    stripped = raw_code.strip()
+    if not stripped:
+        return DEFAULT_LANGUAGE
 
-def append_prerendered_tokens(*, soup: BeautifulSoup, code_tag, raw_code: str, language: str) -> None:
-    lexer = LEXERS.get(language)
-    if lexer is None:
-        code_tag.string = raw_code
-        return
+    lowered = stripped.lower()
 
-    for token_type, value in lex(raw_code, lexer):
-        if not value:
-            continue
-        prism_class = prism_class_for_token(token_type)
-        if prism_class is None:
-            code_tag.append(value)
-            continue
-        span = soup.new_tag("span", attrs={"class": f"token {prism_class}"})
-        span.string = value
-        code_tag.append(span)
+    if stripped.startswith("#!") and ("bash" in lowered or "/sh" in lowered):
+        return "bash"
 
+    if any(marker in lowered for marker in POWERSHELL_MARKERS):
+        return "powershell"
+
+    if (stripped.startswith("{") or stripped.startswith("[")) and _looks_like_json(stripped):
+        return "json"
+
+    if _looks_like_yaml(stripped):
+        return "yaml"
+
+    if _looks_like_html_or_xml(stripped):
+        return "html" if stripped.lstrip().startswith("<!doctype html") or "<html" in lowered else "xml"
+
+    if _looks_like_python(stripped):
+        return "python"
+
+    if _looks_like_javascript_or_typescript(stripped):
+        return "typescript" if _looks_like_typescript(stripped) else "javascript"
+
+    try:
+        lexer = guess_lexer(stripped)
+    except ClassNotFound:
+        return DEFAULT_LANGUAGE
+
+    for alias in getattr(lexer, "aliases", []):
+        normalized = normalize_language(alias)
+        if normalized in {"bash", "powershell", "python", "javascript", "typescript", "json", "yaml", "html", "xml", "toml"}:
+            return normalized
+
+    return DEFAULT_LANGUAGE
+
+
+def _looks_like_json(text: str) -> bool:
+    try:
+        json.loads(text)
+    except json.JSONDecodeError:
+        return False
+    return True
+
+
+def _looks_like_yaml(text: str) -> bool:
+    lines = [line for line in text.splitlines() if line.strip()]
+    if not lines:
+        return False
+    score = sum(1 for line in lines[:8] if YAML_LINE_RE.match(line))
+    return score >= 2 or ("apiversion:" in text.lower() and "kind:" in text.lower())
+
+
+def _looks_like_html_or_xml(text: str) -> bool:
+    candidate = text.lstrip()
+    return candidate.startswith("<?xml") or (candidate.startswith("<") and "</" in candidate and ">" in candidate)
+
+
+def _looks_like_python(text: str) -> bool:
+    return (
+        "def " in text
+        or "import " in text
+        or "from " in text
+        or "print(" in text
+        or text.startswith("#!/usr/bin/env python")
+    )
+
+
+def _looks_like_javascript_or_typescript(text: str) -> bool:
+    markers = ("const ", "let ", "function ", "=>", "console.log(", "export ", "import ")
+    return any(marker in text for marker in markers)
+
+
+def _looks_like_typescript(text: str) -> bool:
+    markers = (": string", ": number", ": boolean", "interface ", "type ", " as const")
+    return any(marker in text for marker in markers)
+
+
+def run_shiki_highlighter(blocks: list[dict[str, str]]) -> list[dict[str, str]]:
+    payload = json.dumps(
+        {
+            "theme": SHIKI_THEME,
+            "fallbackLanguage": DEFAULT_LANGUAGE,
+            "blocks": blocks,
+        }
+    )
+    result = subprocess.run(
+        ["node", str(SHIKI_HELPER)],
+        cwd=PROJECT_ROOT,
+        input=payload,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        hint = ""
+        if "Cannot find package 'shiki'" in stderr or "ERR_MODULE_NOT_FOUND" in stderr:
+            hint = " Run `npm install` in the project root to install the docs highlighter dependency."
+        raise RuntimeError(f"Shiki highlighting failed.{hint}\n{stderr}")
+    return json.loads(result.stdout)
+
+
+def ensure_language_class(tag, language: str) -> None:
+    classes = tag.get("class", [])
+    lang_class = f"language-{language}"
+    if lang_class not in classes:
+        tag["class"] = [*classes, lang_class]
 
 
 def replace_fenced_code_blocks(soup: BeautifulSoup) -> None:
+    pending: list[tuple[object, dict[str, str]]] = []
+
     for pre_tag in list(soup.find_all("pre")):
         if pre_tag.find_parent("rh-code-block"):
             continue
 
-        language = extract_pre_language(pre_tag)
+        language, is_explicit = extract_pre_language(pre_tag)
         raw_code = pre_tag.get_text()
-        block_language = language if language != "plain" else "text"
+        requested_language = language if is_explicit else infer_language(raw_code)
+        pending.append((pre_tag, {"code": raw_code, "language": requested_language}))
+
+    if not pending:
+        return
+
+    highlighted = run_shiki_highlighter([payload for _, payload in pending])
+
+    for (pre_tag, _), rendered in zip(pending, highlighted, strict=True):
+        final_language = normalize_language(rendered.get("language"))
+        fragment = BeautifulSoup(rendered["html"], "html.parser")
+        new_pre = fragment.find("pre")
+        if new_pre is None:
+            new_pre = soup.new_tag("pre")
+            new_code = soup.new_tag("code")
+            new_code.string = pre_tag.get_text()
+            new_pre.append(new_code)
+
+        new_code = new_pre.find("code")
+        ensure_language_class(new_pre, final_language)
+        if new_code is not None:
+            ensure_language_class(new_code, final_language)
 
         wrapper = soup.new_tag(
             "rh-code-block",
             attrs={
                 "actions": "copy wrap",
+                "highlighting": "prerendered",
                 "line-numbers": "hidden",
+                "data-language": final_language,
+                "data-theme": SHIKI_THEME,
             },
         )
-        if language in LEXERS:
-            wrapper["highlighting"] = "prerendered"
-
-        new_pre = soup.new_tag("pre", attrs={"class": f"language-{block_language}"})
-        new_code = soup.new_tag("code", attrs={"class": f"language-{block_language}"})
-        append_prerendered_tokens(soup=soup, code_tag=new_code, raw_code=raw_code, language=language)
-        new_pre.append(new_code)
         wrapper.append(new_pre)
         pre_tag.replace_with(wrapper)

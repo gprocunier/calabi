@@ -84,10 +84,11 @@ The rendered template is produced from:
 - `cloudformation/templates/virt-host.yaml.j2`
 - `cloudformation/render-virt-lab.py`
 
-Example parameter files are:
+Repo-shipped parameter files are:
 
 - `cloudformation/parameters.tenant-example.json`
-- `cloudformation/parameters.example.json`
+- `cloudformation/parameters.host.json`
+- `cloudformation/parameters.full.json`
 
 Deployment helpers are:
 
