@@ -15,9 +15,6 @@ def copy_shell_assets(output_dir: Path) -> None:
     """Copy shared shell assets into the generated site."""
     for asset_name in ("site.css", "site.js"):
         shutil.copy2(ASSET_DIR / asset_name, output_dir / asset_name)
-    vendor_src = ASSET_DIR / "vendor"
-    if vendor_src.exists():
-        shutil.copytree(vendor_src, output_dir / "vendor", dirs_exist_ok=True)
 
 
 def render_page(
@@ -62,7 +59,6 @@ def render_page(
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@500;700&family=Red+Hat+Mono:wght@400;500&family=Red+Hat+Text:wght@400;500;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="assets/site.css">
-    <script type="module" src="assets/vendor/rh-code-block.bundle.js"></script>
     <script type="module" src="assets/site.js"></script>
   </head>
   <body>

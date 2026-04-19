@@ -61,6 +61,20 @@ POWERSHELL_MARKERS = (
 
 YAML_LINE_RE = re.compile(r"^\s*([A-Za-z0-9_.-]+:|- [A-Za-z0-9_.-]+:)")
 
+LANGUAGE_LABELS = {
+    "bash": "Shell",
+    "html": "HTML",
+    "javascript": "JavaScript",
+    "json": "JSON",
+    "powershell": "PowerShell",
+    "python": "Python",
+    "text": "Text",
+    "toml": "TOML",
+    "typescript": "TypeScript",
+    "xml": "XML",
+    "yaml": "YAML",
+}
+
 
 def normalize_language(language: str | None) -> str:
     raw = (language or "").strip().lower()
@@ -189,6 +203,10 @@ def ensure_language_class(tag, language: str) -> None:
         tag["class"] = [*classes, lang_class]
 
 
+def language_label(language: str) -> str:
+    return LANGUAGE_LABELS.get(language, language.upper())
+
+
 def replace_fenced_code_blocks(soup: BeautifulSoup) -> None:
     pending: list[tuple[object, dict[str, str]]] = []
 
@@ -222,14 +240,43 @@ def replace_fenced_code_blocks(soup: BeautifulSoup) -> None:
             ensure_language_class(new_code, final_language)
 
         wrapper = soup.new_tag(
-            "rh-code-block",
+            "div",
             attrs={
-                "actions": "copy wrap",
-                "highlighting": "prerendered",
-                "line-numbers": "hidden",
+                "class": "codebox",
                 "data-language": final_language,
                 "data-theme": SHIKI_THEME,
             },
         )
+        toolbar = soup.new_tag("div", attrs={"class": "codebox__toolbar"})
+        label = soup.new_tag("span", attrs={"class": "codebox__language"})
+        label.string = language_label(final_language)
+        copy_button = soup.new_tag(
+            "button",
+            attrs={
+                "class": "codebox__copy",
+                "type": "button",
+                "aria-label": f"Copy {language_label(final_language)} code to clipboard",
+                "data-copy-state": "idle",
+            },
+        )
+        copy_button.append(
+            BeautifulSoup(
+                """
+<span class="codebox__copy-icon" aria-hidden="true">
+  <svg viewBox="0 0 16 16" focusable="false">
+    <path d="M5 1.75A1.75 1.75 0 0 1 6.75 0h5.5A1.75 1.75 0 0 1 14 1.75v7.5A1.75 1.75 0 0 1 12.25 11h-5.5A1.75 1.75 0 0 1 5 9.25zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h5.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25z"></path>
+    <path d="M2.75 4A1.75 1.75 0 0 0 1 5.75v7.5C1 14.217 1.784 15 2.75 15h5.5A1.75 1.75 0 0 0 10 13.25V13H8.5v.25a.25.25 0 0 1-.25.25h-5.5a.25.25 0 0 1-.25-.25v-7.5a.25.25 0 0 1 .25-.25H3V4z"></path>
+  </svg>
+</span>
+                """,
+                "html.parser",
+            )
+        )
+        copy_label = soup.new_tag("span", attrs={"class": "codebox__copy-label"})
+        copy_label.string = "Copy"
+        copy_button.append(copy_label)
+        toolbar.append(label)
+        toolbar.append(copy_button)
+        wrapper.append(toolbar)
         wrapper.append(new_pre)
         pre_tag.replace_with(wrapper)
