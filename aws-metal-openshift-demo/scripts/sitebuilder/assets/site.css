@@ -216,6 +216,10 @@ a {
   list-style: none;
 }
 
+.execution-context-inline + .execution-context-inline {
+  margin-top: 0.35rem;
+}
+
 .execution-context-inline .execution-context-badge {
   margin-right: 0.45rem;
 }
