@@ -239,6 +239,10 @@ a {
   padding-left: 0;
 }
 
+.markdown-body li.example-block {
+  margin-top: 0.7rem;
+}
+
 .page-shell {
   display: grid;
   grid-template-columns: minmax(0, var(--rh-body-width)) minmax(220px, var(--rh-sidebar-width));
