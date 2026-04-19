@@ -636,7 +636,14 @@ a {
   text-transform: uppercase;
 }
 
-.markdown-body .codebox__copy {
+.markdown-body .codebox__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.markdown-body .codebox__copy,
+.markdown-body .codebox__wrap {
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
@@ -654,7 +661,9 @@ a {
 }
 
 .markdown-body .codebox__copy:hover,
-.markdown-body .codebox__copy:focus-visible {
+.markdown-body .codebox__copy:focus-visible,
+.markdown-body .codebox__wrap:hover,
+.markdown-body .codebox__wrap:focus-visible {
   background: #21262d;
   border-color: #8b949e;
   color: #f0f6fc;
@@ -672,13 +681,21 @@ a {
   color: #ff7b72;
 }
 
-.markdown-body .codebox__copy-icon {
+.markdown-body .codebox__wrap[aria-pressed="true"] {
+  border-color: #58a6ff;
+  background: rgba(56, 139, 253, 0.16);
+  color: #79c0ff;
+}
+
+.markdown-body .codebox__copy-icon,
+.markdown-body .codebox__wrap-icon {
   display: inline-flex;
   width: 0.95rem;
   height: 0.95rem;
 }
 
-.markdown-body .codebox__copy-icon svg {
+.markdown-body .codebox__copy-icon svg,
+.markdown-body .codebox__wrap-icon svg {
   width: 100%;
   height: 100%;
   fill: currentColor;
@@ -707,20 +724,28 @@ a {
   display: block;
   font-family: "Red Hat Mono", Consolas, monospace;
   font-size: 0.92rem;
-  line-height: 1.6;
+  line-height: 1.45;
+  white-space: pre;
 }
 
 .markdown-body .codebox pre.shiki .line {
   display: block;
-  min-height: 1.6em;
+  min-height: 1.45em;
 }
 
 .markdown-body .codebox pre.shiki .line:empty::before {
   content: " ";
 }
 
+.markdown-body .codebox--wrapped pre.shiki code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 640px) {
   .markdown-body .codebox__toolbar {
+    align-items: flex-start;
+    flex-direction: column;
     padding: 0.65rem 0.8rem;
   }
 

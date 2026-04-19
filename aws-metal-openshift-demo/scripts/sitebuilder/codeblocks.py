@@ -250,6 +250,7 @@ def replace_fenced_code_blocks(soup: BeautifulSoup) -> None:
         toolbar = soup.new_tag("div", attrs={"class": "codebox__toolbar"})
         label = soup.new_tag("span", attrs={"class": "codebox__language"})
         label.string = language_label(final_language)
+        actions = soup.new_tag("div", attrs={"class": "codebox__actions"})
         copy_button = soup.new_tag(
             "button",
             attrs={
@@ -275,8 +276,35 @@ def replace_fenced_code_blocks(soup: BeautifulSoup) -> None:
         copy_label = soup.new_tag("span", attrs={"class": "codebox__copy-label"})
         copy_label.string = "Copy"
         copy_button.append(copy_label)
+        wrap_button = soup.new_tag(
+            "button",
+            attrs={
+                "class": "codebox__wrap",
+                "type": "button",
+                "aria-label": f"Toggle word wrap for {language_label(final_language)} code",
+                "aria-pressed": "false",
+            },
+        )
+        wrap_button.append(
+            BeautifulSoup(
+                """
+<span class="codebox__wrap-icon" aria-hidden="true">
+  <svg viewBox="0 0 16 16" focusable="false">
+    <path d="M2 3.75A.75.75 0 0 1 2.75 3h8.5a2.75 2.75 0 1 1 0 5.5H7.56l1.22 1.22a.75.75 0 1 1-1.06 1.06L5.22 8.28a.75.75 0 0 1 0-1.06l2.5-2.5a.75.75 0 1 1 1.06 1.06L7.56 7h3.69a1.25 1.25 0 1 0 0-2.5h-8.5A.75.75 0 0 1 2 3.75z"></path>
+    <path d="M2 7.75A.75.75 0 0 1 2.75 7h1.5a.75.75 0 0 1 0 1.5h-1.5A.75.75 0 0 1 2 7.75zm0 4A.75.75 0 0 1 2.75 11h6.5a.75.75 0 0 1 0 1.5h-6.5A.75.75 0 0 1 2 11.75z"></path>
+  </svg>
+</span>
+                """,
+                "html.parser",
+            )
+        )
+        wrap_label = soup.new_tag("span", attrs={"class": "codebox__wrap-label"})
+        wrap_label.string = "Wrap"
+        wrap_button.append(wrap_label)
         toolbar.append(label)
-        toolbar.append(copy_button)
+        actions.append(copy_button)
+        actions.append(wrap_button)
+        toolbar.append(actions)
         wrapper.append(toolbar)
         wrapper.append(new_pre)
         pre_tag.replace_with(wrapper)

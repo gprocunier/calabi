@@ -50,10 +50,27 @@ async function copyCode(button) {
   }, 1800);
 }
 
-document.addEventListener("click", (event) => {
-  const button = event.target instanceof Element ? event.target.closest(".codebox__copy") : null;
-  if (!(button instanceof HTMLButtonElement)) {
+function toggleWrap(button) {
+  const codebox = button.closest(".codebox");
+  const nextWrapped = !codebox?.classList.contains("codebox--wrapped");
+  if (!codebox) {
     return;
   }
-  void copyCode(button);
+
+  codebox.classList.toggle("codebox--wrapped", nextWrapped);
+  button.setAttribute("aria-pressed", nextWrapped ? "true" : "false");
+}
+
+document.addEventListener("click", (event) => {
+  const target = event.target instanceof Element ? event.target : null;
+  const copyButton = target?.closest(".codebox__copy");
+  if (copyButton instanceof HTMLButtonElement) {
+    void copyCode(copyButton);
+    return;
+  }
+
+  const wrapButton = target?.closest(".codebox__wrap");
+  if (wrapButton instanceof HTMLButtonElement) {
+    toggleWrap(wrapButton);
+  }
 });
