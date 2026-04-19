@@ -7,7 +7,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 from pygments.lexers import ClassNotFound, guess_lexer
 
 DEFAULT_LANGUAGE = "bash"
@@ -207,6 +207,27 @@ def language_label(language: str) -> str:
     return LANGUAGE_LABELS.get(language, language.upper())
 
 
+def normalize_shiki_code_lines(code_tag) -> None:
+    if code_tag is None:
+        return
+
+    direct_lines = [
+        child
+        for child in code_tag.children
+        if getattr(child, "name", None) == "span" and "line" in child.get("class", [])
+    ]
+    if not direct_lines:
+        return
+
+    for child in list(code_tag.children):
+        if isinstance(child, NavigableString) and not child.strip():
+            child.extract()
+
+    while direct_lines and not direct_lines[-1].get_text():
+        direct_lines[-1].extract()
+        direct_lines.pop()
+
+
 def replace_fenced_code_blocks(soup: BeautifulSoup) -> None:
     pending: list[tuple[object, dict[str, str]]] = []
 
@@ -238,6 +259,7 @@ def replace_fenced_code_blocks(soup: BeautifulSoup) -> None:
         ensure_language_class(new_pre, final_language)
         if new_code is not None:
             ensure_language_class(new_code, final_language)
+            normalize_shiki_code_lines(new_code)
 
         wrapper = soup.new_tag(
             "div",
