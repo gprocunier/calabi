@@ -220,6 +220,10 @@ a {
   margin-top: 0.35rem;
 }
 
+.execution-context-inline + li {
+  margin-top: 0.35rem;
+}
+
 .execution-context-inline .execution-context-badge {
   margin-right: 0.45rem;
 }
