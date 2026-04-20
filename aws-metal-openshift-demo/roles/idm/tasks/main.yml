@@ -275,8 +275,13 @@
       - blockdev
       - --rereadpt
       - "{{ idm_role_block_device_realpath.stdout | trim }}"
+  register: idm_role_rereadpt
   when: idm_role_seed_disk_from_image | bool
-  changed_when: true
+  failed_when: >-
+    idm_role_rereadpt.rc != 0 and
+    'BLKRRPART: Invalid argument'
+    not in (idm_role_rereadpt.stderr | default(''))
+  changed_when: idm_role_rereadpt.rc == 0
 
 - name: Inject IDM access credentials into the reseeded guest disk
   ansible.builtin.command:

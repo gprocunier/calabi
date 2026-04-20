@@ -1,0 +1,10 @@
+---
+# Operator-provided volume group that backs all guest logical volumes.
+on_prem_lvm_volume_group: calabi_lab_vg
+on_prem_lvm_lv_name_prefix: ""
+on_prem_lvm_guest_symlink_root: /dev/ebs
+
+# Bastion reaches the hypervisor through the lab management network, which may
+# differ from the operator-workstation connection path in inventory/hosts.yml.
+on_prem_bastion_hypervisor_host: 172.16.0.1
+on_prem_bastion_hypervisor_user: "{{ ansible_user }}"

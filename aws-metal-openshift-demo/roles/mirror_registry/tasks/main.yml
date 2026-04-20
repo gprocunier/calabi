@@ -285,8 +285,13 @@
       - blockdev
       - --rereadpt
       - "{{ mirror_registry_role_block_device_realpath.stdout | trim }}"
+  register: mirror_registry_role_rereadpt
   when: mirror_registry_role_seed_disk_from_image | bool
-  changed_when: true
+  failed_when: >-
+    mirror_registry_role_rereadpt.rc != 0 and
+    'BLKRRPART: Invalid argument'
+    not in (mirror_registry_role_rereadpt.stderr | default(''))
+  changed_when: mirror_registry_role_rereadpt.rc == 0
 
 - name: Inject mirror registry access credentials into the reseeded guest disk
   ansible.builtin.command:

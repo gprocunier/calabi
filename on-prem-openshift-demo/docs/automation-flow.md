@@ -62,13 +62,19 @@ Only the early phases differ from the AWS path:
   - OpenShift cluster build
   - day-2
 
-For smaller hosts that should stop before cluster bring-up:
+For hosts that should stop before cluster bring-up:
 
-- use the pre-cluster override example
+- support-services-only profiles such as:
+  - <a href="../inventory/overrides/core-services.yml.example"><kbd>core-services.yml.example</kbd></a>
+  - <a href="../inventory/overrides/core-services-ad.yml.example"><kbd>core-services-ad.yml.example</kbd></a>
+- the reduced pre-cluster profile:
+  - <a href="../inventory/overrides/precluster-64g.yml.example"><kbd>precluster-64g.yml.example</kbd></a>
 - run `./scripts/run_local_playbook.sh`
   <a href="../playbooks/site-bootstrap.yml"><kbd>playbooks/site-bootstrap.yml</kbd></a>
   from the operator workstation
-- then run `site-precluster.yml` from the staged on-prem tree on bastion
+- then run
+  <a href="../playbooks/site-precluster.yml"><kbd>playbooks/site-precluster.yml</kbd></a>
+  from the staged on-prem tree on bastion or through the workstation wrapper
 
 ## Recommended Run Order
 
@@ -128,6 +134,11 @@ For smaller hosts that should stop before cluster bring-up:
      ```bash
      ./scripts/run_local_playbook.sh playbooks/bootstrap/site.yml
      ```
+   - for the support-services-only AD profile, pass the override:
+     ```bash
+     ./scripts/run_local_playbook.sh playbooks/bootstrap/site.yml \
+       -e @inventory/overrides/core-services-ad.yml.example
+     ```
    - for the reduced pre-cluster profile, pass the override:
      ```bash
      ./scripts/run_local_playbook.sh playbooks/bootstrap/site.yml \
@@ -137,6 +148,11 @@ For smaller hosts that should stop before cluster bring-up:
    - `RUN LOCALLY`
      ```bash
      ./scripts/run_local_playbook.sh playbooks/site-bootstrap.yml
+     ```
+   - for the support-services-only AD profile, pass the override:
+     ```bash
+     ./scripts/run_local_playbook.sh playbooks/site-bootstrap.yml \
+       -e @inventory/overrides/core-services-ad.yml.example
      ```
    - for the reduced pre-cluster profile, pass the same override:
      ```bash
@@ -159,6 +175,34 @@ For smaller hosts that should stop before cluster bring-up:
      ```
    - from this point, use the stock flow reference:
      - <a href="../../aws-metal-openshift-demo/docs/automation-flow.md#recommended-run-order"><kbd>AWS AUTOMATION FLOW: RECOMMENDED RUN ORDER</kbd></a>
+
+### Support-services-only run order
+
+For hosts sized for support services but not cluster VMs, such as the
+`core-services` and `core-services-ad` override profiles:
+
+1. Run `./scripts/run_local_playbook.sh`
+   <a href="../playbooks/site-bootstrap.yml"><kbd>playbooks/site-bootstrap.yml</kbd></a>
+   locally with the selected support-services override.
+1. From the staged on-prem tree on bastion, run:
+   - `RUN ON BASTION`
+     ```bash
+     ./scripts/run_bastion_playbook.sh playbooks/site-precluster.yml \
+       -e @inventory/overrides/core-services-ad.yml.example
+     ```
+   - alternatively, from the workstation:
+     ```bash
+     ./scripts/run_remote_bastion_playbook.sh playbooks/site-precluster.yml \
+       -e @inventory/overrides/core-services-ad.yml.example
+     ```
+1. `site-precluster.yml` stops after:
+   - optional `ad-server`
+   - `idm`
+   - optional `idm-ad-trust`
+   - `bastion-join`
+   - `mirror-registry`
+1. Stop there. Do not continue to `site-lab.yml` unless the host has been
+   expanded to a cluster-capable profile.
 
 ### Reduced pre-cluster run order
 
@@ -194,7 +238,15 @@ finishes successfully in the on-prem subtree:
 - the bastion has been built
 - the on-prem and stock project trees have been staged
 
-At that point, use:
+At that point:
 
-- <a href="../../aws-metal-openshift-demo/docs/automation-flow.md"><kbd>AWS AUTOMATION FLOW</kbd></a>
-- <a href="../../aws-metal-openshift-demo/docs/manual-process.md#13a-optionally-build-ad-ds-and-ad-cs-from-bastion"><kbd>AWS MANUAL PROCESS: STEP 13A</kbd></a>
+- for cluster-capable profiles, use:
+  - <a href="../../aws-metal-openshift-demo/docs/automation-flow.md"><kbd>AWS AUTOMATION FLOW</kbd></a>
+  - <a href="../../aws-metal-openshift-demo/docs/manual-process.md#13a-optionally-build-ad-ds-and-ad-cs-from-bastion"><kbd>AWS MANUAL PROCESS: STEP 13A</kbd></a>
+- for support-services-only profiles such as `core-services` or
+  `core-services-ad`, run
+  <a href="../playbooks/site-precluster.yml"><kbd>playbooks/site-precluster.yml</kbd></a>
+  and stop after mirror-registry
+- for the reduced `precluster-64g` profile, also run
+  <a href="../playbooks/site-precluster.yml"><kbd>playbooks/site-precluster.yml</kbd></a>
+  and stop there

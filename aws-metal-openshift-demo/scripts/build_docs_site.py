@@ -567,9 +567,19 @@ def remove_index_launch_grid(soup: BeautifulSoup) -> None:
             break
 
 
+def wrap_tables(soup: BeautifulSoup) -> None:
+    for table in soup.find_all("table"):
+        parent = table.parent
+        if parent and parent.name == "div" and "table-scroll" in parent.get("class", []):
+            continue
+        wrapper = soup.new_tag("div", attrs={"class": "table-scroll"})
+        table.wrap(wrapper)
+
+
 def normalize_html(soup: BeautifulSoup, slug: str) -> None:
     restore_kbd_links(soup)
     convert_admonitions(soup)
+    wrap_tables(soup)
     remove_nearby_docs_nav(soup)
     remove_leading_button_rows(soup, slug)
     trim_landing_page_intro(soup, slug)

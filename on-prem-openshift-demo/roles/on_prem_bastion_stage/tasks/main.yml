@@ -1,23 +1,48 @@
 ---
 - name: Derive bastion execution staging facts
   ansible.builtin.set_fact:
-    on_prem_bastion_stage_remote_project_root: >-
-      {{ bastion_client.project_root }}
+    on_prem_bastion_stage_effective_remote_project_root: >-
+      {{
+        on_prem_bastion_stage_remote_project_root
+        | default(bastion_client.project_parent ~ '/on-prem-openshift-demo')
+      }}
     on_prem_bastion_stage_source_stock_root: >-
       {{ lab_execution_project_root | dirname }}/aws-metal-openshift-demo
     on_prem_bastion_stage_remote_stock_root: >-
       {{ bastion_client.project_parent }}/aws-metal-openshift-demo
+
+- name: Derive dependent bastion execution staging paths
+  ansible.builtin.set_fact:
+    on_prem_bastion_stage_remote_project_root: >-
+      {{ on_prem_bastion_stage_effective_remote_project_root }}
     on_prem_bastion_stage_remote_secrets_root: >-
-      {{ bastion_client.secrets_root }}
+      {{ on_prem_bastion_stage_effective_remote_project_root }}/secrets
+    on_prem_bastion_stage_remote_generated_root: >-
+      {{ on_prem_bastion_stage_effective_remote_project_root }}/generated
+    on_prem_bastion_stage_remote_cluster_artifact_root: >-
+      {{ on_prem_bastion_stage_effective_remote_project_root }}/generated/ocp
+    on_prem_bastion_stage_remote_tools_root: >-
+      {{ on_prem_bastion_stage_effective_remote_project_root }}/generated/tools
     on_prem_bastion_stage_current_tools_link: >-
-      {{ bastion_client.tools_root }}/current
+      {{
+        on_prem_bastion_stage_effective_remote_project_root
+      }}/generated/tools/current
     on_prem_bastion_stage_user_bin_links:
       - link_name: oc
-        target: "{{ bastion_client.tools_root }}/current/bin/oc"
+        target: >-
+          {{
+            on_prem_bastion_stage_effective_remote_project_root
+          }}/generated/tools/current/bin/oc
       - link_name: kubectl
-        target: "{{ bastion_client.tools_root }}/current/bin/kubectl"
+        target: >-
+          {{
+            on_prem_bastion_stage_effective_remote_project_root
+          }}/generated/tools/current/bin/kubectl
       - link_name: openshift-install
-        target: "{{ bastion_client.tools_root }}/current/bin/openshift-install"
+        target: >-
+          {{
+            on_prem_bastion_stage_effective_remote_project_root
+          }}/generated/tools/current/bin/openshift-install
       - link_name: track-mirror-progress-onprem
         target: /usr/local/bin/track-mirror-progress-onprem
       - link_name: track-mirror-progress-tmux-onprem
@@ -26,16 +51,27 @@
         target: /usr/local/bin/lab-dashboard-onprem
       - link_name: run-bastion-playbook-onprem
         target: >-
-          {{ bastion_client.project_root }}/scripts/run_bastion_playbook.sh
+          {{
+            on_prem_bastion_stage_effective_remote_project_root
+          }}/scripts/run_bastion_playbook.sh
     on_prem_bastion_stage_user_etc_links:
       - link_name: idm-ca.crt
-        target: "{{ bastion_client.cluster_artifact_root }}/idm-ca.crt"
+        target: >-
+          {{
+            on_prem_bastion_stage_effective_remote_project_root
+          }}/generated/ocp/idm-ca.crt
     on_prem_bastion_stage_user_etc_files:
       - file_name: kubeconfig
-        src: "{{ bastion_client.cluster_artifact_root }}/auth/kubeconfig"
+        src: >-
+          {{
+            on_prem_bastion_stage_effective_remote_project_root
+          }}/generated/ocp/auth/kubeconfig
         mode: "0600"
       - file_name: kubeconfig.local
-        src: "{{ bastion_client.cluster_artifact_root }}/auth/kubeconfig"
+        src: >-
+          {{
+            on_prem_bastion_stage_effective_remote_project_root
+          }}/generated/ocp/auth/kubeconfig
         mode: "0600"
     on_prem_bastion_stage_project_lab_credentials_path: >-
       {{ lab_execution_project_root }}/inventory/group_vars/all/
@@ -132,7 +168,8 @@
   loop:
     - "{{ bastion_client.project_parent }}"
     - "{{ on_prem_bastion_stage_remote_stock_root }}"
-    - "{{ bastion_client.secrets_root }}"
+    - "{{ on_prem_bastion_stage_remote_stock_root }}/secrets"
+    - "{{ on_prem_bastion_stage_remote_secrets_root }}"
     - "{{ bastion_client.collection_root }}"
 
 - name: Ensure the bastion tracked-run state directory exists
@@ -303,46 +340,66 @@
       }}
     on_prem_bastion_stage_rendered_lab_rhsm_activation_key: >-
       {{
-        on_prem_bastion_stage_project_lab_credentials.lab_rhsm_activation_key
+        lab_rhsm_activation_key
         | default(
-          on_prem_bastion_stage_manager_lab_credentials.lab_rhsm.activation_key
-          | default(''),
+          on_prem_bastion_stage_project_lab_credentials.lab_rhsm_activation_key
+          | default(
+            on_prem_bastion_stage_manager_lab_credentials.lab_rhsm.activation_key
+            | default(''),
+            true
+          ),
           true
         )
       }}
     on_prem_bastion_stage_rendered_lab_rhsm_organization_id: >-
       {{
-        on_prem_bastion_stage_project_lab_credentials.lab_rhsm_organization_id
+        lab_rhsm_organization_id
         | default(
-          on_prem_bastion_stage_manager_lab_credentials.lab_rhsm.organization_id
-          | default(''),
+          on_prem_bastion_stage_project_lab_credentials.lab_rhsm_organization_id
+          | default(
+            on_prem_bastion_stage_manager_lab_credentials.lab_rhsm.organization_id
+            | default(''),
+            true
+          ),
           true
         )
       }}
     on_prem_bastion_stage_rendered_lab_rhsm_username: >-
       {{
-        on_prem_bastion_stage_project_lab_credentials.lab_rhsm_username
+        lab_rhsm_username
         | default(
-          on_prem_bastion_stage_manager_lab_credentials.lab_rhsm.username
-          | default(''),
+          on_prem_bastion_stage_project_lab_credentials.lab_rhsm_username
+          | default(
+            on_prem_bastion_stage_manager_lab_credentials.lab_rhsm.username
+            | default(''),
+            true
+          ),
           true
         )
       }}
     on_prem_bastion_stage_rendered_lab_rhsm_password: >-
       {{
-        on_prem_bastion_stage_project_lab_credentials.lab_rhsm_password
+        lab_rhsm_password
         | default(
-          on_prem_bastion_stage_manager_lab_credentials.lab_rhsm.password
-          | default(''),
+          on_prem_bastion_stage_project_lab_credentials.lab_rhsm_password
+          | default(
+            on_prem_bastion_stage_manager_lab_credentials.lab_rhsm.password
+            | default(''),
+            true
+          ),
           true
         )
       }}
     on_prem_bastion_stage_rendered_lab_rhsm_server_hostname: >-
       {{
-        on_prem_bastion_stage_project_lab_credentials.lab_rhsm_server_hostname
+        lab_rhsm_server_hostname
         | default(
-          on_prem_bastion_stage_manager_lab_credentials.lab_rhsm.server_hostname
-          | default(''),
+          on_prem_bastion_stage_project_lab_credentials.lab_rhsm_server_hostname
+          | default(
+            on_prem_bastion_stage_manager_lab_credentials.lab_rhsm.server_hostname
+            | default(''),
+            true
+          ),
           true
         )
       }}
@@ -430,7 +487,7 @@
     that:
       - >-
         on_prem_bastion_stage_remote_project_root
-        == bastion_client.project_root
+        == (bastion_client.project_parent ~ '/on-prem-openshift-demo')
     fail_msg: >-
       The staged project path {{
       on_prem_bastion_stage_remote_project_root }} did not match the bastion
@@ -439,7 +496,7 @@
 - name: Copy pull secret to the bastion
   ansible.builtin.copy:
     src: "{{ bastion_client.controller_pull_secret_file }}"
-    dest: "{{ bastion_client.secrets_root }}/pull-secret.txt"
+    dest: "{{ on_prem_bastion_stage_remote_secrets_root }}/pull-secret.txt"
     owner: "{{ bastion_vm.access.admin_user }}"
     group: "{{ bastion_vm.access.admin_user }}"
     mode: "0600"
@@ -453,10 +510,19 @@
     group: "{{ bastion_vm.access.admin_user }}"
     mode: "0600"
 
+- name: Copy pull secret into the staged stock AWS project secrets directory
+  ansible.builtin.copy:
+    src: "{{ bastion_client.controller_pull_secret_file }}"
+    dest: >-
+      {{ on_prem_bastion_stage_remote_stock_root }}/secrets/pull-secret.txt
+    owner: "{{ bastion_vm.access.admin_user }}"
+    group: "{{ bastion_vm.access.admin_user }}"
+    mode: "0600"
+
 - name: Copy hypervisor SSH private key to the bastion
   ansible.builtin.copy:
     src: "{{ bastion_client.controller_ssh_private_key_file }}"
-    dest: "{{ bastion_client.secrets_root }}/id_ed25519"
+    dest: "{{ on_prem_bastion_stage_remote_secrets_root }}/id_ed25519"
     owner: "{{ bastion_vm.access.admin_user }}"
     group: "{{ bastion_vm.access.admin_user }}"
     mode: "0600"
@@ -470,6 +536,16 @@
     group: "{{ bastion_vm.access.admin_user }}"
     mode: "0600"
 
+- name: >-
+    Copy hypervisor SSH private key into the staged stock AWS project secrets
+    directory
+  ansible.builtin.copy:
+    src: "{{ bastion_client.controller_ssh_private_key_file }}"
+    dest: "{{ on_prem_bastion_stage_remote_stock_root }}/secrets/id_ed25519"
+    owner: "{{ bastion_vm.access.admin_user }}"
+    group: "{{ bastion_vm.access.admin_user }}"
+    mode: "0600"
+
 - name: Normalize bastion hypervisor SSH private key permissions
   ansible.builtin.file:
     path: "{{ item }}"
@@ -477,13 +553,25 @@
     group: "{{ bastion_vm.access.admin_user }}"
     mode: "0600"
   loop:
-    - "{{ bastion_client.secrets_root }}/id_ed25519"
+    - "{{ on_prem_bastion_stage_remote_secrets_root }}/id_ed25519"
     - "{{ on_prem_bastion_stage_remote_project_root }}/secrets/id_ed25519"
+    - "{{ on_prem_bastion_stage_remote_stock_root }}/secrets/id_ed25519"
 
 - name: Copy hypervisor SSH public key to the bastion
   ansible.builtin.copy:
     src: "{{ bastion_client.controller_ssh_public_key_file }}"
-    dest: "{{ bastion_client.secrets_root }}/id_ed25519.pub"
+    dest: "{{ on_prem_bastion_stage_remote_secrets_root }}/id_ed25519.pub"
+    owner: "{{ bastion_vm.access.admin_user }}"
+    group: "{{ bastion_vm.access.admin_user }}"
+    mode: "0644"
+
+- name: >-
+    Copy hypervisor SSH public key into the staged stock AWS project secrets
+    directory
+  ansible.builtin.copy:
+    src: "{{ bastion_client.controller_ssh_public_key_file }}"
+    dest: >-
+      {{ on_prem_bastion_stage_remote_stock_root }}/secrets/id_ed25519.pub
     owner: "{{ bastion_vm.access.admin_user }}"
     group: "{{ bastion_vm.access.admin_user }}"
     mode: "0644"
@@ -585,10 +673,10 @@
 - name: Discover the latest rendered OpenShift tool version on the bastion
   ansible.builtin.shell: |
     set -euo pipefail
-    if [ ! -d "{{ bastion_client.tools_root }}" ]; then
+    if [ ! -d "{{ on_prem_bastion_stage_remote_tools_root }}" ]; then
       exit 0
     fi
-    find "{{ bastion_client.tools_root }}" -mindepth 1 -maxdepth 1 -type d \
+    find "{{ on_prem_bastion_stage_remote_tools_root }}" -mindepth 1 -maxdepth 1 -type d \
       ! -name current -printf '%f\n' | sort -V | tail -n 1
   args:
     executable: /bin/bash
@@ -603,7 +691,7 @@
 - name: Publish the stable current OpenShift tool symlink on the bastion
   ansible.builtin.file:
     src: >-
-      {{ bastion_client.tools_root }}/{{
+      {{ on_prem_bastion_stage_remote_tools_root }}/{{
       on_prem_bastion_stage_latest_tools_version }}
     dest: "{{ on_prem_bastion_stage_current_tools_link }}"
     state: link
@@ -629,20 +717,20 @@
       - "{{ item.acl }}"
       - "{{ item.path }}"
   loop:
-    - path: "{{ bastion_client.cluster_artifact_root }}/auth/kubeconfig"
+    - path: "{{ on_prem_bastion_stage_remote_cluster_artifact_root }}/auth/kubeconfig"
       acl: u:cloud-user:r
-    - path: "{{ bastion_client.cluster_artifact_root }}/auth/kubeconfig"
+    - path: "{{ on_prem_bastion_stage_remote_cluster_artifact_root }}/auth/kubeconfig"
       acl: g:access-linux-admin:r
-    - path: "{{ bastion_client.cluster_artifact_root }}/idm-ca.crt"
+    - path: "{{ on_prem_bastion_stage_remote_cluster_artifact_root }}/idm-ca.crt"
       acl: u:cloud-user:r
-    - path: "{{ bastion_client.cluster_artifact_root }}/idm-ca.crt"
+    - path: "{{ on_prem_bastion_stage_remote_cluster_artifact_root }}/idm-ca.crt"
       acl: g:access-linux-admin:r
   changed_when: true
   failed_when: false
 
 - name: Check whether the staged OpenShift kubeconfig already exists
   ansible.builtin.stat:
-    path: "{{ bastion_client.cluster_artifact_root }}/auth/kubeconfig"
+    path: "{{ on_prem_bastion_stage_remote_cluster_artifact_root }}/auth/kubeconfig"
   register: on_prem_bastion_stage_cluster_kubeconfig_stat
   changed_when: false
 
@@ -656,12 +744,12 @@
           [
             {
               'file_name': 'kubeconfig',
-              'src': bastion_client.cluster_artifact_root ~ '/auth/kubeconfig',
+              'src': on_prem_bastion_stage_remote_cluster_artifact_root ~ '/auth/kubeconfig',
               'mode': '0600'
             },
             {
               'file_name': 'kubeconfig.local',
-              'src': bastion_client.cluster_artifact_root ~ '/auth/kubeconfig',
+              'src': on_prem_bastion_stage_remote_cluster_artifact_root ~ '/auth/kubeconfig',
               'mode': '0600'
             }
           ]

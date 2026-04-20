@@ -1,0 +1,7 @@
+---
+# Recommended additive override for an on-prem host that is effectively
+# m5.metal-like and can run the full validated lab profile.
+#
+# This file is intentionally a no-op. The full profile is the stock default in
+# the repo; copying this file simply records the operator's sizing decision.
+

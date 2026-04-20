@@ -146,8 +146,10 @@ Edit these files before the first run:
 - <a href="../inventory/hosts.yml"><kbd>inventory/hosts.yml</kbd></a>
 - <a href="../inventory/group_vars/all.yml"><kbd>inventory/group_vars/all.yml</kbd></a>
 
-For a smaller host that should stop at mirror-registry, start from:
+For hosts that should stop before cluster build, start from one of:
 
+- <a href="../inventory/overrides/core-services.yml.example"><kbd>inventory/overrides/core-services.yml.example</kbd></a>
+- <a href="../inventory/overrides/core-services-ad.yml.example"><kbd>inventory/overrides/core-services-ad.yml.example</kbd></a>
 - <a href="../inventory/overrides/precluster-64g.yml.example"><kbd>inventory/overrides/precluster-64g.yml.example</kbd></a>
 
 What must be correct:
@@ -161,8 +163,8 @@ What must be correct:
 - any optional `on_prem_lvm_lv_name_prefix`
 - any project-local credential overrides
 
-If you are using the reduced pre-cluster profile, copy the example override and
-edit the actual device path before the first run:
+If you are using the reduced `precluster-64g` profile, copy the example
+override and edit the actual device path before the first run:
 
 ```bash
 cd <project-root>/on-prem-openshift-demo
@@ -193,6 +195,15 @@ cd <project-root>/on-prem-openshift-demo
 
 ./scripts/run_local_playbook.sh playbooks/bootstrap/site.yml \
   -e @inventory/overrides/precluster-64g.yml
+```
+
+For the support-services-only AD profile:
+
+```bash
+cd <project-root>/on-prem-openshift-demo
+
+./scripts/run_local_playbook.sh playbooks/bootstrap/site.yml \
+  -e @inventory/overrides/core-services-ad.yml.example
 ```
 
 This is the on-prem equivalent of the early AWS host steps:
@@ -250,6 +261,15 @@ cd <project-root>/on-prem-openshift-demo
   -e @inventory/overrides/precluster-64g.yml
 ```
 
+For the support-services-only AD profile:
+
+```bash
+cd <project-root>/on-prem-openshift-demo
+
+./scripts/run_local_playbook.sh playbooks/site-bootstrap.yml \
+  -e @inventory/overrides/core-services-ad.yml.example
+```
+
 After this, the bastion should exist and the project should be staged.
 
 ## 7. Hand Back To The Stock Runbook
@@ -263,15 +283,42 @@ Choose the next stock runbook entry based on what you already completed:
 - if you are still walking the support-services flow by hand from the bastion build:
   - <a href="../../aws-metal-openshift-demo/docs/manual-process.md#12-build-the-bastion-vm"><kbd>Resume at AWS manual step 12</kbd></a>
 
-For automation rather than the hand-run sequence, use:
+For automation rather than the hand-run sequence on a cluster-capable host,
+use:
 
 ```bash
 cd <project-root>/on-prem-openshift-demo
 ./scripts/run_remote_bastion_playbook.sh playbooks/site-lab.yml
 ```
 
-For the reduced pre-cluster profile, stop at mirror-registry instead of
-continuing into cluster build:
+For support-services-only profiles such as `core-services` or
+`core-services-ad`, stop after the support-service path instead of continuing
+into cluster build:
+
+```bash
+cd <project-root>/on-prem-openshift-demo
+./scripts/run_remote_bastion_playbook.sh playbooks/site-precluster.yml \
+  -e @inventory/overrides/core-services-ad.yml.example
+```
+
+Or, from the staged on-prem tree on bastion:
+
+```bash
+cd <staged-on-prem-project-root>
+./scripts/run_bastion_playbook.sh playbooks/site-precluster.yml \
+  -e @inventory/overrides/core-services-ad.yml.example
+```
+
+That path stops after:
+
+- optional `ad-server`
+- `idm`
+- optional `idm-ad-trust`
+- `bastion-join`
+- `mirror-registry`
+
+For the reduced `precluster-64g` profile, also stop at mirror-registry instead
+of continuing into cluster build:
 
 ```bash
 cd <staged-on-prem-project-root>

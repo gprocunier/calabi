@@ -53,6 +53,11 @@ Required host contract:
 - libvirt / KVM capable hardware
 - an uplink that OVS can build around
 - SSH reachability from the operator workstation
+- passwordless SSH access for `root` on the hypervisor using the same project
+  keypair you will configure in:
+  - `inventory/hosts.yml` via `ansible_ssh_private_key_file`
+  - the matching public key already present in `/root/.ssh/authorized_keys` on
+    `virt-01`
 - enough local storage and RAM for the selected guest footprint
 - a lab-management path from bastion back to the hypervisor, with explicit
   on-prem runtime settings for:
@@ -78,6 +83,11 @@ Keep the access paths separate:
   operator workstation
 - `on_prem_bastion_hypervisor_host` and `on_prem_bastion_hypervisor_user`
   describe how **bastion** reaches that same hypervisor on the lab network
+
+For the current on-prem flow, treat root SSH trust as a prerequisite, not a
+bootstrap output. The workstation-side plays expect to connect to the
+hypervisor non-interactively with the configured project key before they can
+prepare the host.
 
 ## The LVM Storage Contract
 
@@ -189,11 +199,12 @@ Use the same source and placement guidance as the stock path:
 Before bootstrap, validate:
 
 ```bash
-ssh <hypervisor-admin-user>@<hypervisor-management-ip> 'hostnamectl --static'
-ssh <hypervisor-admin-user>@<hypervisor-management-ip> 'sudo vgs'
-ssh <hypervisor-admin-user>@<hypervisor-management-ip> 'sudo virt-host-validate'
+ssh -i ~/.ssh/id_ed25519 root@<hypervisor-management-ip> 'hostnamectl --static'
+ssh -i ~/.ssh/id_ed25519 root@<hypervisor-management-ip> 'vgs'
+ssh -i ~/.ssh/id_ed25519 root@<hypervisor-management-ip> 'virt-host-validate'
 test -f ~/pull-secret.txt
 test -f ~/.ssh/id_ed25519
+ssh-keygen -y -f ~/.ssh/id_ed25519 >/dev/null
 ```
 
 From the repo:

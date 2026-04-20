@@ -1,0 +1,148 @@
+---
+# Example additive override for the Core support-services footprint plus a
+# compact 3-node converged OpenShift cluster.
+
+on_prem_lvm_volume_group: calabi_lab_vg
+on_prem_lvm_seed_enabled: true
+on_prem_lvm_seed_device: /dev/nvme0n1
+on_prem_lvm_seed_force: true
+
+guest_volumes:
+  - name: idm-01
+    size_gib: 120
+    guest_symlink: /dev/ebs/idm-01
+  - name: bastion-01
+    size_gib: 120
+    guest_symlink: /dev/ebs/bastion-01
+  - name: mirror-registry
+    size_gib: 400
+    guest_symlink: /dev/ebs/mirror-registry
+  - name: ocp-master-01
+    size_gib: 250
+    guest_symlink: /dev/ebs/ocp-master-01
+  - name: ocp-master-02
+    size_gib: 250
+    guest_symlink: /dev/ebs/ocp-master-02
+  - name: ocp-master-03
+    size_gib: 250
+    guest_symlink: /dev/ebs/ocp-master-03
+
+lab_build_ad_server: false
+
+openshift_cluster_nodes:
+  - name: ocp-master-01
+    role: control-plane
+    mac_address: "52:54:00:20:00:10"
+    resources:
+      vcpus: 8
+      memory_mb: 24576
+    performance_domain:
+      tier: gold
+      iothreads: 0
+    disks:
+      root:
+        path: /dev/ebs/ocp-master-01
+        serial: ocpmaster01root
+  - name: ocp-master-02
+    role: control-plane
+    mac_address: "52:54:00:20:00:11"
+    resources:
+      vcpus: 8
+      memory_mb: 24576
+    performance_domain:
+      tier: gold
+      iothreads: 0
+    disks:
+      root:
+        path: /dev/ebs/ocp-master-02
+        serial: ocpmaster02root
+  - name: ocp-master-03
+    role: control-plane
+    mac_address: "52:54:00:20:00:12"
+    resources:
+      vcpus: 8
+      memory_mb: 24576
+    performance_domain:
+      tier: gold
+      iothreads: 0
+    disks:
+      root:
+        path: /dev/ebs/ocp-master-03
+        serial: ocpmaster03root
+
+openshift_install_cluster:
+  nodes:
+    - name: ocp-master-01
+      role: control-plane
+      fqdn: ocp-master-01.ocp.workshop.lan
+      mac_address: "52:54:00:20:00:10"
+      machine_network:
+        ipv4_address: 172.16.10.11
+        prefix_length: 24
+      storage_network:
+        ipv4_address: 172.16.11.11
+        prefix_length: 24
+    - name: ocp-master-02
+      role: control-plane
+      fqdn: ocp-master-02.ocp.workshop.lan
+      mac_address: "52:54:00:20:00:11"
+      machine_network:
+        ipv4_address: 172.16.10.12
+        prefix_length: 24
+      storage_network:
+        ipv4_address: 172.16.11.12
+        prefix_length: 24
+    - name: ocp-master-03
+      role: control-plane
+      fqdn: ocp-master-03.ocp.workshop.lan
+      mac_address: "52:54:00:20:00:12"
+      machine_network:
+        ipv4_address: 172.16.10.13
+        prefix_length: 24
+      storage_network:
+        ipv4_address: 172.16.11.13
+        prefix_length: 24
+
+openshift_post_install_enable_infra_conversion: false
+openshift_post_install_enable_nmstate: false
+openshift_post_install_enable_odf: false
+openshift_post_install_enable_keycloak: false
+openshift_post_install_enable_oidc_auth: false
+openshift_post_install_enable_ldap_auth: false
+openshift_post_install_enable_virtualization: false
+openshift_post_install_enable_pipelines: false
+openshift_post_install_enable_web_terminal: false
+openshift_post_install_enable_aap: false
+openshift_post_install_enable_netobserv: false
+
+lab_host_resource_management:
+  enabled: true
+  host_policy:
+    manage_kernel_cmdline: false
+    manage_systemd_cpu_affinity: true
+    manage_irqbalance_guest_ban: false
+  cpu_pools:
+    host_reserved: 0-5,24-29
+    host_housekeeping: 0-1,24-25
+    host_emulator: 2-5,26-29
+    guest_domain: 6-23,30-47
+  kernel_cmdline:
+    systemd_cpu_affinity: systemd.cpu_affinity=0-5,24-29
+    irqaffinity: irqaffinity=0-5,24-29
+  performance_domains:
+    gold:
+      partition: /machine/gold
+      cpu_shares: 512
+      cpu_weight: 512
+      default_iothreads: 0
+    silver:
+      partition: /machine/silver
+      cpu_shares: 333
+      cpu_weight: 333
+      default_iothreads: 0
+    bronze:
+      partition: /machine/bronze
+      cpu_shares: 167
+      cpu_weight: 167
+      default_iothreads: 0
+

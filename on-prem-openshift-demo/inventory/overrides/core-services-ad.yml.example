@@ -1,0 +1,57 @@
+---
+# Example additive override for the Core support-services footprint plus AD:
+# bastion + IdM + mirror-registry + AD.
+
+on_prem_lvm_volume_group: calabi_lab_vg
+on_prem_lvm_seed_enabled: true
+on_prem_lvm_seed_device: /dev/nvme0n1
+on_prem_lvm_seed_force: true
+
+guest_volumes:
+  - name: ad-01
+    size_gib: 60
+    guest_symlink: /dev/ebs/ad-01
+  - name: idm-01
+    size_gib: 120
+    guest_symlink: /dev/ebs/idm-01
+  - name: bastion-01
+    size_gib: 120
+    guest_symlink: /dev/ebs/bastion-01
+  - name: mirror-registry
+    size_gib: 400
+    guest_symlink: /dev/ebs/mirror-registry
+
+lab_build_ad_server: true
+mirror_registry_execute_mirror_requested: false
+
+lab_host_resource_management:
+  enabled: true
+  host_policy:
+    manage_kernel_cmdline: false
+    manage_systemd_cpu_affinity: true
+    manage_irqbalance_guest_ban: false
+  cpu_pools:
+    host_reserved: 0-5,24-29
+    host_housekeeping: 0-1,24-25
+    host_emulator: 2-5,26-29
+    guest_domain: 6-23,30-47
+  kernel_cmdline:
+    systemd_cpu_affinity: systemd.cpu_affinity=0-5,24-29
+    irqaffinity: irqaffinity=0-5,24-29
+  performance_domains:
+    gold:
+      partition: /machine/gold
+      cpu_shares: 512
+      cpu_weight: 512
+      default_iothreads: 0
+    silver:
+      partition: /machine/silver
+      cpu_shares: 333
+      cpu_weight: 333
+      default_iothreads: 0
+    bronze:
+      partition: /machine/bronze
+      cpu_shares: 167
+      cpu_weight: 167
+      default_iothreads: 0
+

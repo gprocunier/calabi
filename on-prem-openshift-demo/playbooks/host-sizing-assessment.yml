@@ -1,0 +1,930 @@
+---
+- name: Assess on-prem virt-01 capacity and recommend an inventory override
+  hosts: aws_metal
+  become: true
+  gather_facts: true
+
+  vars:
+    on_prem_host_assessment_generated_root: >-
+      {{ playbook_dir | dirname }}/generated/host-sizing
+    on_prem_host_assessment_full_override: >-
+      inventory/overrides/full-m5-metal.yml.example
+    on_prem_host_assessment_core_ad_openshift_infra_override: >-
+      inventory/overrides/core-ad-plus-openshift-3node-3infra.yml.example
+    on_prem_host_assessment_core_ad_override: >-
+      inventory/overrides/core-services-ad.yml.example
+    on_prem_host_assessment_core_openshift_override: >-
+      inventory/overrides/core-plus-openshift-3node.yml.example
+    on_prem_host_assessment_core_override: >-
+      inventory/overrides/core-services.yml.example
+    on_prem_host_assessment_custom_override: >-
+      inventory/overrides/custom-sizing-required.yml.example
+    on_prem_host_assessment_full_profile:
+      profile_name: full-m5-metal
+      min_logical_cpus: 96
+      min_memory_gib: 384
+      min_threads_per_core: 2
+    on_prem_host_assessment_core_ad_openshift_infra_profile:
+      profile_name: core-ad-plus-openshift-3node-3infra
+      min_logical_cpus: 48
+      min_memory_gib: 288
+      min_threads_per_core: 2
+    on_prem_host_assessment_core_ad_profile:
+      profile_name: core-services-ad
+      min_logical_cpus: 48
+      min_memory_gib: 64
+      min_threads_per_core: 2
+    on_prem_host_assessment_core_openshift_profile:
+      profile_name: core-plus-openshift-3node
+      min_logical_cpus: 48
+      min_memory_gib: 112
+      min_threads_per_core: 2
+    on_prem_host_assessment_core_profile:
+      profile_name: core-services
+      min_logical_cpus: 48
+      min_memory_gib: 56
+      min_threads_per_core: 2
+    on_prem_host_assessment_storage_headroom_gib: 128
+
+  pre_tasks:
+    - name: Load on-prem shared inventory defaults explicitly
+      ansible.builtin.include_vars:
+        file: ../inventory/group_vars/all.yml
+
+    - name: Load the full guest volume inventory
+      ansible.builtin.include_vars:
+        file: ../../aws-metal-openshift-demo/cloudformation/virt-01-volume-inventory.yml
+        name: on_prem_host_assessment_full_inventory
+
+    - name: Load the core-plus-openshift guest volume inventory
+      ansible.builtin.include_vars:
+        file: ../inventory/overrides/core-plus-openshift-3node.yml.example
+        name: on_prem_host_assessment_core_openshift_inventory
+
+    - name: Load the core-ad-plus-openshift-3node-3infra guest volume inventory
+      ansible.builtin.include_vars:
+        file: ../inventory/overrides/core-ad-plus-openshift-3node-3infra.yml.example
+        name: on_prem_host_assessment_core_ad_openshift_infra_inventory
+
+    - name: Load the core-services-ad guest volume inventory
+      ansible.builtin.include_vars:
+        file: ../inventory/overrides/core-services-ad.yml.example
+        name: on_prem_host_assessment_core_ad_inventory
+
+    - name: Load the core-services guest volume inventory
+      ansible.builtin.include_vars:
+        file: ../inventory/overrides/core-services.yml.example
+        name: on_prem_host_assessment_core_inventory
+
+    - name: Publish the full guest volume inventory
+      ansible.builtin.set_fact:
+        on_prem_host_assessment_full_guest_volumes: >-
+          {{
+            on_prem_host_assessment_full_inventory.guest_volumes | default([])
+          }}
+
+    - name: Publish the core-plus-openshift guest volume inventory
+      ansible.builtin.set_fact:
+        on_prem_host_assessment_core_openshift_guest_volumes: >-
+          {{
+            on_prem_host_assessment_core_openshift_inventory.guest_volumes
+            | default([])
+          }}
+
+    - name: Publish the core-ad-plus-openshift-3node-3infra guest volume inventory
+      ansible.builtin.set_fact:
+        on_prem_host_assessment_core_ad_openshift_infra_guest_volumes: >-
+          {{
+            on_prem_host_assessment_core_ad_openshift_infra_inventory.guest_volumes
+            | default([])
+          }}
+
+    - name: Publish the core-services-ad guest volume inventory
+      ansible.builtin.set_fact:
+        on_prem_host_assessment_core_ad_guest_volumes: >-
+          {{
+            on_prem_host_assessment_core_ad_inventory.guest_volumes
+            | default([])
+          }}
+
+    - name: Publish the core-services guest volume inventory
+      ansible.builtin.set_fact:
+        on_prem_host_assessment_core_guest_volumes: >-
+          {{
+            on_prem_host_assessment_core_inventory.guest_volumes
+            | default([])
+          }}
+
+  tasks:
+    - name: Query LVM volume-group capacity on the hypervisor
+      ansible.builtin.command:
+        argv:
+          - vgs
+          - --reportformat
+          - json
+          - --units
+          - g
+          - --nosuffix
+          - -o
+          - vg_name,vg_size,vg_free
+      register: on_prem_host_assessment_vgs
+      changed_when: false
+
+    - name: Query block-device inventory on the hypervisor
+      ansible.builtin.command:
+        argv:
+          - lsblk
+          - --json
+          - --bytes
+          - --output
+          - NAME,SIZE,TYPE,MOUNTPOINT
+      register: on_prem_host_assessment_lsblk
+      changed_when: false
+
+    - name: Derive structured hypervisor capacity facts
+      ansible.builtin.set_fact:
+        on_prem_host_assessment_vgs_json: >-
+          {{ on_prem_host_assessment_vgs.stdout | from_json }}
+        on_prem_host_assessment_lsblk_json: >-
+          {{ on_prem_host_assessment_lsblk.stdout | from_json }}
+        on_prem_host_assessment_logical_cpus: >-
+          {{
+            (ansible_facts.processor_vcpus
+            | default(ansible_facts.processor_nproc)
+            | int)
+          }}
+        on_prem_host_assessment_threads_per_core: >-
+          {{ (ansible_facts.processor_threads_per_core | default(1) | int) }}
+        on_prem_host_assessment_sockets: >-
+          {{ (ansible_facts.processor_count | default(1) | int) }}
+        on_prem_host_assessment_cores_per_socket: >-
+          {{ (ansible_facts.processor_cores | default(0) | int) }}
+        on_prem_host_assessment_physical_cores: >-
+          {{
+            (
+              ansible_facts.processor_cores | default(0) | int
+            ) * (
+              ansible_facts.processor_count | default(1) | int
+            )
+          }}
+        on_prem_host_assessment_memory_gib: >-
+          {{
+            (
+              ansible_facts.memory_mb.real.total | default(0) | float
+            ) / 1024
+          }}
+        on_prem_host_assessment_full_storage_gib: >-
+          {{
+            on_prem_host_assessment_full_guest_volumes
+            | map(attribute='size_gib')
+            | map('int')
+            | sum
+          }}
+        on_prem_host_assessment_core_ad_openshift_infra_storage_gib: >-
+          {{
+            on_prem_host_assessment_core_ad_openshift_infra_guest_volumes
+            | map(attribute='size_gib')
+            | map('int')
+            | sum
+          }}
+        on_prem_host_assessment_core_ad_storage_gib: >-
+          {{
+            on_prem_host_assessment_core_ad_guest_volumes
+            | map(attribute='size_gib')
+            | map('int')
+            | sum
+          }}
+        on_prem_host_assessment_core_openshift_storage_gib: >-
+          {{
+            on_prem_host_assessment_core_openshift_guest_volumes
+            | map(attribute='size_gib')
+            | map('int')
+            | sum
+          }}
+        on_prem_host_assessment_core_storage_gib: >-
+          {{
+            on_prem_host_assessment_core_guest_volumes
+            | map(attribute='size_gib')
+            | map('int')
+            | sum
+          }}
+        on_prem_host_assessment_core_openshift_required_seed_gib: >-
+          {{
+            (
+              on_prem_host_assessment_core_openshift_guest_volumes
+              | map(attribute='size_gib')
+              | map('int')
+              | sum
+            ) + (on_prem_host_assessment_storage_headroom_gib | int)
+          }}
+        on_prem_host_assessment_core_ad_openshift_infra_required_seed_gib: >-
+          {{
+            (
+              on_prem_host_assessment_core_ad_openshift_infra_guest_volumes
+              | map(attribute='size_gib')
+              | map('int')
+              | sum
+            ) + (on_prem_host_assessment_storage_headroom_gib | int)
+          }}
+        on_prem_host_assessment_core_ad_required_seed_gib: >-
+          {{
+            (
+              on_prem_host_assessment_core_ad_guest_volumes
+              | map(attribute='size_gib')
+              | map('int')
+              | sum
+            ) + (on_prem_host_assessment_storage_headroom_gib | int)
+          }}
+        on_prem_host_assessment_core_required_seed_gib: >-
+          {{
+            (
+              on_prem_host_assessment_core_guest_volumes
+              | map(attribute='size_gib')
+              | map('int')
+              | sum
+            ) + (on_prem_host_assessment_storage_headroom_gib | int)
+          }}
+
+    - name: Select the configured guest volume group from the LVM report
+      ansible.builtin.set_fact:
+        on_prem_host_assessment_target_vg: >-
+          {{
+            (
+              on_prem_host_assessment_vgs_json.report[0].vg
+              | selectattr('vg_name', 'equalto', on_prem_lvm_volume_group)
+              | list
+              | first
+            ) | default({})
+          }}
+        on_prem_host_assessment_detected_vg_names: >-
+          {{
+            on_prem_host_assessment_vgs_json.report[0].vg
+            | map(attribute='vg_name')
+            | list
+          }}
+
+    - name: Derive free-space facts for the configured guest volume group
+      ansible.builtin.set_fact:
+        on_prem_host_assessment_vg_found: >-
+          {{ on_prem_host_assessment_target_vg | length > 0 }}
+        on_prem_host_assessment_vg_size_gib: >-
+          {{ (on_prem_host_assessment_target_vg.vg_size | default(0) | float) }}
+        on_prem_host_assessment_vg_free_gib: >-
+          {{ (on_prem_host_assessment_target_vg.vg_free | default(0) | float) }}
+
+    - name: Derive candidate raw disks for MVP guest-VG seeding
+      ansible.builtin.set_fact:
+        on_prem_host_assessment_viable_seed_candidates: []
+
+    - name: Collect viable raw disks for guest-VG seeding
+      ansible.builtin.set_fact:
+        on_prem_host_assessment_viable_seed_candidates: >-
+          {{
+            (on_prem_host_assessment_viable_seed_candidates | default([]))
+            + [item]
+          }}
+      loop: "{{ on_prem_host_assessment_lsblk_json.blockdevices }}"
+      when:
+        - item.type | default('') == 'disk'
+        - item.mountpoint | default(none) == none
+        - (item.children | default([]) | length) == 0
+        - (item.size | default(0) | int) > 0
+        - >-
+          (item.size | int) >=
+          ((on_prem_host_assessment_core_required_seed_gib | int)
+          * 1024 * 1024 * 1024)
+
+    - name: Publish MVP storage readiness facts
+      ansible.builtin.set_fact:
+        on_prem_host_assessment_preferred_seed_disk: >-
+          {{
+            (
+              on_prem_host_assessment_viable_seed_candidates
+              | map(attribute='name')
+              | list
+              | first
+            ) | default('')
+          }}
+
+    - name: Publish derived storage readiness gates
+      ansible.builtin.set_fact:
+        on_prem_host_assessment_core_openshift_storage_ready: >-
+          {{
+            (
+              on_prem_host_assessment_vg_found
+              and
+              (on_prem_host_assessment_vg_free_gib | float)
+              >= (on_prem_host_assessment_core_openshift_storage_gib | float)
+            )
+            or
+            (
+              (on_prem_host_assessment_preferred_seed_disk | length) > 0
+            )
+          }}
+        on_prem_host_assessment_core_ad_openshift_infra_storage_ready: >-
+          {{
+            (
+              on_prem_host_assessment_vg_found
+              and
+              (on_prem_host_assessment_vg_free_gib | float)
+              >= (
+                on_prem_host_assessment_core_ad_openshift_infra_storage_gib
+                | float
+              )
+            )
+            or
+            (
+              (on_prem_host_assessment_preferred_seed_disk | length) > 0
+            )
+          }}
+        on_prem_host_assessment_core_ad_storage_ready: >-
+          {{
+            (
+              on_prem_host_assessment_vg_found
+              and
+              (on_prem_host_assessment_vg_free_gib | float)
+              >= (on_prem_host_assessment_core_ad_storage_gib | float)
+            )
+            or
+            (
+              (on_prem_host_assessment_preferred_seed_disk | length) > 0
+            )
+          }}
+        on_prem_host_assessment_core_storage_ready: >-
+          {{
+            (
+              on_prem_host_assessment_vg_found
+              and
+              (on_prem_host_assessment_vg_free_gib | float)
+              >= (on_prem_host_assessment_core_storage_gib | float)
+            )
+            or
+            (
+              (on_prem_host_assessment_preferred_seed_disk | length) > 0
+            )
+          }}
+
+    - name: Derive profile gap lists
+      ansible.builtin.set_fact:
+        on_prem_host_assessment_full_gaps: >-
+          {{
+            []
+            + (
+              [
+                'configured guest VG `' ~ on_prem_lvm_volume_group ~ '` was not found'
+              ]
+              if not on_prem_host_assessment_vg_found
+              else []
+            )
+            + (
+              [
+                'logical CPU count '
+                ~ (on_prem_host_assessment_logical_cpus | string)
+                ~ ' is below '
+                ~ (
+                  on_prem_host_assessment_full_profile.min_logical_cpus
+                  | string
+                )
+              ]
+              if (on_prem_host_assessment_logical_cpus | int)
+                < (on_prem_host_assessment_full_profile.min_logical_cpus | int)
+              else []
+            )
+            + (
+              [
+                'memory '
+                ~ ('%.1f' | format(on_prem_host_assessment_memory_gib | float))
+                ~ ' GiB is below '
+                ~ (
+                  on_prem_host_assessment_full_profile.min_memory_gib
+                  | string
+                )
+                ~ ' GiB'
+              ]
+              if (on_prem_host_assessment_memory_gib | float)
+                < (on_prem_host_assessment_full_profile.min_memory_gib | float)
+              else []
+            )
+            + (
+              [
+                'threads per core '
+                ~ (on_prem_host_assessment_threads_per_core | string)
+                ~ ' is below '
+                ~ (
+                  on_prem_host_assessment_full_profile.min_threads_per_core
+                  | string
+                )
+              ]
+              if (on_prem_host_assessment_threads_per_core | int)
+                < (
+                  on_prem_host_assessment_full_profile.min_threads_per_core
+                  | int
+                )
+              else []
+            )
+            + (
+              [
+                'free space in VG `'
+                ~ on_prem_lvm_volume_group
+                ~ '` ('
+                ~ ('%.1f' | format(on_prem_host_assessment_vg_free_gib | float))
+                ~ ' GiB) is below the full-profile raw LV footprint ('
+                ~ ('%.0f' | format(on_prem_host_assessment_full_storage_gib | float))
+                ~ ' GiB)'
+              ]
+              if on_prem_host_assessment_vg_found and
+                (on_prem_host_assessment_vg_free_gib | float)
+                < (on_prem_host_assessment_full_storage_gib | float)
+              else []
+            )
+          }}
+        on_prem_host_assessment_core_openshift_gaps: >-
+          {{
+            []
+            + (
+              [
+                'no existing guest VG `'
+                ~ on_prem_lvm_volume_group
+                ~ '` was found and no raw disk large enough to seed the core+openshift profile was detected'
+              ]
+              if (
+                not on_prem_host_assessment_vg_found
+                and (on_prem_host_assessment_preferred_seed_disk | length) == 0
+              )
+              else []
+            )
+            + (
+              [
+                'logical CPU count '
+                ~ (on_prem_host_assessment_logical_cpus | string)
+                ~ ' is below '
+                ~ (
+                  on_prem_host_assessment_core_openshift_profile.min_logical_cpus
+                  | string
+                )
+              ]
+              if (on_prem_host_assessment_logical_cpus | int)
+                < (
+                  on_prem_host_assessment_core_openshift_profile.min_logical_cpus
+                  | int
+                )
+              else []
+            )
+            + (
+              [
+                'memory '
+                ~ ('%.1f' | format(on_prem_host_assessment_memory_gib | float))
+                ~ ' GiB is below '
+                ~ (
+                  on_prem_host_assessment_core_openshift_profile.min_memory_gib
+                  | string
+                )
+                ~ ' GiB'
+              ]
+              if (on_prem_host_assessment_memory_gib | float)
+                < (
+                  on_prem_host_assessment_core_openshift_profile.min_memory_gib
+                  | float
+                )
+              else []
+            )
+            + (
+              [
+                'threads per core '
+                ~ (on_prem_host_assessment_threads_per_core | string)
+                ~ ' is below '
+                ~ (
+                  on_prem_host_assessment_core_openshift_profile.min_threads_per_core
+                  | string
+                )
+              ]
+              if (on_prem_host_assessment_threads_per_core | int)
+                < (
+                  on_prem_host_assessment_core_openshift_profile.min_threads_per_core
+                  | int
+                )
+              else []
+            )
+            + (
+              [
+                'free space in VG `'
+                ~ on_prem_lvm_volume_group
+                ~ '` ('
+                ~ ('%.1f' | format(on_prem_host_assessment_vg_free_gib | float))
+                ~ ' GiB) is below the core+openshift raw LV footprint ('
+                ~ ('%.0f' | format(on_prem_host_assessment_core_openshift_storage_gib | float))
+                ~ ' GiB)'
+              ]
+              if on_prem_host_assessment_vg_found and
+                (on_prem_host_assessment_vg_free_gib | float)
+                < (on_prem_host_assessment_core_openshift_storage_gib | float)
+                and (on_prem_host_assessment_preferred_seed_disk | length) == 0
+              else []
+            )
+          }}
+        on_prem_host_assessment_core_ad_openshift_infra_gaps: >-
+          {{
+            []
+            + (
+              [
+                'no existing guest VG `'
+                ~ on_prem_lvm_volume_group
+                ~ '` was found and no raw disk large enough to seed the core-ad+openshift-3node-3infra profile was detected'
+              ]
+              if (
+                not on_prem_host_assessment_vg_found
+                and (on_prem_host_assessment_preferred_seed_disk | length) == 0
+              )
+              else []
+            )
+            + (
+              [
+                'logical CPU count '
+                ~ (on_prem_host_assessment_logical_cpus | string)
+                ~ ' is below '
+                ~ (
+                  on_prem_host_assessment_core_ad_openshift_infra_profile.min_logical_cpus
+                  | string
+                )
+              ]
+              if (on_prem_host_assessment_logical_cpus | int)
+                < (
+                  on_prem_host_assessment_core_ad_openshift_infra_profile.min_logical_cpus
+                  | int
+                )
+              else []
+            )
+            + (
+              [
+                'memory '
+                ~ ('%.1f' | format(on_prem_host_assessment_memory_gib | float))
+                ~ ' GiB is below '
+                ~ (
+                  on_prem_host_assessment_core_ad_openshift_infra_profile.min_memory_gib
+                  | string
+                )
+                ~ ' GiB'
+              ]
+              if (on_prem_host_assessment_memory_gib | float)
+                < (
+                  on_prem_host_assessment_core_ad_openshift_infra_profile.min_memory_gib
+                  | float
+                )
+              else []
+            )
+            + (
+              [
+                'threads per core '
+                ~ (on_prem_host_assessment_threads_per_core | string)
+                ~ ' is below '
+                ~ (
+                  on_prem_host_assessment_core_ad_openshift_infra_profile.min_threads_per_core
+                  | string
+                )
+              ]
+              if (on_prem_host_assessment_threads_per_core | int)
+                < (
+                  on_prem_host_assessment_core_ad_openshift_infra_profile.min_threads_per_core
+                  | int
+                )
+              else []
+            )
+            + (
+              [
+                'free space in VG `'
+                ~ on_prem_lvm_volume_group
+                ~ '` ('
+                ~ ('%.1f' | format(on_prem_host_assessment_vg_free_gib | float))
+                ~ ' GiB) is below the core-ad+openshift-3node-3infra raw LV footprint ('
+                ~ ('%.0f' | format(on_prem_host_assessment_core_ad_openshift_infra_storage_gib | float))
+                ~ ' GiB)'
+              ]
+              if on_prem_host_assessment_vg_found and
+                (on_prem_host_assessment_vg_free_gib | float)
+                < (on_prem_host_assessment_core_ad_openshift_infra_storage_gib | float)
+                and (on_prem_host_assessment_preferred_seed_disk | length) == 0
+              else []
+            )
+          }}
+        on_prem_host_assessment_core_ad_gaps: >-
+          {{
+            []
+            + (
+              [
+                'no existing guest VG `'
+                ~ on_prem_lvm_volume_group
+                ~ '` was found and no raw disk large enough to seed the core-services-ad profile was detected'
+              ]
+              if (
+                not on_prem_host_assessment_vg_found
+                and (on_prem_host_assessment_preferred_seed_disk | length) == 0
+              )
+              else []
+            )
+            + (
+              [
+                'logical CPU count '
+                ~ (on_prem_host_assessment_logical_cpus | string)
+                ~ ' is below '
+                ~ (
+                  on_prem_host_assessment_core_ad_profile.min_logical_cpus
+                  | string
+                )
+              ]
+              if (on_prem_host_assessment_logical_cpus | int)
+                < (
+                  on_prem_host_assessment_core_ad_profile.min_logical_cpus
+                  | int
+                )
+              else []
+            )
+            + (
+              [
+                'memory '
+                ~ ('%.1f' | format(on_prem_host_assessment_memory_gib | float))
+                ~ ' GiB is below '
+                ~ (
+                  on_prem_host_assessment_core_ad_profile.min_memory_gib
+                  | string
+                )
+                ~ ' GiB'
+              ]
+              if (on_prem_host_assessment_memory_gib | float)
+                < (on_prem_host_assessment_core_ad_profile.min_memory_gib | float)
+              else []
+            )
+            + (
+              [
+                'threads per core '
+                ~ (on_prem_host_assessment_threads_per_core | string)
+                ~ ' is below '
+                ~ (
+                  on_prem_host_assessment_core_ad_profile.min_threads_per_core
+                  | string
+                )
+              ]
+              if (on_prem_host_assessment_threads_per_core | int)
+                < (
+                  on_prem_host_assessment_core_ad_profile.min_threads_per_core
+                  | int
+                )
+              else []
+            )
+            + (
+              [
+                'free space in VG `'
+                ~ on_prem_lvm_volume_group
+                ~ '` ('
+                ~ ('%.1f' | format(on_prem_host_assessment_vg_free_gib | float))
+                ~ ' GiB) is below the core-services-ad raw LV footprint ('
+                ~ ('%.0f' | format(on_prem_host_assessment_core_ad_storage_gib | float))
+                ~ ' GiB)'
+              ]
+              if on_prem_host_assessment_vg_found and
+                (on_prem_host_assessment_vg_free_gib | float)
+                < (on_prem_host_assessment_core_ad_storage_gib | float)
+                and (on_prem_host_assessment_preferred_seed_disk | length) == 0
+              else []
+            )
+          }}
+        on_prem_host_assessment_core_gaps: >-
+          {{
+            []
+            + (
+              [
+                'no existing guest VG `'
+                ~ on_prem_lvm_volume_group
+                ~ '` was found and no raw disk large enough to seed the core-services profile was detected'
+              ]
+              if (
+                not on_prem_host_assessment_vg_found
+                and (on_prem_host_assessment_preferred_seed_disk | length) == 0
+              )
+              else []
+            )
+            + (
+              [
+                'logical CPU count '
+                ~ (on_prem_host_assessment_logical_cpus | string)
+                ~ ' is below '
+                ~ (
+                  on_prem_host_assessment_core_profile.min_logical_cpus
+                  | string
+                )
+              ]
+              if (on_prem_host_assessment_logical_cpus | int)
+                < (
+                  on_prem_host_assessment_core_profile.min_logical_cpus | int
+                )
+              else []
+            )
+            + (
+              [
+                'memory '
+                ~ ('%.1f' | format(on_prem_host_assessment_memory_gib | float))
+                ~ ' GiB is below '
+                ~ (
+                  on_prem_host_assessment_core_profile.min_memory_gib
+                  | string
+                )
+                ~ ' GiB'
+              ]
+              if (on_prem_host_assessment_memory_gib | float)
+                < (on_prem_host_assessment_core_profile.min_memory_gib | float)
+              else []
+            )
+            + (
+              [
+                'threads per core '
+                ~ (on_prem_host_assessment_threads_per_core | string)
+                ~ ' is below '
+                ~ (
+                  on_prem_host_assessment_core_profile.min_threads_per_core
+                  | string
+                )
+              ]
+              if (on_prem_host_assessment_threads_per_core | int)
+                < (
+                  on_prem_host_assessment_core_profile.min_threads_per_core
+                  | int
+                )
+              else []
+            )
+            + (
+              [
+                'free space in VG `'
+                ~ on_prem_lvm_volume_group
+                ~ '` ('
+                ~ ('%.1f' | format(on_prem_host_assessment_vg_free_gib | float))
+                ~ ' GiB) is below the core-services raw LV footprint ('
+                ~ ('%.0f' | format(on_prem_host_assessment_core_storage_gib | float))
+                ~ ' GiB)'
+              ]
+              if on_prem_host_assessment_vg_found and
+                (on_prem_host_assessment_vg_free_gib | float)
+                < (on_prem_host_assessment_core_storage_gib | float)
+                and (on_prem_host_assessment_preferred_seed_disk | length) == 0
+              else []
+            )
+          }}
+
+    - name: Derive the recommended shipped profile
+      ansible.builtin.set_fact:
+        on_prem_host_assessment_recommended_profile: >-
+          {{
+            'full-m5-metal'
+            if (on_prem_host_assessment_full_gaps | length) == 0
+            else (
+              'core-ad-plus-openshift-3node-3infra'
+              if (on_prem_host_assessment_core_ad_openshift_infra_gaps | length) == 0
+              else (
+                'core-services-ad'
+                if (on_prem_host_assessment_core_ad_gaps | length) == 0
+                else (
+                  'core-plus-openshift-3node'
+                  if (on_prem_host_assessment_core_openshift_gaps | length) == 0
+                  else (
+                    'core-services'
+                    if (on_prem_host_assessment_core_gaps | length) == 0
+                    else 'custom-sizing-required'
+                  )
+                )
+              )
+            )
+          }}
+        on_prem_host_assessment_recommended_override: >-
+          {{
+            on_prem_host_assessment_full_override
+            if (on_prem_host_assessment_full_gaps | length) == 0
+            else (
+              on_prem_host_assessment_core_ad_openshift_infra_override
+              if (on_prem_host_assessment_core_ad_openshift_infra_gaps | length) == 0
+              else (
+                on_prem_host_assessment_core_ad_override
+                if (on_prem_host_assessment_core_ad_gaps | length) == 0
+                else (
+                  on_prem_host_assessment_core_openshift_override
+                  if (on_prem_host_assessment_core_openshift_gaps | length) == 0
+                  else (
+                    on_prem_host_assessment_core_override
+                    if (on_prem_host_assessment_core_gaps | length) == 0
+                    else on_prem_host_assessment_custom_override
+                  )
+                )
+              )
+            )
+          }}
+
+    - name: Build the host-sizing recommendation report
+      ansible.builtin.set_fact:
+        on_prem_host_assessment_report:
+          assessed_host: "{{ inventory_hostname }}"
+          recommendation:
+            profile: "{{ on_prem_host_assessment_recommended_profile }}"
+            inventory_override: "{{ on_prem_host_assessment_recommended_override }}"
+          host_capacity:
+            logical_cpus: "{{ on_prem_host_assessment_logical_cpus }}"
+            physical_cores: "{{ on_prem_host_assessment_physical_cores }}"
+            sockets: "{{ on_prem_host_assessment_sockets }}"
+            cores_per_socket: "{{ on_prem_host_assessment_cores_per_socket }}"
+            threads_per_core: "{{ on_prem_host_assessment_threads_per_core }}"
+            memory_gib: "{{ '%.1f' | format(on_prem_host_assessment_memory_gib | float) }}"
+          storage:
+            configured_volume_group: "{{ on_prem_lvm_volume_group }}"
+            configured_vg_found: "{{ on_prem_host_assessment_vg_found }}"
+            configured_vg_size_gib: "{{ '%.1f' | format(on_prem_host_assessment_vg_size_gib | float) }}"
+            configured_vg_free_gib: "{{ '%.1f' | format(on_prem_host_assessment_vg_free_gib | float) }}"
+            detected_volume_groups: "{{ on_prem_host_assessment_detected_vg_names }}"
+            core_ad_openshift_infra_storage_ready: "{{ on_prem_host_assessment_core_ad_openshift_infra_storage_ready }}"
+            core_ad_storage_ready: "{{ on_prem_host_assessment_core_ad_storage_ready }}"
+            core_openshift_storage_ready: "{{ on_prem_host_assessment_core_openshift_storage_ready }}"
+            core_storage_ready: "{{ on_prem_host_assessment_core_storage_ready }}"
+            preferred_seed_disk: >-
+              {{
+                '/dev/' ~ on_prem_host_assessment_preferred_seed_disk
+                if (on_prem_host_assessment_preferred_seed_disk | length) > 0
+                else ''
+              }}
+            viable_seed_disks: >-
+              {{
+                on_prem_host_assessment_viable_seed_candidates
+                | map(attribute='name')
+                | map('regex_replace', '^(.*)$', '/dev/\\1')
+                | list
+              }}
+          thresholds:
+            full_profile:
+              logical_cpus: "{{ on_prem_host_assessment_full_profile.min_logical_cpus }}"
+              memory_gib: "{{ on_prem_host_assessment_full_profile.min_memory_gib }}"
+              threads_per_core: "{{ on_prem_host_assessment_full_profile.min_threads_per_core }}"
+              raw_guest_lv_footprint_gib: "{{ on_prem_host_assessment_full_storage_gib }}"
+            core_ad_openshift_infra_profile:
+              logical_cpus: "{{ on_prem_host_assessment_core_ad_openshift_infra_profile.min_logical_cpus }}"
+              memory_gib: "{{ on_prem_host_assessment_core_ad_openshift_infra_profile.min_memory_gib }}"
+              threads_per_core: "{{ on_prem_host_assessment_core_ad_openshift_infra_profile.min_threads_per_core }}"
+              raw_guest_lv_footprint_gib: "{{ on_prem_host_assessment_core_ad_openshift_infra_storage_gib }}"
+              recommended_seed_capacity_gib: "{{ on_prem_host_assessment_core_ad_openshift_infra_required_seed_gib }}"
+            core_ad_profile:
+              logical_cpus: "{{ on_prem_host_assessment_core_ad_profile.min_logical_cpus }}"
+              memory_gib: "{{ on_prem_host_assessment_core_ad_profile.min_memory_gib }}"
+              threads_per_core: "{{ on_prem_host_assessment_core_ad_profile.min_threads_per_core }}"
+              raw_guest_lv_footprint_gib: "{{ on_prem_host_assessment_core_ad_storage_gib }}"
+              recommended_seed_capacity_gib: "{{ on_prem_host_assessment_core_ad_required_seed_gib }}"
+            core_openshift_profile:
+              logical_cpus: "{{ on_prem_host_assessment_core_openshift_profile.min_logical_cpus }}"
+              memory_gib: "{{ on_prem_host_assessment_core_openshift_profile.min_memory_gib }}"
+              threads_per_core: "{{ on_prem_host_assessment_core_openshift_profile.min_threads_per_core }}"
+              raw_guest_lv_footprint_gib: "{{ on_prem_host_assessment_core_openshift_storage_gib }}"
+              recommended_seed_capacity_gib: "{{ on_prem_host_assessment_core_openshift_required_seed_gib }}"
+            core_profile:
+              logical_cpus: "{{ on_prem_host_assessment_core_profile.min_logical_cpus }}"
+              memory_gib: "{{ on_prem_host_assessment_core_profile.min_memory_gib }}"
+              threads_per_core: "{{ on_prem_host_assessment_core_profile.min_threads_per_core }}"
+              raw_guest_lv_footprint_gib: "{{ on_prem_host_assessment_core_storage_gib }}"
+              recommended_seed_capacity_gib: "{{ on_prem_host_assessment_core_required_seed_gib }}"
+          profile_gaps:
+            full_profile: "{{ on_prem_host_assessment_full_gaps }}"
+            core_ad_openshift_infra_profile: "{{ on_prem_host_assessment_core_ad_openshift_infra_gaps }}"
+            core_ad_profile: "{{ on_prem_host_assessment_core_ad_gaps }}"
+            core_openshift_profile: "{{ on_prem_host_assessment_core_openshift_gaps }}"
+            core_profile: "{{ on_prem_host_assessment_core_gaps }}"
+          notes:
+            - >-
+              Storage checks are against the raw guest LV footprint only. Leave
+              additional headroom for image cache, mirror-content staging, and
+              rebuild hygiene.
+            - >-
+              When the core or core+openshift profile is recommended without an existing
+              guest VG, use the preferred seed disk with
+              `on_prem_lvm_seed_enabled: true` and
+              `on_prem_lvm_seed_device: <preferred disk>`.
+            - >-
+              Existing shipped profiles assume SMT pairs. A host without the
+              expected SMT shape should be treated as a custom redesign.
+          block_devices: "{{ on_prem_host_assessment_lsblk_json.blockdevices }}"
+
+    - name: Ensure the local generated report directory exists
+      ansible.builtin.file:
+        path: "{{ on_prem_host_assessment_generated_root }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      become: false
+
+    - name: Write the host-sizing recommendation report locally
+      ansible.builtin.copy:
+        dest: >-
+          {{ on_prem_host_assessment_generated_root }}/{{ inventory_hostname }}.yml
+        content: "{{ on_prem_host_assessment_report | to_nice_yaml }}"
+        mode: "0644"
+      delegate_to: localhost
+      become: false
+
+    - name: Show the recommended inventory override
+      ansible.builtin.debug:
+        msg:
+          - "Recommended profile: {{ on_prem_host_assessment_recommended_profile }}"
+          - "Recommended inventory override: {{ on_prem_host_assessment_recommended_override }}"
+          - >-
+            Local report: {{ on_prem_host_assessment_generated_root }}/{{
+            inventory_hostname }}.yml

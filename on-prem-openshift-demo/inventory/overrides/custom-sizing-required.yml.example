@@ -1,0 +1,18 @@
+---
+# Recommended advisory override when the host does not match either shipped
+# on-prem sizing profile.
+#
+# Do not treat this as a runnable profile. It is a marker that the host needs a
+# site-specific redesign before deployment.
+#
+# Typical next steps:
+# - recalculate CPU pools for the actual topology
+# - shrink guest count and guest memory beyond the shipped pre-cluster profile
+# - revisit storage expectations and optional services
+# - document the resulting local override separately
+
+on_prem_host_sizing_recommendation:
+  supported_profile: false
+  reason: >-
+    This host does not fit the current shipped full or pre-cluster profiles.
+

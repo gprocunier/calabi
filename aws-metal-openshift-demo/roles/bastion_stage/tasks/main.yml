@@ -257,46 +257,66 @@
       }}
     bastion_stage_rendered_lab_rhsm_activation_key: >-
       {{
-        bastion_stage_project_lab_credentials.lab_rhsm_activation_key
+        lab_rhsm_activation_key
         | default(
-          bastion_stage_manager_lab_credentials.lab_rhsm.activation_key
-          | default(''),
+          bastion_stage_project_lab_credentials.lab_rhsm_activation_key
+          | default(
+            bastion_stage_manager_lab_credentials.lab_rhsm.activation_key
+            | default(''),
+            true
+          ),
           true
         )
       }}
     bastion_stage_rendered_lab_rhsm_organization_id: >-
       {{
-        bastion_stage_project_lab_credentials.lab_rhsm_organization_id
+        lab_rhsm_organization_id
         | default(
-          bastion_stage_manager_lab_credentials.lab_rhsm.organization_id
-          | default(''),
+          bastion_stage_project_lab_credentials.lab_rhsm_organization_id
+          | default(
+            bastion_stage_manager_lab_credentials.lab_rhsm.organization_id
+            | default(''),
+            true
+          ),
           true
         )
       }}
     bastion_stage_rendered_lab_rhsm_username: >-
       {{
-        bastion_stage_project_lab_credentials.lab_rhsm_username
+        lab_rhsm_username
         | default(
-          bastion_stage_manager_lab_credentials.lab_rhsm.username
-          | default(''),
+          bastion_stage_project_lab_credentials.lab_rhsm_username
+          | default(
+            bastion_stage_manager_lab_credentials.lab_rhsm.username
+            | default(''),
+            true
+          ),
           true
         )
       }}
     bastion_stage_rendered_lab_rhsm_password: >-
       {{
-        bastion_stage_project_lab_credentials.lab_rhsm_password
+        lab_rhsm_password
         | default(
-          bastion_stage_manager_lab_credentials.lab_rhsm.password
-          | default(''),
+          bastion_stage_project_lab_credentials.lab_rhsm_password
+          | default(
+            bastion_stage_manager_lab_credentials.lab_rhsm.password
+            | default(''),
+            true
+          ),
           true
         )
       }}
     bastion_stage_rendered_lab_rhsm_server_hostname: >-
       {{
-        bastion_stage_project_lab_credentials.lab_rhsm_server_hostname
+        lab_rhsm_server_hostname
         | default(
-          bastion_stage_manager_lab_credentials.lab_rhsm.server_hostname
-          | default(''),
+          bastion_stage_project_lab_credentials.lab_rhsm_server_hostname
+          | default(
+            bastion_stage_manager_lab_credentials.lab_rhsm.server_hostname
+            | default(''),
+            true
+          ),
           true
         )
       }}
