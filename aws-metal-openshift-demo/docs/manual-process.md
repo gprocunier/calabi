@@ -38,8 +38,8 @@ thrown away between runs.
 > build `bastion-01`, stage the project to bastion, optionally build
 > `ad-01` with AD DS and AD CS, build `idm-01`, optionally configure IdM to AD
 > trust, join the bastion to IdM, then continue with `mirror-registry`,
-> OpenShift DNS, and cluster work. The legacy section numbering is retained
-> below so older deep links do not break.
+> OpenShift DNS, and cluster work. The section numbering remains stable so
+> older deep links still resolve.
 
 The command examples use these neutral placeholders:
 
@@ -92,19 +92,6 @@ Validated support-services order:
 - [13A. Optionally Build AD DS And AD CS From Bastion](#13a-optionally-build-ad-ds-and-ad-cs-from-bastion)
 - [10. Build The IdM VM](#10-build-the-idm-vm)
 - [11. Configure IdM In The Guest](#11-configure-idm-in-the-guest)
-- [13AA. Optionally Configure IdM To AD Trust](#13aa-optionally-configure-idm-to-ad-trust)
-- [13B. Join The Bastion To IdM](#13b-join-the-bastion-to-idm)
-- [14. Build The Mirror Registry VM](#14-build-the-mirror-registry-vm)
-- [15. Mirror OpenShift And Operator Content](#15-mirror-openshift-and-operator-content)
-- [16. Populate OpenShift DNS In IdM](#16-populate-openshift-dns-in-idm)
-
-Legacy section order retained below:
-
-- [10. Build The IdM VM](#10-build-the-idm-vm)
-- [11. Configure IdM In The Guest](#11-configure-idm-in-the-guest)
-- [12. Build The Bastion VM](#12-build-the-bastion-vm)
-- [13. Stage The Project To The Bastion](#13-stage-the-project-to-the-bastion)
-- [13A. Optionally Build AD DS And AD CS From Bastion](#13a-optionally-build-ad-ds-and-ad-cs-from-bastion)
 - [13AA. Optionally Configure IdM To AD Trust](#13aa-optionally-configure-idm-to-ad-trust)
 - [13B. Join The Bastion To IdM](#13b-join-the-bastion-to-idm)
 - [14. Build The Mirror Registry VM](#14-build-the-mirror-registry-vm)
