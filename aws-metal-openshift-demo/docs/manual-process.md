@@ -930,9 +930,9 @@ the build can run from inside the lab._
 
 Copy the repo, the pull secret, and the SSH keys to the bastion so the rest of
 the work happens from inside the lab. The current orchestration also creates a
-ready-to-use shell environment for `cloud-user` and current IdM `admins`
-members, including `$HOME/bin`, `$HOME/etc`, tool symlinks, and a login-time
-`KUBECONFIG` export when the cluster artifacts exist.
+ready-to-use shell environment for `cloud-user` and current members of IdM
+`access-linux-admin`, including `$HOME/bin`, `$HOME/etc`, tool symlinks, and a
+login-time `KUBECONFIG` export when the cluster artifacts exist.
 
 > [!NOTE]
 > Automation reference: `playbooks/bootstrap/bastion-stage.yml`, role
@@ -1470,10 +1470,11 @@ certutil -ping
 ```powershell
 $base = 'CN=Users,DC=corp,DC=lan'
 
-'OpenShift-Admins',
-'OpenShift-Virt-Admins',
-'Ansible-Automation-Admins',
-'Developers' | ForEach-Object {
+'ad-corp-linux-admins',
+'ad-corp-openshift-admins',
+'ad-corp-openshift-virt-admins',
+'ad-corp-aap-admins',
+'ad-corp-developers' | ForEach-Object {
   if (-not (Get-ADGroup -Filter "Name -eq '$_'" -ErrorAction SilentlyContinue)) {
     New-ADGroup -Name $_ -GroupScope Global -GroupCategory Security -Path $base
   }
@@ -1481,10 +1482,11 @@ $base = 'CN=Users,DC=corp,DC=lan'
 
 $users = @(
   @{ name='ad-directoryadmin'; first='Directory';     last='Admin';         groups=@('Domain Admins') },
-  @{ name='ad-ocpadmin';      first='OpenShift';     last='Admin';         groups=@('OpenShift-Admins') },
-  @{ name='ad-virtadmin';     first='Virtualization';last='Admin';         groups=@('OpenShift-Virt-Admins') },
-  @{ name='ad-aapadmin';      first='Automation';    last='Admin';         groups=@('Ansible-Automation-Admins') },
-  @{ name='ad-dev01';         first='Developer';     last='One';           groups=@('Developers') }
+  @{ name='ad-linuxadmin';    first='Linux';         last='Admin';         groups=@('ad-corp-linux-admins') },
+  @{ name='ad-ocpadmin';      first='OpenShift';     last='Admin';         groups=@('ad-corp-openshift-admins') },
+  @{ name='ad-virtadmin';     first='Virtualization';last='Admin';         groups=@('ad-corp-openshift-virt-admins') },
+  @{ name='ad-aapadmin';      first='Automation';    last='Admin';         groups=@('ad-corp-aap-admins') },
+  @{ name='ad-dev01';         first='Developer';     last='One';           groups=@('ad-corp-developers') }
 )
 
 $pw = ConvertTo-SecureString '<lab-default-password>' -AsPlainText -Force
@@ -1556,12 +1558,14 @@ Validated AD outputs:
 - AD domain: `corp.lan`
 - Enterprise Root CA: `CORP Enterprise Root CA`
 - groups:
-  - `OpenShift-Admins`
-  - `OpenShift-Virt-Admins`
-  - `Ansible-Automation-Admins`
-  - `Developers`
+  - `ad-corp-linux-admins`
+  - `ad-corp-openshift-admins`
+  - `ad-corp-openshift-virt-admins`
+  - `ad-corp-aap-admins`
+  - `ad-corp-developers`
 - users:
   - `ad-directoryadmin`
+  - `ad-linuxadmin`
   - `ad-ocpadmin`
   - `ad-virtadmin`
   - `ad-aapadmin`
@@ -1736,16 +1740,11 @@ ipa-kra-install -U -p '<lab-default-password>'
 
 ipa dnsconfig-mod --forwarder=8.8.8.8 --forwarder=1.1.1.1
 ipa group-add access-openshift-admin || true
-ipa group-add virt-admin || true
-ipa group-add developer || true
+ipa group-add access-virt-admin || true
+ipa group-add access-developer || true
+ipa group-add access-aap-admin || true
 
-ipa group-add admins || true
-ipa pwpolicy-add admins \
-  --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
-  --priority=40 2>/dev/null || \
-ipa pwpolicy-mod admins \
-  --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
-  --priority=40
+ipa group-add access-linux-admin || true
 
 ipa pwpolicy-add access-openshift-admin \
   --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
@@ -1754,19 +1753,33 @@ ipa pwpolicy-mod access-openshift-admin \
   --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
   --priority=50
 
-ipa pwpolicy-add virt-admin \
+ipa pwpolicy-add access-virt-admin \
   --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
   --priority=60 2>/dev/null || \
-ipa pwpolicy-mod virt-admin \
+ipa pwpolicy-mod access-virt-admin \
   --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
   --priority=60
 
-ipa pwpolicy-add developer \
+ipa pwpolicy-add access-developer \
   --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
   --priority=70 2>/dev/null || \
-ipa pwpolicy-mod developer \
+ipa pwpolicy-mod access-developer \
   --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
   --priority=70
+
+ipa pwpolicy-add access-aap-admin \
+  --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
+  --priority=80 2>/dev/null || \
+ipa pwpolicy-mod access-aap-admin \
+  --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
+  --priority=80
+
+ipa pwpolicy-add access-linux-admin \
+  --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
+  --priority=90 2>/dev/null || \
+ipa pwpolicy-mod access-linux-admin \
+  --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
+  --priority=90
 
 ipa user-add sysop --first=Sys --last=Op --shell=/bin/bash --password <<< '<lab-default-password>'
 ipa user-add virtadm --first=Virt --last=Admin --shell=/bin/bash --password <<< '<lab-default-password>'
@@ -1815,18 +1828,18 @@ named-checkconf /etc/named.conf
 systemctl restart named
 systemctl is-active named
 
-ipa group-add-member admins --users=sysop
+ipa group-add-member access-linux-admin --users=sysop
 ipa group-add-member access-openshift-admin --users=sysop
-ipa group-add-member virt-admin --users=virtadm
-ipa group-add-member developer --users=dev
+ipa group-add-member access-virt-admin --users=virtadm
+ipa group-add-member access-developer --users=dev
 
 ipa sudorule-add admins-nopasswd-all \
-  --desc='Permit admins group members to run any command on any host without authentication'
+  --desc='Permit access-linux-admin group members to run any command on any host without authentication'
 ipa sudorule-mod admins-nopasswd-all --hostcat=all
 ipa sudorule-mod admins-nopasswd-all --cmdcat=all
 ipa sudorule-mod admins-nopasswd-all --runasusercat=all
 ipa sudorule-mod admins-nopasswd-all --runasgroupcat=all
-ipa sudorule-add-user admins-nopasswd-all --groups=admins
+ipa sudorule-add-user admins-nopasswd-all --groups=access-linux-admin
 ipa sudorule-add-option admins-nopasswd-all --sudooption='!authenticate'
 
 systemctl enable --now cockpit.socket

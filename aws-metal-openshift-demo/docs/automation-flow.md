@@ -164,7 +164,7 @@ experiences in practice.
    - Renders the bastion-local inventory.
    - Installs bastion execution prerequisites, including `python3-pip` and the
      Python requirements needed for WinRM-backed Windows orchestration.
-   - Installs the bastion profile snippet and user helper links so `cloud-user` and IdM `admins` land with working `oc`, `kubectl`, `openshift-install`, helper scripts, and a conditional `KUBECONFIG`.
+   - Installs the bastion profile snippet and user helper links so `cloud-user` and members of IdM `access-linux-admin` land with working `oc`, `kubectl`, `openshift-install`, helper scripts, and a conditional `KUBECONFIG`.
    - Example:
      - `RUN LOCALLY`
        ```bash
@@ -472,7 +472,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
   - `bastion-join`
   - `mirror-registry`
 - the bastion now also presents a ready-to-use shell environment for
-  `cloud-user` and IdM `admins`, including helper links under `$HOME/bin`,
+  `cloud-user` and members of IdM `access-linux-admin`, including helper links under `$HOME/bin`,
   cluster artifacts under `$HOME/etc`, and conditional login-time `KUBECONFIG`
 - `playbooks/maintenance/cleanup.yml` remains the aggregated teardown entrypoint
 - the latest validated rebuild path reaches:
@@ -491,7 +491,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
   - `kubeadmin` is retired
   - Keycloak is deployed from mirrored content
   - OpenShift OAuth uses Keycloak OIDC and `groups` claim sync
-  - `openshift-admin` is bound to `cluster-admin`
+  - `access-openshift-admin` is bound to `cluster-admin`
 - the remaining confidence step is one uninterrupted
   `./scripts/run_remote_bastion_playbook.sh`
   <a href="../playbooks/site-lab.yml"><kbd>playbooks/site-lab.yml</kbd></a>

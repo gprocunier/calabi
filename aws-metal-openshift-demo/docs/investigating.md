@@ -32,7 +32,7 @@ What is now proven on the current release:
 - OpenShift auth on:
   - `HTPasswd` breakglass
   - Keycloak OIDC
-  - group-based RBAC through `openshift-admin`
+  - group-based RBAC through `access-openshift-admin`
 - AAP on Keycloak OIDC
 - AD-backed user login to AAP after clean redeploy
 - clean repo validation:

@@ -347,7 +347,7 @@ Execution model:
   - installs `/etc/profile.d/openshift-bastion.sh`
   - publishes a stable `generated/tools/current` symlink
   - creates `$HOME/bin` and `$HOME/etc` link sets for `cloud-user` and current
-    IdM `admins`
+    members of IdM `access-linux-admin`
   - seeds the same helper layout into `/etc/skel` for future admin logins
   - verifies SSH from bastion to `virt-01`
 
@@ -1177,7 +1177,7 @@ Critical tasks:
   CIDRs defined in the OVS VLAN model
 - creates IPA groups and users for workshop use
 - creates group-scoped IPA password policies for the seeded lab-user groups
-- creates an IPA sudo rule for the `admins` group that permits passwordless
+- creates an IPA sudo rule for the `access-linux-admin` group that permits passwordless
   execution of any command on any host
 - resets the managed user passwords
 - resets seeded-user password expiration explicitly because IdM password policy
@@ -1196,9 +1196,10 @@ Key outputs of this role:
   cached responses from all lab VLAN CIDRs
 - trusted recursion for all lab CIDRs
 - IdM users/groups for later OpenShift auth demos
-- group-scoped lab password policy for `admins`, `openshift-admin`,
-  `virt-admin`, and `developer`
-- an `admins-nopasswd-all` IPA sudo rule that grants `admins` unrestricted
+- group-scoped lab password policy for `access-openshift-admin`,
+  `access-virt-admin`, `access-developer`, `access-aap-admin`, and
+  `access-linux-admin`
+- an `admins-nopasswd-all` IPA sudo rule that grants `access-linux-admin` unrestricted
   passwordless `sudo` on enrolled lab hosts
 - Cockpit and session recording enabled
 
