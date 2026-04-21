@@ -1857,36 +1857,171 @@ into local IdM policy groups, complete the trust setup here before bastion
 enrollment._
 
 > [!NOTE]
-> Automation reference: `playbooks/bootstrap/idm-ad-trust.yml`. The current
-> automated path configures the AD conditional forwarder for `workshop.lan`,
-> enables IdM AD trust support, creates the AD DNS forward zone in IPA,
-> establishes the trust, and nests the mapped IdM external groups into the
-> target local policy groups described in
-> <a href="./ad-idm-policy-model.md"><kbd>AD / IDM POLICY MODEL</kbd></a>.
+> Automation reference: `playbooks/bootstrap/idm-ad-trust.yml`.
+> Use it only as a cross-check. The steps below are the manual trust path.
 
-Manual checkpoints for this phase:
-
-- on `AD-01`, `workshop.lan` must resolve through the conditional forwarder to
-  `idm-01`
-- on `idm-01`, `corp.lan` forward-zone lookups and AD LDAP SRV lookups must
-  resolve through `ad-01`
-- `ipa trust-show corp.lan --all` must succeed on `idm-01`
-- the mapped IdM external groups and nested local policy groups must match the
-  intended bridge policy
-
-Useful spot checks:
+On `AD-01`, create the conditional forwarder for `workshop.lan` so the AD
+controller can resolve the IdM side of the trust:
 
 ```powershell
+$zoneName = 'workshop.lan'
+$masterServers = @('172.16.0.10')
+$existing = Get-DnsServerZone -Name $zoneName -ErrorAction SilentlyContinue
+
+if ($null -eq $existing) {
+  Add-DnsServerConditionalForwarderZone `
+    -Name $zoneName `
+    -MasterServers $masterServers `
+    -ReplicationScope Forest
+} elseif ($existing.ZoneType -ne 'Forwarder') {
+  throw "DNS zone $zoneName exists but is not a conditional forwarder."
+} else {
+  Set-DnsServerConditionalForwarderZone `
+    -Name $zoneName `
+    -MasterServers $masterServers
+}
+
 Resolve-DnsName -Name 'idm-01.workshop.lan' -Server 127.0.0.1 -Type A
 ```
 
+On `idm-01`, make sure IdM is prepared for a private-namespace AD trust,
+enable the trust components, and add the AD forward zone:
+
 ```bash
-# Confirm the AD trust records are visible before proceeding.
+sudo bash -c '
+if grep -q "^dnssec-validation" /etc/named/ipa-options-ext.conf; then
+  sed -i "s/^dnssec-validation.*/dnssec-validation no;/" /etc/named/ipa-options-ext.conf
+else
+  printf "%s\n" "dnssec-validation no;" >>/etc/named/ipa-options-ext.conf
+fi
+'
+sudo named-checkconf /etc/named.conf
+sudo systemctl restart named
+
+sudo ipa-adtrust-install -U \
+  --enable-compat \
+  --netbios-name=WORKSHOP
+
+kinit admin <<< '<lab-default-password>'
+
+ipa dnsforwardzone-add corp.lan \
+  --forward-policy=only \
+  --forwarder=172.16.0.40 \
+  || ipa dnsforwardzone-mod corp.lan \
+    --forward-policy=only \
+    --forwarder=172.16.0.40
+
 host ad-01.corp.lan 127.0.0.1
 host -t SRV _ldap._tcp.dc._msdcs.corp.lan 127.0.0.1
-ipa trust-show corp.lan --all
 ```
 
+Before creating the trust, prove that AD SMB/RPC authentication works from
+`idm-01` and clear any stale state from an earlier failed attempt:
+
+```bash
+net rpc info -S ad-01.corp.lan \
+  -U 'ad-directoryadmin%<lab-default-password>' \
+  -W CORP \
+  --use-kerberos=off
+
+ipa trust-show corp.lan || true
+ipa idrange-show CORP.LAN_id_range || true
+
+# Only do this when the trust does not exist but the old ID range does.
+ipa idrange-del CORP.LAN_id_range
+
+sudo rm -f /run/ipa/krb5cc_oddjob_trusts_fetch
+sudo systemctl restart oddjobd
+```
+
+Create the trust from `idm-01`, then clear SSSD caches and confirm the AD
+domain is now visible through IdM:
+
+```bash
+kinit admin <<< '<lab-default-password>'
+
+ipa trust-add --type=ad corp.lan \
+  --admin ad-directoryadmin \
+  --range-type=ipa-ad-trust \
+  --password
+
+sudo sss_cache -E
+sudo systemctl restart sssd
+
+ipa trust-show corp.lan --all
+sssctl domain-list
+```
+
+If you only need the trust itself, stop here. If you also want AD groups to
+feed the local IdM policy groups used later by RHEL, Keycloak, and OpenShift,
+bridge those groups explicitly. The current repo mapping is:
+
+- `ad-corp-openshift-admins` -> `access-openshift-admin`
+- `ad-corp-linux-admins` -> `access-linux-admin`
+- `ad-corp-openshift-virt-admins` -> `access-virt-admin`
+- `ad-corp-developers` -> `access-developer`
+- `ad-corp-aap-admins` -> `access-aap-admin`
+
+On `AD-01`, record the fully-qualified group names you will bridge and keep
+those objects visible while you work on the IdM side. The current lab uses the
+`CORP\group-name` form, and the SID is useful as a verification reference:
+
+```powershell
+$groups = @(
+  'ad-corp-openshift-admins',
+  'ad-corp-linux-admins',
+  'ad-corp-openshift-virt-admins',
+  'ad-corp-developers',
+  'ad-corp-aap-admins'
+)
+
+$groups | ForEach-Object {
+  Get-ADGroup $_ -Properties objectSid |
+    Select-Object Name,
+      @{Name='QualifiedName';Expression={"CORP\$($_.Name)"}},
+      @{Name='SID';Expression={$_.SID.Value}}
+}
+```
+
+Then on `idm-01`, create the IdM external groups, add the AD groups as
+external members, and nest those external groups into the local IdM policy
+groups:
+
+```bash
+kinit admin <<< '<lab-default-password>'
+
+ipa group-add ad-corp-openshift-admins --external \
+  --desc='AD source group: corp.lan/ad-corp-openshift-admins' || true
+ipa group-add ad-corp-linux-admins --external \
+  --desc='AD source group: corp.lan/ad-corp-linux-admins' || true
+ipa group-add ad-corp-openshift-virt-admins --external \
+  --desc='AD source group: corp.lan/ad-corp-openshift-virt-admins' || true
+ipa group-add ad-corp-developers --external \
+  --desc='AD source group: corp.lan/ad-corp-developers' || true
+ipa group-add ad-corp-aap-admins --external \
+  --desc='AD source group: corp.lan/ad-corp-aap-admins' || true
+
+ipa group-add-member ad-corp-openshift-admins --external 'CORP\ad-corp-openshift-admins'
+ipa group-add-member ad-corp-linux-admins --external 'CORP\ad-corp-linux-admins'
+ipa group-add-member ad-corp-openshift-virt-admins --external 'CORP\ad-corp-openshift-virt-admins'
+ipa group-add-member ad-corp-developers --external 'CORP\ad-corp-developers'
+ipa group-add-member ad-corp-aap-admins --external 'CORP\ad-corp-aap-admins'
+
+ipa group-add-member access-openshift-admin --groups ad-corp-openshift-admins
+ipa group-add-member access-linux-admin --groups ad-corp-linux-admins
+ipa group-add-member access-virt-admin --groups ad-corp-openshift-virt-admins
+ipa group-add-member access-developer --groups ad-corp-developers
+ipa group-add-member access-aap-admin --groups ad-corp-aap-admins
+
+sudo sss_cache -E
+sudo systemctl restart sssd
+
+ipa group-show access-openshift-admin --all
+ipa group-show access-linux-admin --all
+ipa group-show access-virt-admin --all
+ipa group-show access-developer --all
+ipa group-show access-aap-admin --all
+```
 ## 13B. Join The Bastion To IdM
 
 _At this point `bastion-01` already exists and `idm-01` is already configured.
