@@ -279,9 +279,9 @@ At this point, the on-prem-specific portion is over.
 Choose the next stock runbook entry based on what you already completed:
 
 - if you want the manual bastion-forward process:
-  - <a href="../../aws-metal-openshift-demo/docs/manual-process.md#13a-optionally-build-ad-ds-and-ad-cs-from-bastion"><kbd>Resume at AWS manual step 13A</kbd></a>
+  - <a href="../../aws-metal-openshift-demo/docs/manual-process.md#12-optionally-build-ad-ds-and-ad-cs-from-bastion"><kbd>Resume at AWS manual step 12</kbd></a>
 - if you are still walking the support-services flow by hand from the bastion build:
-  - <a href="../../aws-metal-openshift-demo/docs/manual-process.md#12-build-the-bastion-vm"><kbd>Resume at AWS manual step 12</kbd></a>
+  - <a href="../../aws-metal-openshift-demo/docs/manual-process.md#10-build-the-bastion-vm"><kbd>Resume at AWS manual step 10</kbd></a>
 
 For automation rather than the hand-run sequence on a cluster-capable host,
 use:

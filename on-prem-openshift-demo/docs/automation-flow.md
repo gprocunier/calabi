@@ -242,7 +242,7 @@ At that point:
 
 - for cluster-capable profiles, use:
   - <a href="../../aws-metal-openshift-demo/docs/automation-flow.md"><kbd>AWS AUTOMATION FLOW</kbd></a>
-  - <a href="../../aws-metal-openshift-demo/docs/manual-process.md#13a-optionally-build-ad-ds-and-ad-cs-from-bastion"><kbd>AWS MANUAL PROCESS: STEP 13A</kbd></a>
+  - <a href="../../aws-metal-openshift-demo/docs/manual-process.md#12-optionally-build-ad-ds-and-ad-cs-from-bastion"><kbd>AWS MANUAL PROCESS: STEP 12</kbd></a>
 - for support-services-only profiles such as `core-services` or
   `core-services-ad`, run
   <a href="../playbooks/site-precluster.yml"><kbd>playbooks/site-precluster.yml</kbd></a>

@@ -33,7 +33,7 @@ bastion staging, return to
 | run the alternate automation path | [Automation Flow](./automation-flow.md) | `./scripts/run_local_playbook.sh` <a href="../playbooks/site-bootstrap.yml"><kbd>playbooks/site-bootstrap.yml</kbd></a>, `./scripts/run_remote_bastion_playbook.sh` <a href="../playbooks/site-lab.yml"><kbd>playbooks/site-lab.yml</kbd></a> |
 | run only the pre-cluster support path on a smaller host | [Prerequisites](./prerequisites.md) | [`inventory/overrides/precluster-64g.yml.example`](../inventory/overrides/precluster-64g.yml.example), `./scripts/run_remote_bastion_playbook.sh` <a href="../playbooks/site-precluster.yml"><kbd>playbooks/site-precluster.yml</kbd></a> |
 | compare automation with the manual path | [Manual Process](./manual-process.md) | [Portability And Gap Analysis](./portability-and-gap-analysis.md) |
-| return to the main validated flow | [AWS Docs Map](../../aws-metal-openshift-demo/docs/README.md) | [AWS Manual Process Step 12](../../aws-metal-openshift-demo/docs/manual-process.md#12-build-the-bastion-vm) |
+| return to the main validated flow | [AWS Docs Map](../../aws-metal-openshift-demo/docs/README.md) | [AWS Manual Process Step 10](../../aws-metal-openshift-demo/docs/manual-process.md#10-build-the-bastion-vm) |
 
 ## What Is Different On-Prem
 
@@ -49,8 +49,8 @@ For the manual path, the on-prem-specific work ends once the host is prepared,
 guest storage exists, and bastion staging is complete. Then continue in the
 stock runbook at:
 
-- <a href="../../aws-metal-openshift-demo/docs/manual-process.md#12-build-the-bastion-vm"><kbd>AWS MANUAL PROCESS: STEP 12</kbd></a> if you want the bastion build onward
-- <a href="../../aws-metal-openshift-demo/docs/manual-process.md#13a-optionally-build-ad-ds-and-ad-cs-from-bastion"><kbd>AWS MANUAL PROCESS: STEP 13A</kbd></a> once the bastion is built and the project is staged
+- <a href="../../aws-metal-openshift-demo/docs/manual-process.md#10-build-the-bastion-vm"><kbd>AWS MANUAL PROCESS: STEP 10</kbd></a> if you want the bastion build onward
+- <a href="../../aws-metal-openshift-demo/docs/manual-process.md#12-optionally-build-ad-ds-and-ad-cs-from-bastion"><kbd>AWS MANUAL PROCESS: STEP 12</kbd></a> once the bastion is built and the project is staged
 
 For automation, the on-prem operator entrypoints are:
 

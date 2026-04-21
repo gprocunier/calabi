@@ -58,14 +58,14 @@ The command examples use these neutral placeholders:
 
 | Steps | Where | What happens |
 | --- | --- | --- |
-| 1-13 | Operator workstation / `virt-01` | AWS stacks, hypervisor, bastion build, bastion staging |
-| 13A-36 | `bastion-01` | optional AD, IdM, bastion join, mirror registry, DNS, cluster build, day-2, debugging |
+| 1-11 | Operator workstation / `virt-01` | AWS stacks, hypervisor, bastion build, bastion staging |
+| 12-39 | `bastion-01` | optional AD, IdM, bastion join, mirror registry, DNS, cluster build, day-2, debugging |
 
 > [!IMPORTANT]
-> **Pick a side and stay on it.** Steps 1-13 run from the operator workstation
-> against `virt-01`. Steps 13A-36 run from the bastion. The project does not
+> **Pick a side and stay on it.** Steps 1-11 run from the operator workstation
+> against `virt-01`. Steps 12-39 run from the bastion. The project does not
 > account for switching execution context mid-stream. Once you cross the
-> bastion boundary at step 13A, stay on bastion.
+> bastion boundary at step 12, stay on bastion.
 
 ## Table Of Contents
 
@@ -85,46 +85,44 @@ Use this like a runbook, not a novel. Jump to the phase you actually need.
 
 ### Support Services
 
-Validated support-services run order. The section ids stay stable for deep
-links, so the numbers in parentheses are references, not the order you execute
-these steps:
+Validated support-services order:
 
-1. [Build The Bastion VM](#12-build-the-bastion-vm) (`12`)
-2. [Stage The Project To The Bastion](#13-stage-the-project-to-the-bastion) (`13`)
-3. [Optionally Build AD DS And AD CS From Bastion](#13a-optionally-build-ad-ds-and-ad-cs-from-bastion) (`13A`)
-4. [Build The IdM VM](#10-build-the-idm-vm) (`10`)
-5. [Configure IdM In The Guest](#11-configure-idm-in-the-guest) (`11`)
-6. [Optionally Configure IdM To AD Trust](#13aa-optionally-configure-idm-to-ad-trust) (`13AA`)
-7. [Join The Bastion To IdM](#13b-join-the-bastion-to-idm) (`13B`)
-8. [Build The Mirror Registry VM](#14-build-the-mirror-registry-vm) (`14`)
-9. [Mirror OpenShift And Operator Content](#15-mirror-openshift-and-operator-content) (`15`)
-10. [Populate OpenShift DNS In IdM](#16-populate-openshift-dns-in-idm) (`16`)
+- [10. Build The Bastion VM](#10-build-the-bastion-vm)
+- [11. Stage The Project To The Bastion](#11-stage-the-project-to-the-bastion)
+- [12. Optionally Build AD DS And AD CS From Bastion](#12-optionally-build-ad-ds-and-ad-cs-from-bastion)
+- [13. Build The IdM VM](#13-build-the-idm-vm)
+- [14. Configure IdM In The Guest](#14-configure-idm-in-the-guest)
+- [15. Optionally Configure IdM To AD Trust](#15-optionally-configure-idm-to-ad-trust)
+- [16. Join The Bastion To IdM](#16-join-the-bastion-to-idm)
+- [17. Build The Mirror Registry VM](#17-build-the-mirror-registry-vm)
+- [18. Mirror OpenShift And Operator Content](#18-mirror-openshift-and-operator-content)
+- [19. Populate OpenShift DNS In IdM](#19-populate-openshift-dns-in-idm)
 
 ### Cluster Bring-up
 
-- [17. Download Installer Binaries](#17-download-installer-binaries)
-- [18. Render Install Artifacts](#18-render-install-artifacts)
-- [19. Generate The Agent ISO](#19-generate-the-agent-iso)
-- [20. Create The OpenShift VM Shells](#20-create-the-openshift-vm-shells)
-- [21. Wait For Installer Convergence](#21-wait-for-installer-convergence)
-- [22. Validate Post-install State](#22-validate-post-install-state)
-- [23. Detach Install Media And Normalize Boot](#23-detach-install-media-and-normalize-boot)
+- [20. Download Installer Binaries](#20-download-installer-binaries)
+- [21. Render Install Artifacts](#21-render-install-artifacts)
+- [22. Generate The Agent ISO](#22-generate-the-agent-iso)
+- [23. Create The OpenShift VM Shells](#23-create-the-openshift-vm-shells)
+- [24. Wait For Installer Convergence](#24-wait-for-installer-convergence)
+- [25. Validate Post-install State](#25-validate-post-install-state)
+- [26. Detach Install Media And Normalize Boot](#26-detach-install-media-and-normalize-boot)
 
 ### Day-2 And Follow-on Work
 
-- [24. Configure Breakglass Auth, Keycloak OIDC, And Infra Roles](#24-configure-breakglass-auth-keycloak-oidc-and-infra-roles)
-- [25. Install Kubernetes NMState](#25-install-kubernetes-nmstate)
-- [26. Deploy ODF Declaratively](#26-deploy-odf-declaratively)
-- [27. Install OpenShift Virtualization](#27-install-openshift-virtualization)
-- [28. Install The Web Terminal](#28-install-the-web-terminal)
-- [29. Install Network Observability And Loki](#29-install-network-observability-and-loki)
-- [30. Install Ansible Automation Platform](#30-install-ansible-automation-platform)
-- [31. Install OpenShift Pipelines](#31-install-openshift-pipelines)
-- [32. Launch A Windows EFI Build](#32-launch-a-windows-efi-build)
-- [33. Pivot OperatorHub To The Disconnected Catalog](#33-pivot-operatorhub-to-the-disconnected-catalog)
-- [34. Roll Out An IdM Ingress Certificate](#34-roll-out-an-idm-ingress-certificate)
-- [35. Cleanup](#35-cleanup)
-- [36. Manual Debugging Examples](#36-manual-debugging-examples)
+- [27. Configure Breakglass Auth, Keycloak OIDC, And Infra Roles](#27-configure-breakglass-auth-keycloak-oidc-and-infra-roles)
+- [28. Install Kubernetes NMState](#28-install-kubernetes-nmstate)
+- [29. Deploy ODF Declaratively](#29-deploy-odf-declaratively)
+- [30. Install OpenShift Virtualization](#30-install-openshift-virtualization)
+- [31. Install The Web Terminal](#31-install-the-web-terminal)
+- [32. Install Network Observability And Loki](#32-install-network-observability-and-loki)
+- [33. Install Ansible Automation Platform](#33-install-ansible-automation-platform)
+- [34. Install OpenShift Pipelines](#34-install-openshift-pipelines)
+- [35. Launch A Windows EFI Build](#35-launch-a-windows-efi-build)
+- [36. Pivot OperatorHub To The Disconnected Catalog](#36-pivot-operatorhub-to-the-disconnected-catalog)
+- [37. Roll Out An IdM Ingress Certificate](#37-roll-out-an-idm-ingress-certificate)
+- [38. Cleanup](#38-cleanup)
+- [39. Manual Debugging Examples](#39-manual-debugging-examples)
 
 ## 1. Provision The AWS IaaS Layer
 
@@ -809,269 +807,7 @@ curl -L '<rhel10-kvm-direct-download-url>' \
   -o /root/images/rhel-10.1-x86_64-kvm.qcow2
 ```
 
-## 10. Build The IdM VM
-
-_Build the `idm-01` VM shell on the hypervisor, seed its disk from the RHEL
-image, and attach the cloud-init data needed for first boot._
-
-> [!NOTE]
-> Automation reference: `playbooks/bootstrap/idm.yml`, role `idm`.
-
-Seed the `idm-01` disk from the RHEL image, create cloud-init, and build the
-VM on the management VLAN.
-
-```bash
-ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1
-
-mkdir -p /var/lib/aws-metal-openshift-demo/idm-01
-qemu-img convert -f qcow2 -O raw \
-  <rhel10-image-path> \
-  /dev/ebs/idm-01
-
-SSH_PUBKEY="$(cat <operator-public-key>)"
-
-cat <<'EOF' >/var/lib/aws-metal-openshift-demo/idm-01/meta-data
-instance-id: idm-01
-local-hostname: idm-01.workshop.lan
-EOF
-
-cat <<'EOF' >/var/lib/aws-metal-openshift-demo/idm-01/network-config
-version: 2
-ethernets:
-  eth0:
-    dhcp4: false
-    addresses:
-      - 172.16.0.10/24
-    routes:
-      - to: 0.0.0.0/0
-        via: 172.16.0.1
-    nameservers:
-      search: [workshop.lan]
-      addresses: [172.16.0.10, 8.8.8.8, 4.4.4.4]
-EOF
-
-cat <<EOF >/var/lib/aws-metal-openshift-demo/idm-01/user-data
-#cloud-config
-fqdn: idm-01.workshop.lan
-manage_etc_hosts: true
-users:
-  - default
-  - name: cloud-user
-    groups: [wheel]
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    lock_passwd: false
-    passwd: $6$rounds=4096$temporary$BfY4OskkM6jv8v6eK9aT8W7F7Y9Q8nN2m5vQzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz
-    ssh_authorized_keys:
-      - ${SSH_PUBKEY}
-runcmd:
-  - [ sh, -c, 'echo nameserver 127.0.0.1 >/etc/resolv.conf' ]
-EOF
-
-cloud-localds \
-  --network-config=/var/lib/aws-metal-openshift-demo/idm-01/network-config \
-  /var/lib/aws-metal-openshift-demo/idm-01/seed.iso \
-  /var/lib/aws-metal-openshift-demo/idm-01/user-data \
-  /var/lib/aws-metal-openshift-demo/idm-01/meta-data
-
-virt-install \
-  --name idm-01.workshop.lan \
-  --memory 8192 \
-  --vcpus 2 \
-  --cpu host-passthrough \
-  --machine q35 \
-  --import \
-  --os-variant rhel10.0 \
-  --graphics none \
-  --console pty,target_type=serial \
-  --network network=lab-switch,portgroup=mgmt-access,model=virtio \
-  --controller type=scsi,model=virtio-scsi \
-  --disk path=/dev/ebs/idm-01,device=disk,bus=scsi,rotation_rate=1 \
-  --disk path=/var/lib/aws-metal-openshift-demo/idm-01/seed.iso,device=cdrom,bus=sata \
-  --resource partition=/machine/silver \
-  --cputune shares=333,emulatorpin.cpuset=2-5,26-29,50-53,74-77,\
-vcpupin0.vcpu=0,vcpupin0.cpuset=6-23,30-47,54-71,78-95,\
-vcpupin1.vcpu=1,vcpupin1.cpuset=6-23,30-47,54-71,78-95 \
-  --noautoconsole
-```
-
-That places `idm-01` into the Silver performance domain:
-
-- partition: `/machine/silver`
-- shares: `333`
-- vCPU threads: `guest_domain`
-- emulator thread: `host_emulator`
-
-The current automation also prefers a guest `poweroff` plus host-side
-`virsh start` for the first post-update cycle so cloud-init media cleanup in
-persistent XML becomes the next live device model immediately, instead of
-surviving as an empty CD-ROM through an in-guest reboot.
-
-## 11. Configure IdM In The Guest
-
-_Configure the IdM guest after first boot: update it, install IPA, enable the
-supporting services, and create the initial identity data the lab depends on._
-
-> [!NOTE]
-> Automation reference: `playbooks/bootstrap/idm.yml`, role `idm_guest`.
->
-> Update `redhat-release` before the main system update. This ensures the
-> current Red Hat Post-Quantum Cryptography public keys are present before
-> DNF validates newer packages. See:
-> <https://access.redhat.com/solutions/3449341>
-
-Update the guest, install IdM, enable Cockpit and session recording, and create
-the core users and groups used by OpenShift.
-
-```bash
-# Install and configure IdM in the guest.
-ssh -i /opt/openshift/secrets/hypervisor-admin.key cloud-user@172.16.0.10
-sudo -i
-
-dnf -y update redhat-release
-dnf -y update
-reboot
-
-dnf -y install \
-  ipa-server \
-  ipa-server-dns \
-  idm-pki-kra \
-  ipa-server-trust-ad \
-  cockpit \
-  cockpit-files \
-  cockpit-networkmanager \
-  cockpit-podman \
-  tlog \
-  sssd \
-  oddjob \
-  oddjob-mkhomedir \
-  insights-client \
-  authselect-compat
-
-insights-client --register
-
-firewall-cmd --permanent --add-service=cockpit
-firewall-cmd --permanent --add-service=dns
-firewall-cmd --permanent --add-service=freeipa-4
-firewall-cmd --permanent --add-service=freeipa-trust
-firewall-cmd --reload
-
-ipa-server-install -U \
-  --realm=WORKSHOP.LAN \
-  --domain=workshop.lan \
-  --hostname=idm-01.workshop.lan \
-  --ds-password='<lab-default-password>' \
-  --admin-password='<lab-default-password>' \
-  --setup-dns \
-  --auto-forwarders \
-  --no-host-dns
-
-kinit admin <<< '<lab-default-password>'
-ipa-kra-install -U -p '<lab-default-password>'
-
-ipa dnsconfig-mod --forwarder=8.8.8.8 --forwarder=1.1.1.1
-ipa group-add access-openshift-admin || true
-ipa group-add virt-admin || true
-ipa group-add developer || true
-
-ipa group-add admins || true
-ipa pwpolicy-add admins \
-  --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
-  --priority=40 2>/dev/null || \
-ipa pwpolicy-mod admins \
-  --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
-  --priority=40
-
-ipa pwpolicy-add access-openshift-admin \
-  --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
-  --priority=50 2>/dev/null || \
-ipa pwpolicy-mod access-openshift-admin \
-  --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
-  --priority=50
-
-ipa pwpolicy-add virt-admin \
-  --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
-  --priority=60 2>/dev/null || \
-ipa pwpolicy-mod virt-admin \
-  --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
-  --priority=60
-
-ipa pwpolicy-add developer \
-  --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
-  --priority=70 2>/dev/null || \
-ipa pwpolicy-mod developer \
-  --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
-  --priority=70
-
-ipa user-add sysop --first=Sys --last=Op --shell=/bin/bash --password <<< '<lab-default-password>'
-ipa user-add virtadm --first=Virt --last=Admin --shell=/bin/bash --password <<< '<lab-default-password>'
-ipa user-add dev --first=Dev --last=User --shell=/bin/bash --password <<< '<lab-default-password>'
-
-ipa user-mod sysop --setattr=krbPasswordExpiration=20360313235039Z
-ipa user-mod virtadm --setattr=krbPasswordExpiration=20360313235039Z
-ipa user-mod dev --setattr=krbPasswordExpiration=20360313235039Z
-
-ipa dnsrecord-add workshop.lan virt-01 --a-rec=172.16.0.1 2>/dev/null || \
-ipa dnsrecord-mod workshop.lan virt-01 --a-rec=172.16.0.1
-ipa dnszone-add 0.16.172.in-addr.arpa \
-  --name-server=idm-01.workshop.lan. \
-  --admin-email=hostmaster.workshop.lan \
-  --dynamic-update=FALSE 2>/dev/null || true
-ipa dnsrecord-add 0.16.172.in-addr.arpa 1 \
-  --ptr-rec=virt-01.workshop.lan. 2>/dev/null || \
-ipa dnsrecord-mod 0.16.172.in-addr.arpa 1 \
-  --ptr-rec=virt-01.workshop.lan.
-
-cat <<'EOF' >/etc/named/ipa-ext.conf
-/* User customization for BIND named */
-acl "trusted_network" {
-  localhost;
-  localnets;
-  172.16.0.0/24;
-  172.16.10.0/24;
-  172.16.11.0/24;
-  172.16.12.0/24;
-  172.16.20.0/24;
-  172.16.21.0/24;
-  172.16.22.0/24;
-};
-EOF
-
-cat <<'EOF' >/etc/named/ipa-options-ext.conf
-/* User customization for BIND named */
-listen-on-v6 { any; };
-dnssec-validation yes;
-allow-query { trusted_network; };
-allow-recursion { trusted_network; };
-allow-query-cache { trusted_network; };
-EOF
-
-named-checkconf /etc/named.conf
-systemctl restart named
-systemctl is-active named
-
-ipa group-add-member admins --users=sysop
-ipa group-add-member access-openshift-admin --users=sysop
-ipa group-add-member virt-admin --users=virtadm
-ipa group-add-member developer --users=dev
-
-ipa sudorule-add admins-nopasswd-all \
-  --desc='Permit admins group members to run any command on any host without authentication'
-ipa sudorule-mod admins-nopasswd-all --hostcat=all
-ipa sudorule-mod admins-nopasswd-all --cmdcat=all
-ipa sudorule-mod admins-nopasswd-all --runasusercat=all
-ipa sudorule-mod admins-nopasswd-all --runasgroupcat=all
-ipa sudorule-add-user admins-nopasswd-all --groups=admins
-ipa sudorule-add-option admins-nopasswd-all --sudooption='!authenticate'
-
-systemctl enable --now cockpit.socket
-systemctl enable --now oddjobd.service
-authselect select sssd with-tlog with-mkhomedir with-sudo --force
-systemctl restart sssd
-sss_cache -E
-sssctl domain-status workshop.lan
-```
-
-## 12. Build The Bastion VM
+## 10. Build The Bastion VM
 
 _Build the bastion VM shell on VLAN 100. This becomes the execution host for
 all remaining in-lab work._
@@ -1085,7 +821,7 @@ the lab.
 > [!NOTE]
 > The validated flow builds the bastion before IdM. The initial bastion build
 > does not enroll the guest into IdM. That enrollment now happens later in
-> [13B. Join The Bastion To IdM](#13b-join-the-bastion-to-idm).
+> [16. Join The Bastion To IdM](#16-join-the-bastion-to-idm).
 
 ```bash
 mkdir -p /var/lib/aws-metal-openshift-demo/bastion-01
@@ -1178,7 +914,7 @@ first package update requires a restart, the guest powers off, the seed media
 is cleaned from persistent XML while the domain is down, and the hypervisor
 starts the domain again.
 
-## 13. Stage The Project To The Bastion
+## 11. Stage The Project To The Bastion
 
 _Stage the project, secrets, and operator tools onto the bastion so the rest of
 the build can run from inside the lab._
@@ -1325,7 +1061,7 @@ When using an AI assistant to develop against this codebase:
   planning, doc rewrites, and multi-source investigations. Switch to a faster
   model for mechanical execution: running playbooks, committing, syncing.
 
-## 13A. Optionally Build AD DS And AD CS From Bastion
+## 12. Optionally Build AD DS And AD CS From Bastion
 
 _This is the manual AD build path: prepare media on `virt-01`, create the VM,
 complete the first boot, then configure AD DS and AD CS directly inside
@@ -1839,7 +1575,269 @@ curl -sI http://172.16.0.40:5985/wsman | head -n 1
 ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1 'virsh domstate ad-01.corp.lan'
 ```
 
-## 13AA. Optionally Configure IdM To AD Trust
+## 13. Build The IdM VM
+
+_Build the `idm-01` VM shell on the hypervisor, seed its disk from the RHEL
+image, and attach the cloud-init data needed for first boot._
+
+> [!NOTE]
+> Automation reference: `playbooks/bootstrap/idm.yml`, role `idm`.
+
+Seed the `idm-01` disk from the RHEL image, create cloud-init, and build the
+VM on the management VLAN.
+
+```bash
+ssh -i /opt/openshift/secrets/hypervisor-admin.key root@172.16.0.1
+
+mkdir -p /var/lib/aws-metal-openshift-demo/idm-01
+qemu-img convert -f qcow2 -O raw \
+  <rhel10-image-path> \
+  /dev/ebs/idm-01
+
+SSH_PUBKEY="$(cat <operator-public-key>)"
+
+cat <<'EOF' >/var/lib/aws-metal-openshift-demo/idm-01/meta-data
+instance-id: idm-01
+local-hostname: idm-01.workshop.lan
+EOF
+
+cat <<'EOF' >/var/lib/aws-metal-openshift-demo/idm-01/network-config
+version: 2
+ethernets:
+  eth0:
+    dhcp4: false
+    addresses:
+      - 172.16.0.10/24
+    routes:
+      - to: 0.0.0.0/0
+        via: 172.16.0.1
+    nameservers:
+      search: [workshop.lan]
+      addresses: [172.16.0.10, 8.8.8.8, 4.4.4.4]
+EOF
+
+cat <<EOF >/var/lib/aws-metal-openshift-demo/idm-01/user-data
+#cloud-config
+fqdn: idm-01.workshop.lan
+manage_etc_hosts: true
+users:
+  - default
+  - name: cloud-user
+    groups: [wheel]
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: false
+    passwd: $6$rounds=4096$temporary$BfY4OskkM6jv8v6eK9aT8W7F7Y9Q8nN2m5vQzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz
+    ssh_authorized_keys:
+      - ${SSH_PUBKEY}
+runcmd:
+  - [ sh, -c, 'echo nameserver 127.0.0.1 >/etc/resolv.conf' ]
+EOF
+
+cloud-localds \
+  --network-config=/var/lib/aws-metal-openshift-demo/idm-01/network-config \
+  /var/lib/aws-metal-openshift-demo/idm-01/seed.iso \
+  /var/lib/aws-metal-openshift-demo/idm-01/user-data \
+  /var/lib/aws-metal-openshift-demo/idm-01/meta-data
+
+virt-install \
+  --name idm-01.workshop.lan \
+  --memory 8192 \
+  --vcpus 2 \
+  --cpu host-passthrough \
+  --machine q35 \
+  --import \
+  --os-variant rhel10.0 \
+  --graphics none \
+  --console pty,target_type=serial \
+  --network network=lab-switch,portgroup=mgmt-access,model=virtio \
+  --controller type=scsi,model=virtio-scsi \
+  --disk path=/dev/ebs/idm-01,device=disk,bus=scsi,rotation_rate=1 \
+  --disk path=/var/lib/aws-metal-openshift-demo/idm-01/seed.iso,device=cdrom,bus=sata \
+  --resource partition=/machine/silver \
+  --cputune shares=333,emulatorpin.cpuset=2-5,26-29,50-53,74-77,\
+vcpupin0.vcpu=0,vcpupin0.cpuset=6-23,30-47,54-71,78-95,\
+vcpupin1.vcpu=1,vcpupin1.cpuset=6-23,30-47,54-71,78-95 \
+  --noautoconsole
+```
+
+That places `idm-01` into the Silver performance domain:
+
+- partition: `/machine/silver`
+- shares: `333`
+- vCPU threads: `guest_domain`
+- emulator thread: `host_emulator`
+
+The current automation also prefers a guest `poweroff` plus host-side
+`virsh start` for the first post-update cycle so cloud-init media cleanup in
+persistent XML becomes the next live device model immediately, instead of
+surviving as an empty CD-ROM through an in-guest reboot.
+
+## 14. Configure IdM In The Guest
+
+_Configure the IdM guest after first boot: update it, install IPA, enable the
+supporting services, and create the initial identity data the lab depends on._
+
+> [!NOTE]
+> Automation reference: `playbooks/bootstrap/idm.yml`, role `idm_guest`.
+>
+> Update `redhat-release` before the main system update. This ensures the
+> current Red Hat Post-Quantum Cryptography public keys are present before
+> DNF validates newer packages. See:
+> <https://access.redhat.com/solutions/3449341>
+
+Update the guest, install IdM, enable Cockpit and session recording, and create
+the core users and groups used by OpenShift.
+
+```bash
+# Install and configure IdM in the guest.
+ssh -i /opt/openshift/secrets/hypervisor-admin.key cloud-user@172.16.0.10
+sudo -i
+
+dnf -y update redhat-release
+dnf -y update
+reboot
+
+dnf -y install \
+  ipa-server \
+  ipa-server-dns \
+  idm-pki-kra \
+  ipa-server-trust-ad \
+  cockpit \
+  cockpit-files \
+  cockpit-networkmanager \
+  cockpit-podman \
+  tlog \
+  sssd \
+  oddjob \
+  oddjob-mkhomedir \
+  insights-client \
+  authselect-compat
+
+insights-client --register
+
+firewall-cmd --permanent --add-service=cockpit
+firewall-cmd --permanent --add-service=dns
+firewall-cmd --permanent --add-service=freeipa-4
+firewall-cmd --permanent --add-service=freeipa-trust
+firewall-cmd --reload
+
+ipa-server-install -U \
+  --realm=WORKSHOP.LAN \
+  --domain=workshop.lan \
+  --hostname=idm-01.workshop.lan \
+  --ds-password='<lab-default-password>' \
+  --admin-password='<lab-default-password>' \
+  --setup-dns \
+  --auto-forwarders \
+  --no-host-dns
+
+kinit admin <<< '<lab-default-password>'
+ipa-kra-install -U -p '<lab-default-password>'
+
+ipa dnsconfig-mod --forwarder=8.8.8.8 --forwarder=1.1.1.1
+ipa group-add access-openshift-admin || true
+ipa group-add virt-admin || true
+ipa group-add developer || true
+
+ipa group-add admins || true
+ipa pwpolicy-add admins \
+  --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
+  --priority=40 2>/dev/null || \
+ipa pwpolicy-mod admins \
+  --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
+  --priority=40
+
+ipa pwpolicy-add access-openshift-admin \
+  --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
+  --priority=50 2>/dev/null || \
+ipa pwpolicy-mod access-openshift-admin \
+  --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
+  --priority=50
+
+ipa pwpolicy-add virt-admin \
+  --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
+  --priority=60 2>/dev/null || \
+ipa pwpolicy-mod virt-admin \
+  --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
+  --priority=60
+
+ipa pwpolicy-add developer \
+  --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
+  --priority=70 2>/dev/null || \
+ipa pwpolicy-mod developer \
+  --maxlife=3650 --minlife=0 --history=0 --minclasses=0 --minlength=8 \
+  --priority=70
+
+ipa user-add sysop --first=Sys --last=Op --shell=/bin/bash --password <<< '<lab-default-password>'
+ipa user-add virtadm --first=Virt --last=Admin --shell=/bin/bash --password <<< '<lab-default-password>'
+ipa user-add dev --first=Dev --last=User --shell=/bin/bash --password <<< '<lab-default-password>'
+
+ipa user-mod sysop --setattr=krbPasswordExpiration=20360313235039Z
+ipa user-mod virtadm --setattr=krbPasswordExpiration=20360313235039Z
+ipa user-mod dev --setattr=krbPasswordExpiration=20360313235039Z
+
+ipa dnsrecord-add workshop.lan virt-01 --a-rec=172.16.0.1 2>/dev/null || \
+ipa dnsrecord-mod workshop.lan virt-01 --a-rec=172.16.0.1
+ipa dnszone-add 0.16.172.in-addr.arpa \
+  --name-server=idm-01.workshop.lan. \
+  --admin-email=hostmaster.workshop.lan \
+  --dynamic-update=FALSE 2>/dev/null || true
+ipa dnsrecord-add 0.16.172.in-addr.arpa 1 \
+  --ptr-rec=virt-01.workshop.lan. 2>/dev/null || \
+ipa dnsrecord-mod 0.16.172.in-addr.arpa 1 \
+  --ptr-rec=virt-01.workshop.lan.
+
+cat <<'EOF' >/etc/named/ipa-ext.conf
+/* User customization for BIND named */
+acl "trusted_network" {
+  localhost;
+  localnets;
+  172.16.0.0/24;
+  172.16.10.0/24;
+  172.16.11.0/24;
+  172.16.12.0/24;
+  172.16.20.0/24;
+  172.16.21.0/24;
+  172.16.22.0/24;
+};
+EOF
+
+cat <<'EOF' >/etc/named/ipa-options-ext.conf
+/* User customization for BIND named */
+listen-on-v6 { any; };
+dnssec-validation yes;
+allow-query { trusted_network; };
+allow-recursion { trusted_network; };
+allow-query-cache { trusted_network; };
+EOF
+
+named-checkconf /etc/named.conf
+systemctl restart named
+systemctl is-active named
+
+ipa group-add-member admins --users=sysop
+ipa group-add-member access-openshift-admin --users=sysop
+ipa group-add-member virt-admin --users=virtadm
+ipa group-add-member developer --users=dev
+
+ipa sudorule-add admins-nopasswd-all \
+  --desc='Permit admins group members to run any command on any host without authentication'
+ipa sudorule-mod admins-nopasswd-all --hostcat=all
+ipa sudorule-mod admins-nopasswd-all --cmdcat=all
+ipa sudorule-mod admins-nopasswd-all --runasusercat=all
+ipa sudorule-mod admins-nopasswd-all --runasgroupcat=all
+ipa sudorule-add-user admins-nopasswd-all --groups=admins
+ipa sudorule-add-option admins-nopasswd-all --sudooption='!authenticate'
+
+systemctl enable --now cockpit.socket
+systemctl enable --now oddjobd.service
+authselect select sssd with-tlog with-mkhomedir with-sudo --force
+systemctl restart sssd
+sss_cache -E
+sssctl domain-status workshop.lan
+```
+
+## 15. Optionally Configure IdM To AD Trust
 
 _If the AD support VM is enabled and the lab should bridge selected AD groups
 into local IdM policy groups, complete the trust setup here before bastion
@@ -2011,7 +2009,7 @@ ipa group-show access-virt-admin --all
 ipa group-show access-developer --all
 ipa group-show access-aap-admin --all
 ```
-## 13B. Join The Bastion To IdM
+## 16. Join The Bastion To IdM
 
 _At this point `bastion-01` already exists and `idm-01` is already configured.
 The remaining work is to trust the active IdM CA, enroll the bastion as an IPA
@@ -2105,10 +2103,10 @@ support-service phase is the mirror registry build.
 
 > [!WARNING]
 > Everything below this line runs from the bastion. Do not switch back to the
-> operator workstation for steps 13A-36 unless you are deliberately debugging
+> operator workstation for steps 17-39 unless you are deliberately debugging
 > the automation itself. Once you cross this boundary, stay on bastion.
 
-## 14. Build The Mirror Registry VM
+## 17. Build The Mirror Registry VM
 
 _Build and configure the mirror-registry VM from the bastion, join it to IdM,
 and install the Quay-based disconnected registry stack._
@@ -2336,7 +2334,7 @@ Like the other support guests, the current automation uses a poweroff/offline
 cleanup/start cycle for the first update-triggered restart so the cloud-init
 CD-ROM cleanup is reflected in the next live QEMU process.
 
-## 15. Mirror OpenShift And Operator Content
+## 18. Mirror OpenShift And Operator Content
 
 _Mirror the OpenShift release payloads, operator catalogs, and extra images
 into the local registry using the portable `m2d` plus `d2m` workflow._
@@ -2517,7 +2515,7 @@ Observed on the live `4.20.15` run with the current operator set:
 - practical lab decision: provision `400 GiB` for `mirror-registry`
 - observed imported Quay content footprint after `d2m`: about `82 GiB`
 
-## 16. Populate OpenShift DNS In IdM
+## 19. Populate OpenShift DNS In IdM
 
 _Populate the OpenShift forward and reverse DNS zones in IdM so the cluster and
 its routes resolve correctly before install._
@@ -2587,7 +2585,7 @@ for entry in \
 done
 ```
 
-## 17. Download Installer Binaries
+## 20. Download Installer Binaries
 
 _Download the exact matching OpenShift installer and client binaries onto the
 bastion._
@@ -2622,7 +2620,7 @@ chmod 0755 /opt/openshift/generated/tools/4.20.15/bin/oc
 chmod 0755 /opt/openshift/generated/tools/4.20.15/bin/kubectl
 ```
 
-## 18. Render Install Artifacts
+## 21. Render Install Artifacts
 
 _Render the OpenShift install-config, manifests, and cluster artifacts on the
 bastion._
@@ -2740,7 +2738,7 @@ hosts:
 EOF
 ```
 
-## 19. Generate The Agent ISO
+## 22. Generate The Agent ISO
 
 _Generate the agent-based installer ISO used to boot the cluster VMs._
 
@@ -2817,7 +2815,7 @@ openshift_cluster_node_attachment_plan:
 EOF
 ```
 
-## 20. Create The OpenShift VM Shells
+## 23. Create The OpenShift VM Shells
 
 _Create the nine OpenShift VM shells, attach the agent ISO, and boot them into
 the agent installer._
@@ -2895,7 +2893,7 @@ virt-xml ocp-master-01.ocp.workshop.lan --edit --boot cdrom,hd
 #   - shares=167
 ```
 
-## 21. Wait For Installer Convergence
+## 24. Wait For Installer Convergence
 
 _Wait for bootstrap and install completion from the bastion._
 
@@ -2917,7 +2915,7 @@ running” into “the cluster finished bootstrap and install.”
   wait-for install-complete --log-level=debug
 ```
 
-## 22. Validate Post-install State
+## 25. Validate Post-install State
 
 _Validate that the newly installed cluster is healthy enough for day-2 work._
 
@@ -2967,7 +2965,7 @@ sudo update-ca-trust extract
 EOF
 ```
 
-## 23. Detach Install Media And Normalize Boot
+## 26. Detach Install Media And Normalize Boot
 
 _Detach the install media and restore disk-first boot intent before any normal
 cluster reboots occur._
@@ -3074,7 +3072,7 @@ done
 EOF
 ```
 
-## 24. Configure Breakglass Auth, Keycloak OIDC, And Infra Roles
+## 27. Configure Breakglass Auth, Keycloak OIDC, And Infra Roles
 
 _This section is the manual runbook for the supported infra and authentication
 cutover: move platform workloads onto infra nodes, establish a local
@@ -3631,7 +3629,7 @@ optional side test after OIDC is working. Do not treat it as the default
 cluster auth model, and do not replace the breakglass plus OIDC baseline with
 it.
 
-## 25. Install Kubernetes NMState
+## 28. Install Kubernetes NMState
 
 _Install Kubernetes NMState and create the VLAN policies needed by later VM and
 live-migration networking._
@@ -3802,7 +3800,7 @@ Design note:
 - a MAC-matched model is more robust across different hardware and interface
   naming schemes, but it requires generating a separate policy per node
 
-## 26. Deploy ODF Declaratively
+## 29. Deploy ODF Declaratively
 
 _Deploy ODF declaratively, including the host-side cleanup needed to avoid
 stale Ceph and OLM state._
@@ -4056,7 +4054,7 @@ YAML
 EOF
 ```
 
-## 27. Install OpenShift Virtualization
+## 30. Install OpenShift Virtualization
 
 _Install OpenShift Virtualization and the workload-availability operators that
 support it._
@@ -4156,7 +4154,7 @@ YAML
 EOF
 ```
 
-## 28. Install The Web Terminal
+## 31. Install The Web Terminal
 
 _Install the Web Terminal operator, build the custom tooling image, and point
 the devworkspace template at that image._
@@ -4249,7 +4247,7 @@ oc -n openshift-terminal delete devworkspace --all || true
 EOF
 ```
 
-## 29. Install Network Observability And Loki
+## 32. Install Network Observability And Loki
 
 _Install Network Observability and Loki, then create the ODF-backed
 `FlowCollector` and `LokiStack` resources._
@@ -4434,7 +4432,7 @@ YAML
 EOF
 ```
 
-## 30. Install Ansible Automation Platform
+## 33. Install Ansible Automation Platform
 
 _Install Ansible Automation Platform on OpenShift and configure it to
 authenticate through Keycloak OIDC backed by IdM._
@@ -4707,7 +4705,7 @@ curl --cacert /etc/ipa/ca.crt -sS \
 EOF
 ```
 
-## 31. Install OpenShift Pipelines
+## 34. Install OpenShift Pipelines
 
 _Install OpenShift Pipelines and prepare the Windows EFI image-build lane._
 
@@ -4749,7 +4747,7 @@ curl -L \
 EOF
 ```
 
-## 32. Launch A Windows EFI Build
+## 35. Launch A Windows EFI Build
 
 _Launch the Windows Server image-build PipelineRun manually after the Pipelines
 lane is in place._
@@ -4807,7 +4805,7 @@ oc get pipelinerun windows2k22-efi-installer-run -n windows-image-builder
 EOF
 ```
 
-## 33. Pivot OperatorHub To The Disconnected Catalog
+## 36. Pivot OperatorHub To The Disconnected Catalog
 
 _Pivot OperatorHub to the disconnected catalogs produced by the mirror phase._
 
@@ -4896,7 +4894,7 @@ done
 EOF
 ```
 
-## 34. Roll Out An IdM Ingress Certificate
+## 37. Roll Out An IdM Ingress Certificate
 
 _Roll out the IdM-issued wildcard ingress certificate early in day-2 so later
 work lands on the final TLS state._
@@ -5096,7 +5094,7 @@ YAML
 EOF
 ```
 
-## 35. Cleanup
+## 38. Cleanup
 
 _Use cleanup intentionally: either destroy the full lab or, more commonly,
 destroy only the OpenShift cluster and preserve the healthy support services._
@@ -5176,7 +5174,7 @@ done
 EOF
 ```
 
-## 36. Manual Debugging Examples
+## 39. Manual Debugging Examples
 
 These commands are useful when teaching or troubleshooting the manual process.
 
