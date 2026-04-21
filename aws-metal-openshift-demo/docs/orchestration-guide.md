@@ -804,7 +804,7 @@ Execution model:
 - creates or updates the Keycloak `aap` client in the existing realm
 - creates or updates the Keycloak `groups` and `aap-audience` protocol mappers
 - creates the `Red Hat build of Keycloak` gateway authenticator
-- creates the `access-openshift-admin AAP superuser` authenticator map
+- creates the `access-aap-admin AAP superuser` authenticator map
 - removes the legacy direct-LDAP authenticator when present
 - validates AD-backed OIDC login after the gateway rollout when trust is
   enabled, otherwise validates the native IdM user path
@@ -813,7 +813,7 @@ Validated live result:
 
 - route `https://aap.apps.ocp.workshop.lan`
 - login page shows `Red Hat build of Keycloak`
-- `ad-ocpadmin@corp.lan` authenticates through Keycloak/IdM on the live trust
+- `ad-aapadmin@corp.lan` authenticates through Keycloak/IdM on the live trust
   path
 - the resulting AAP user has `is_superuser: true`
 - a clean AAP teardown and redeploy was revalidated on the same OIDC path

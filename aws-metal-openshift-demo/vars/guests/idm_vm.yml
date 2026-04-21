@@ -254,6 +254,13 @@ idm_server:
       password: "{{ lab_default_password | default('') }}"
       groups:
         - access-developer
+    - name: aapadmin
+      first_name: AAP
+      last_name: Admin
+      shell: /bin/bash
+      password: "{{ lab_default_password | default('') }}"
+      groups:
+        - access-aap-admin
   sudo_policy:
     enabled: true
     rule_name: admins-nopasswd-all

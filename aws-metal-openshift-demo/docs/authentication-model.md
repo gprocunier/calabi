@@ -79,7 +79,7 @@ Today those IdM local groups are:
 | `access-linux-admin` | Linux/RHEL admin | Granted passwordless sudo by `admins-nopasswd-all` |
 | `access-virt-admin` | reserved virtualization role | group exists; no broad privilege binding documented as default |
 | `access-developer` | reserved non-admin role | group exists; no broad privilege binding documented as default |
-| `access-aap-admin` | reserved AAP policy target | group exists in IdM and AD-trust mapping; current clean-build AAP superuser binding still uses `access-openshift-admin` |
+| `access-aap-admin` | AAP admin | Grants AAP gateway superuser through the Keycloak authenticator map |
 
 That means:
 
@@ -141,7 +141,7 @@ In the validated clean-build path:
 
 - AAP uses the Keycloak realm already deployed for cluster SSO
 - the AAP client ID is `aap`
-- the required admin group is `access-openshift-admin`
+- the required admin group is `access-aap-admin`
 - direct AAP LDAP is not the supported default path
 
 ### RHEL Hosts

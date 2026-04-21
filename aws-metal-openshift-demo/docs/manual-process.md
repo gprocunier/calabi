@@ -1784,10 +1784,12 @@ ipa pwpolicy-mod access-linux-admin \
 ipa user-add sysop --first=Sys --last=Op --shell=/bin/bash --password <<< '<lab-default-password>'
 ipa user-add virtadm --first=Virt --last=Admin --shell=/bin/bash --password <<< '<lab-default-password>'
 ipa user-add dev --first=Dev --last=User --shell=/bin/bash --password <<< '<lab-default-password>'
+ipa user-add aapadmin --first=AAP --last=Admin --shell=/bin/bash --password <<< '<lab-default-password>'
 
 ipa user-mod sysop --setattr=krbPasswordExpiration=20360313235039Z
 ipa user-mod virtadm --setattr=krbPasswordExpiration=20360313235039Z
 ipa user-mod dev --setattr=krbPasswordExpiration=20360313235039Z
+ipa user-mod aapadmin --setattr=krbPasswordExpiration=20360313235039Z
 
 ipa dnsrecord-add workshop.lan virt-01 --a-rec=172.16.0.1 2>/dev/null || \
 ipa dnsrecord-mod workshop.lan virt-01 --a-rec=172.16.0.1
@@ -1832,6 +1834,7 @@ ipa group-add-member access-linux-admin --users=sysop
 ipa group-add-member access-openshift-admin --users=sysop
 ipa group-add-member access-virt-admin --users=virtadm
 ipa group-add-member access-developer --users=dev
+ipa group-add-member access-aap-admin --users=aapadmin
 
 ipa sudorule-add admins-nopasswd-all \
   --desc='Permit access-linux-admin group members to run any command on any host without authentication'
@@ -4548,7 +4551,7 @@ The validated clean-build path uses:
 - Keycloak realm: `openshift`
 - AAP client ID: `aap`
 - AAP authenticator name: `Red Hat build of Keycloak`
-- required AAP admin group: `access-openshift-admin`
+- required AAP admin group: `access-aap-admin`
 
 ```bash
 # Configure Keycloak SSO for AAP.
@@ -4667,12 +4670,12 @@ curl -sk -X POST https://${AAP_ROUTE}/api/gateway/v1/authenticator_maps/ \
   -H 'Content-Type: application/json' \
   -d @- <<JSON
 {
-  "name": "access-openshift-admin AAP superuser",
+  "name": "access-aap-admin AAP superuser",
   "map_type": "is_superuser",
   "triggers": {
     "groups": {
       "has_or": [
-        "access-openshift-admin"
+        "access-aap-admin"
       ]
     }
   },
@@ -4694,8 +4697,8 @@ before the final browser-style login proof:
    expected group claims
 
 If the lab trust path is enabled, the validated user is
-`ad-ocpadmin@corp.lan`. Without AD trust, use the native IdM admin-path user
-instead.
+`ad-aapadmin@corp.lan`. Without AD trust, use the native IdM AAP admin user
+`aapadmin` instead.
 
 ```bash
 # Validate the AAP SSO entry and token flow.
@@ -4706,13 +4709,17 @@ KEYCLOAK_ROUTE="$(oc -n keycloak get route workshop-keycloak -o jsonpath='{.spec
 
 curl -sk "https://${AAP_ROUTE}/api/gateway/v1/ui_auth/" | jq .
 
+AAP_VALIDATION_USER="ad-aapadmin@corp.lan"
+# When AD trust is disabled, switch this to the native IdM AAP admin user instead.
+# AAP_VALIDATION_USER="aapadmin"
+
 curl --cacert /etc/ipa/ca.crt -sS \
   -X POST "https://${KEYCLOAK_ROUTE}/realms/openshift/protocol/openid-connect/token" \
   -H 'Content-Type: application/x-www-form-urlencoded' \
   --data-urlencode 'client_id=aap' \
   --data-urlencode 'client_secret=<lab-default-password>' \
   --data-urlencode 'grant_type=password' \
-  --data-urlencode 'username=ad-ocpadmin@corp.lan' \
+  --data-urlencode "username=${AAP_VALIDATION_USER}" \
   --data-urlencode 'password=<lab-default-password>' \
   | jq .
 EOF

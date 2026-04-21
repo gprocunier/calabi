@@ -13,7 +13,7 @@ openshift_aap:
   idm_ca_secret_name: workshop-aap-idm-ca
   route_host: aap.apps.ocp.workshop.lan
   bundle_cacert_secret: workshop-aap-idm-ca
-  validation_username: sysop
+  validation_username: aapadmin
   validation_password: "{{ lab_default_password | default('') }}"
   database:
     postgres_storage_class: ocs-storagecluster-ceph-rbd
@@ -45,7 +45,7 @@ openshift_aap:
     client_secret: "{{ lab_default_password | default('') }}"
     groups_claim: groups
     required_group_names:
-      - access-openshift-admin
+      - access-aap-admin
     protocol_mapper:
       name: groups
       claim_name: groups
@@ -55,9 +55,15 @@ openshift_aap:
       included_client_audience: aap
     validation_username: >-
       {{
-        openshift_oidc_auth.validation.ad_test_user
+        ('ad-aapadmin@' ~ ad_server.domain_name)
         if (lab_configure_ad_trust | default(false) | bool)
-        else openshift_oidc_auth.validation.native_test_user
+        else (
+          idm_server.identity_users
+          | selectattr('groups', 'contains', 'access-aap-admin')
+          | map(attribute='name')
+          | first
+          | default('')
+        )
       }}
     validation_password: >-
       {{
