@@ -85,18 +85,20 @@ Use this like a runbook, not a novel. Jump to the phase you actually need.
 
 ### Support Services
 
-Validated support-services order:
+Validated support-services run order. The section ids stay stable for deep
+links, so the numbers in parentheses are references, not the order you execute
+these steps:
 
-- [12. Build The Bastion VM](#12-build-the-bastion-vm)
-- [13. Stage The Project To The Bastion](#13-stage-the-project-to-the-bastion)
-- [13A. Optionally Build AD DS And AD CS From Bastion](#13a-optionally-build-ad-ds-and-ad-cs-from-bastion)
-- [10. Build The IdM VM](#10-build-the-idm-vm)
-- [11. Configure IdM In The Guest](#11-configure-idm-in-the-guest)
-- [13AA. Optionally Configure IdM To AD Trust](#13aa-optionally-configure-idm-to-ad-trust)
-- [13B. Join The Bastion To IdM](#13b-join-the-bastion-to-idm)
-- [14. Build The Mirror Registry VM](#14-build-the-mirror-registry-vm)
-- [15. Mirror OpenShift And Operator Content](#15-mirror-openshift-and-operator-content)
-- [16. Populate OpenShift DNS In IdM](#16-populate-openshift-dns-in-idm)
+1. [Build The Bastion VM](#12-build-the-bastion-vm) (`12`)
+2. [Stage The Project To The Bastion](#13-stage-the-project-to-the-bastion) (`13`)
+3. [Optionally Build AD DS And AD CS From Bastion](#13a-optionally-build-ad-ds-and-ad-cs-from-bastion) (`13A`)
+4. [Build The IdM VM](#10-build-the-idm-vm) (`10`)
+5. [Configure IdM In The Guest](#11-configure-idm-in-the-guest) (`11`)
+6. [Optionally Configure IdM To AD Trust](#13aa-optionally-configure-idm-to-ad-trust) (`13AA`)
+7. [Join The Bastion To IdM](#13b-join-the-bastion-to-idm) (`13B`)
+8. [Build The Mirror Registry VM](#14-build-the-mirror-registry-vm) (`14`)
+9. [Mirror OpenShift And Operator Content](#15-mirror-openshift-and-operator-content) (`15`)
+10. [Populate OpenShift DNS In IdM](#16-populate-openshift-dns-in-idm) (`16`)
 
 ### Cluster Bring-up
 
