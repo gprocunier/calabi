@@ -1,5 +1,39 @@
 # Changelog
 
+## v1.3.0 (2026-04-26)
+
+Feature release of Calabi focused on making the experimental on-prem path a
+usable cluster-capable workflow, adding external ODF consumption, hardening
+rerun/convergence behavior, and refreshing the operator documentation for both
+AWS and on-prem deployments.
+
+Highlights:
+
+- Added external ODF day-2 orchestration that installs the ODF operator,
+  imports operator-provided Ceph cluster details, applies an external
+  `StorageCluster`, and keeps the storage phase in the same dependency slot as
+  internal ODF.
+- Expanded the on-prem target with override-driven profiles, extra OVS/libvirt
+  networking, host sizing guidance, full cleanup support, and a cluster-capable
+  3-control-plane / 3-worker external-Ceph profile.
+- Hardened support-service and day-2 reruns with convergence probes, explicit
+  force flags, safer cleanup boundaries, and cluster convergence checks that
+  avoid rebuilding healthy AD, IdM, bastion, mirror-registry, or OpenShift
+  phases unnecessarily.
+- Added `calabi-shell` installation, mirror-registry `oc-mirror` parallelism
+  tunables, host zram writeback policy support, and refreshed guest sizing for
+  the current lab profile.
+- Reworked the documentation set for automation flow, manual process,
+  override mechanics, ODF modes, host resource policy, and publish
+  sanitization; the publish tree now removes local external-Ceph secrets and
+  build artifacts before release.
+- Updated the docs site renderer with Shiki-backed code highlighting and
+  refreshed Cockpit observer assets and exporter integration.
+
+Release notes:
+
+- `releases/v1.3.0.md`
+
 ## v1.2.1 (2026-04-18)
 
 Maintenance release of Calabi focused on bootstrap reliability and publishable
