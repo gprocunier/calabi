@@ -6,6 +6,7 @@ project is; this page routes you into the correct workflow lane.
 
 The docs below reflect the current validated posture:
 
+- `v1.3.0` is the current published release line
 - `./scripts/run_local_playbook.sh`
   <a href="../playbooks/site-bootstrap.yml"><kbd>playbooks/site-bootstrap.yml</kbd></a>
   has been re-proven from a zero-VM boundary
@@ -16,11 +17,6 @@ The docs below reflect the current validated posture:
 - AD-backed user login has been validated through:
   - Keycloak into OpenShift
   - Keycloak into AAP
-
-The remaining certification bar is still one uninterrupted fresh
-`./scripts/run_remote_bastion_playbook.sh`
-<a href="../playbooks/site-lab.yml"><kbd>playbooks/site-lab.yml</kbd></a> run
-on the current codebase without live repair during that attempt.
 
 ## Choose Your Path
 
@@ -61,8 +57,9 @@ host that can satisfy the Calabi hypervisor contract, you can try the
 experimental on-prem entry path for the divergent early steps.
 
 > [!WARNING]
-> Unvalidated. This path is provided for developers who want to try the on-prem
-> entry flow. It is not the supported deployment path.
+> Experimental. This path is provided for developers who want to try the
+> on-prem entry flow. The AWS path remains the primary validated deployment
+> path.
 
 <a href="../../on-prem-openshift-demo/docs/README.md"><kbd>&nbsp;&nbsp;ON-PREM DOCS&nbsp;&nbsp;</kbd></a>
 

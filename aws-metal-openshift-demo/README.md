@@ -58,13 +58,15 @@ The runner split and workstation-to-bastion handoff live in
 
 Current validation status:
 
+- `v1.3.0` is the current published release line for the expanded
+  on-prem/external-ODF automation and refreshed documentation set
 - cluster build, mirrored-content consumption, and the default auth baseline
-  (`HTPasswd` breakglass plus Keycloak OIDC) are working on the current lab
+  (`HTPasswd` breakglass plus Keycloak OIDC) have converged on the live lab
 - the latest bastion-side `playbooks/site-lab.yml` run completed successfully
   with `rc=0` on the live environment
-- the repo validation lane (`make validate`) is clean
-- the final zero-intervention certification run of `playbooks/site-lab.yml`
-  from a fresh teardown boundary is still pending
+- the release tree is exported through the sanitized publish flow so local
+  generated artifacts, RPM outputs, secret material, and operator-local logs do
+  not ship in GitHub-facing content
 
 ## Validated Baseline
 

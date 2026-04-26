@@ -527,11 +527,8 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
   - Keycloak is deployed from mirrored content
   - OpenShift OAuth uses Keycloak OIDC and `groups` claim sync
   - `openshift-admin` is bound to `cluster-admin`
-- the remaining confidence step is one uninterrupted
-  `./scripts/run_remote_bastion_playbook.sh`
-  <a href="../playbooks/site-lab.yml"><kbd>playbooks/site-lab.yml</kbd></a>
-  run on the current codebase from a deliberate teardown boundary, without live
-  fixes
+- the `v1.3.0` release tree captures this current automation state after the
+  sanitized publish flow and release validation
 - support-service DNS publication is now explicit and authoritative:
   - static-IP bastion and mirror-registry enrollment does not depend on client
     DNS updates

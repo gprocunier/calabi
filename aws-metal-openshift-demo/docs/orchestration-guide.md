@@ -1553,6 +1553,6 @@ to claim:
 > so contributors know where the automation stops and manual decisions begin.
 
 - In-place migration of an already-running self-signed registry to IdM-issued certs is only partially automated. Clean installs that start on the IdM-cert path are not the gap.
-- The final certification bar is still outstanding: one uninterrupted
-  `playbooks/site-lab.yml` run from a deliberate teardown boundary on the
-  current codebase, without live repair work during the attempt.
+- Fully automated zero-intervention rebuild proof should still be repeated
+  after large orchestration changes, but the `v1.3.0` release tree reflects the
+  current validated live-lab convergence and sanitized publish state.
