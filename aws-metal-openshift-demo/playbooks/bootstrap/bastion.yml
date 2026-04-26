@@ -1,4 +1,145 @@
 ---
+- name: Probe whether an existing bastion guest is already fully converged
+  hosts: aws_metal
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/bastion.yml
+    - ../../vars/global/host_resource_management.yml
+    - ../../vars/global/rhsm.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/bastion_vm.yml
+
+  tasks:
+    - name: Check whether the bastion libvirt domain already exists
+      ansible.builtin.command:
+        argv:
+          - virsh
+          - dominfo
+          - "{{ bastion_vm.name }}.{{ bastion_vm.domain }}"
+      register: bastion_probe_domain_info
+      changed_when: false
+      failed_when: false
+
+    - name: Wait briefly for SSH on an existing bastion guest
+      ansible.builtin.wait_for:
+        host: "{{ bastion_vm.network.ipv4_address }}"
+        port: 22
+        timeout: 20
+        sleep: 5
+      register: bastion_probe_ssh
+      changed_when: false
+      failed_when: false
+      when:
+        - bastion_probe_domain_info.rc == 0
+        - not (bastion_vm.provisioning.recreate_domain | bool)
+        - not (bastion_vm.provisioning.rebuild_disk_from_image | bool)
+
+    - name: Register the existing bastion guest for completion probing
+      ansible.builtin.add_host:
+        name: bastion_probe
+        groups:
+          - bastion_probe
+        ansible_host: "{{ bastion_vm.network.ipv4_address }}"
+        ansible_user: "{{ bastion_vm.access.admin_user }}"
+        ansible_ssh_private_key_file: >-
+          {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+        ansible_become: true
+        ansible_ssh_common_args: >-
+          -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null
+          -o ProxyCommand="ssh
+          -i {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+          -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null
+          {{ hostvars[inventory_hostname].ansible_user }}@{{
+          hostvars[inventory_hostname].ansible_host }}
+          -W %h:%p"
+      when:
+        - bastion_probe_domain_info.rc == 0
+        - (bastion_probe_ssh.state | default('')) == 'started'
+        - not (bastion_vm.provisioning.recreate_domain | bool)
+        - not (bastion_vm.provisioning.rebuild_disk_from_image | bool)
+
+- name: Check whether the existing bastion guest is already fully configured
+  hosts: bastion_probe
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/bastion.yml
+    - ../../vars/global/host_resource_management.yml
+    - ../../vars/global/rhsm.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/bastion_vm.yml
+
+  tasks:
+    - name: Wait for authenticated SSH connectivity to the existing bastion guest
+      ansible.builtin.wait_for_connection:
+        timeout: 60
+        sleep: 10
+        connect_timeout: 10
+
+    - name: Probe the bastion guest completion state
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+
+          reasons=()
+
+          for service in firewalld cockpit.socket oddjobd.service; do
+            if ! systemctl is-enabled --quiet "${service}" || ! systemctl is-active --quiet "${service}"; then
+              reasons+=("service:${service}")
+            fi
+          done
+
+          for path in \
+            {{ bastion_client.workspace_root | quote }} \
+            {{ bastion_client.artifact_root | quote }} \
+            {{ bastion_client.cluster_artifact_root | quote }} \
+            {{ bastion_client.tools_root | quote }}; do
+            if [ ! -d "${path}" ]; then
+              reasons+=("dir:${path}")
+            fi
+          done
+
+          for cmd in ansible-playbook git jq rsync tmux; do
+            if ! command -v "${cmd}" >/dev/null 2>&1; then
+              reasons+=("cmd:${cmd}")
+            fi
+          done
+
+          if [ ! -f /var/lib/calabi-shell/installed-revision ] || [ ! -f /etc/profile.d/calabi-shell.sh ]; then
+            reasons+=("calabi-shell")
+          fi
+
+          if [ "${reasons[0]+set}" != "set" ]; then
+            printf 'bastion guest already converged\n'
+            exit 0
+          fi
+
+          printf '%s\n' "${reasons[@]}"
+          exit 1
+      args:
+        executable: /bin/bash
+      register: bastion_probe_completion
+      changed_when: false
+      failed_when: false
+
+    - name: Record whether the existing bastion guest is already converged
+      ansible.builtin.group_by:
+        key: >-
+          bastion_bootstrap_complete_{{
+            (bastion_probe_completion.rc == 0) | ternary('true', 'false')
+          }}
+
+    - name: Publish the bastion guest completion probe result
+      ansible.builtin.debug:
+        msg:
+          completed: "{{ bastion_probe_completion.rc == 0 }}"
+          checks: "{{ bastion_probe_completion.stdout_lines | default([]) }}"
+
 - name: Build the bastion virtual machine for the OpenShift demo
   hosts: aws_metal
   become: true
@@ -10,6 +151,14 @@
     - ../../vars/global/lab_switch_ports.yml
     - ../../vars/guests/idm_vm.yml
     - ../../vars/guests/bastion_vm.yml
+
+  pre_tasks:
+    - name: Skip bastion VM build when the existing guest is already fully configured
+      ansible.builtin.meta: end_play
+      when:
+        - (groups['bastion_bootstrap_complete_true'] | default([])) | length > 0
+        - not (bastion_vm.provisioning.recreate_domain | bool)
+        - not (bastion_vm.provisioning.rebuild_disk_from_image | bool)
 
   roles:
     - role: bastion
@@ -51,6 +200,13 @@
     - ../../vars/guests/bastion_vm.yml
 
   pre_tasks:
+    - name: Skip bastion guest configuration when the guest is already fully configured
+      ansible.builtin.meta: end_play
+      when:
+        - (groups['bastion_bootstrap_complete_true'] | default([])) | length > 0
+        - not (bastion_vm.provisioning.recreate_domain | bool)
+        - not (bastion_vm.provisioning.rebuild_disk_from_image | bool)
+
     - name: Wait for the bastion guest to accept SSH connections
       ansible.builtin.wait_for_connection:
         timeout: 900
@@ -69,6 +225,13 @@
   gather_facts: false
   vars_files:
     - ../../vars/guests/bastion_vm.yml
+  pre_tasks:
+    - name: Skip bastion media cleanup when the guest is already fully configured
+      ansible.builtin.meta: end_play
+      when:
+        - (groups['bastion_bootstrap_complete_true'] | default([])) | length > 0
+        - not (bastion_vm.provisioning.recreate_domain | bool)
+        - not (bastion_vm.provisioning.rebuild_disk_from_image | bool)
   roles:
     - role: libvirt_cdrom_cleanup
       vars:

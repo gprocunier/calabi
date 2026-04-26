@@ -10,12 +10,17 @@ spec:
   route_host: {{ openshift_aap.route_host }}
   bundle_cacert_secret: {{ openshift_aap.bundle_cacert_secret }}
   database:
-    postgres_storage_class: {{ openshift_aap.database.postgres_storage_class }}
+    postgres_storage_class: {{ openshift_aap.database.postgres_storage_class | default(openshift_post_install_odf_effective_default_storage_class_rbd) }}
     resource_requirements:
 {{ openshift_aap.database.resource_requirements | to_nice_yaml(indent=6) | indent(6, true) }}
     storage_requirements:
       requests:
         storage: {{ openshift_aap.database.storage }}
+{% if openshift_aap.api.resource_requirements is defined %}
+  api:
+    resource_requirements:
+{{ openshift_aap.api.resource_requirements | to_nice_yaml(indent=6) | indent(6, true) }}
+{% endif %}
   controller:
     disabled: {{ openshift_aap.controller.disabled | to_json }}
     name: {{ openshift_aap.controller.name }}

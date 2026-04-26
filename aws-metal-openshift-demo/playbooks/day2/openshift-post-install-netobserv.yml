@@ -9,6 +9,7 @@
     - ../../vars/global/lab_switch_ports.yml
     - ../../vars/guests/idm_vm.yml
     - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/day2/openshift_odf.yml
   tasks:
     - name: Configure Network Observability day-2 components
       ansible.builtin.include_role:

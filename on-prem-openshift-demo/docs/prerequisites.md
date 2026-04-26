@@ -9,6 +9,7 @@ Nearby docs:
 
 <a href="./automation-flow.md"><kbd>&nbsp;&nbsp;AUTOMATION FLOW&nbsp;&nbsp;</kbd></a>
 <a href="./manual-process.md"><kbd>&nbsp;&nbsp;MANUAL PROCESS&nbsp;&nbsp;</kbd></a>
+<a href="./override-mechanism.md"><kbd>&nbsp;&nbsp;OVERRIDES&nbsp;&nbsp;</kbd></a>
 <a href="./host-sizing-and-resource-policy.md"><kbd>&nbsp;&nbsp;HOST SIZING&nbsp;&nbsp;</kbd></a>
 <a href="./portability-and-gap-analysis.md"><kbd>&nbsp;&nbsp;PORTABILITY / GAPS&nbsp;&nbsp;</kbd></a>
 <a href="../../aws-metal-openshift-demo/docs/prerequisites.md"><kbd>&nbsp;&nbsp;AWS PREREQUISITES&nbsp;&nbsp;</kbd></a>
@@ -76,6 +77,19 @@ For a smaller host that should stop before the cluster build, start from the
 example override at:
 
 - <a href="../inventory/overrides/precluster-64g.yml.example"><kbd>on-prem-openshift-demo/inventory/overrides/precluster-64g.yml.example</kbd></a>
+
+For the current ~128 GiB host class running the core-services+AD footprint,
+start from:
+
+- <a href="../inventory/overrides/core-services-ad-128g.yml.example"><kbd>on-prem-openshift-demo/inventory/overrides/core-services-ad-128g.yml.example</kbd></a>
+
+For the current cluster-capable external Ceph profile, start from:
+
+- <a href="../inventory/overrides/core-services-ad-plus-openshift-3node-external-ceph.yml.example"><kbd>on-prem-openshift-demo/inventory/overrides/core-services-ad-plus-openshift-3node-external-ceph.yml.example</kbd></a>
+
+The override contract is documented in:
+
+- <a href="./override-mechanism.md"><kbd>OVERRIDE MECHANISM</kbd></a>
 
 Keep the access paths separate:
 

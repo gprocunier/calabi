@@ -8,6 +8,7 @@
     - ../../vars/global/ad_server.yml
     - ../../vars/guests/ad_vm.yml
     - ../../vars/guests/idm_vm.yml
+    - ../../vars/day2/openshift_odf.yml
     - ../../vars/day2/openshift_keycloak.yml
     - ../../vars/day2/openshift_oidc_auth.yml
     - ../../vars/day2/openshift_aap.yml

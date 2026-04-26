@@ -215,11 +215,11 @@
     on_prem_bastion_client_overrides:
       project_root: "{{ on_prem_bastion_stage_remote_project_root }}"
       workspace_root: "{{ on_prem_bastion_stage_remote_project_root }}"
-      artifact_root: "{{ on_prem_bastion_stage_remote_project_root }}/generated"
+      artifact_root: "{{ bastion_client.project_parent }}/aws-metal-openshift-demo/generated"
       cluster_artifact_root: >-
-        {{ on_prem_bastion_stage_remote_project_root }}/generated/ocp
+        {{ bastion_client.project_parent }}/aws-metal-openshift-demo/generated/ocp
       tools_root: >-
-        {{ on_prem_bastion_stage_remote_project_root }}/generated/tools
+        {{ bastion_client.project_parent }}/aws-metal-openshift-demo/generated/tools
     bastion_client: >-
       {{
         bastion_client | combine(

@@ -6,6 +6,7 @@
     - ../../vars/global/execution_environment.yml
     - ../../vars/global/mirror_content.yml
     - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/day2/openshift_odf.yml
     - ../../vars/day2/openshift_pipelines.yml
     - ../../vars/day2/windows_server_build.yml
   tasks:

@@ -16,6 +16,7 @@
     - ../../vars/cluster/openshift_agent_media.yml
     - ../../vars/guests/openshift_cluster_vm.yml
     - ../../vars/day2/openshift_breakglass_auth.yml
+    - ../../vars/day2/openshift_odf.yml
     - ../../vars/day2/openshift_keycloak.yml
     - ../../vars/day2/openshift_oidc_auth.yml
     - ../../vars/day2/openshift_ldap_auth.yml
@@ -154,14 +155,31 @@
           or not openshift_post_install_nmstate_healthy | bool
 
     # Phase 6: storage — block/file PVCs required by Keycloak, Virtualization, and NetObserv/Loki
-    - name: Configure ODF day-2 storage when enabled
+    - name: Configure internal ODF day-2 storage when enabled
       ansible.builtin.include_role:
         name: openshift_post_install_odf
       when:
         - openshift_post_install_enable_odf | bool
+        - openshift_post_install_odf_effective_mode == 'internal'
         - >-
           openshift_post_install_force_odf_rebuild | bool
           or not openshift_post_install_odf_healthy | bool
+      tags:
+        - odf
+        - odf_internal
+
+    - name: Configure external ODF day-2 storage when enabled
+      ansible.builtin.include_role:
+        name: openshift_post_install_odf_external
+      when:
+        - openshift_post_install_enable_odf | bool
+        - openshift_post_install_odf_effective_mode == 'external'
+        - >-
+          openshift_post_install_force_odf_rebuild | bool
+          or not openshift_post_install_odf_healthy | bool
+      tags:
+        - odf
+        - odf_external
 
     # Phase 7: future OIDC provider — deploy after storage exists
     - name: Deploy Keycloak when enabled

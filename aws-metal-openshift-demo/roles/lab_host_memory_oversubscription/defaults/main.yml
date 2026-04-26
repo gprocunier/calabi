@@ -1,4 +1,36 @@
 ---
+lab_host_memory_oversubscription_defaults:
+  enabled: false
+  verify_state: true
+  zram:
+    enabled: false
+    device_name: zram0
+    size: 16G
+    compression_algorithm: zstd
+    swap_priority: 100
+    writeback:
+      enabled: false
+      manage_lvm: false
+      volume_group: calabi_lab_vg
+      logical_volume: zram-writeback
+      size: 32G
+      backing_device: ""
+      policy:
+        enabled: false
+        interval: 30m
+        mode: incompressible
+        idle_age_seconds: 21600
+        per_run_budget_mib: 256
+  transparent_hugepages:
+    enabled: false
+    mode: madvise
+    defrag_mode: madvise
+  ksm:
+    enabled: false
+    run: 0
+    pages_to_scan: 1000
+    sleep_millisecs: 20
+
 lab_host_memory_oversubscription_settings:
   enabled: false
   verify_state: true
@@ -8,6 +40,19 @@ lab_host_memory_oversubscription_settings:
     size: 16G
     compression_algorithm: zstd
     swap_priority: 100
+    writeback:
+      enabled: false
+      manage_lvm: false
+      volume_group: calabi_lab_vg
+      logical_volume: zram-writeback
+      size: 32G
+      backing_device: ""
+      policy:
+        enabled: false
+        interval: 30m
+        mode: incompressible
+        idle_age_seconds: 21600
+        per_run_budget_mib: 256
   transparent_hugepages:
     enabled: false
     mode: madvise

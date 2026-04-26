@@ -1,0 +1,7 @@
+---
+on_prem_full_cleanup_remove_host_artifacts: true
+on_prem_full_cleanup_remove_guest_storage: true
+on_prem_full_cleanup_wipe_seed_device: true
+on_prem_full_cleanup_restore_default_libvirt_network: true
+on_prem_full_cleanup_seed_head_wipe_mb: 2048
+on_prem_full_cleanup_seed_tail_wipe_mb: 256

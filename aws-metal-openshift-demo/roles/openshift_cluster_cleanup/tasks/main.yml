@@ -56,30 +56,35 @@
   loop_control:
     label: "{{ item.name }}"
 
+- name: Check whether the OpenShift root block devices exist
+  ansible.builtin.stat:
+    path: "{{ item.disks.root.path }}"
+  loop: "{{ openshift_cluster_cleanup_nodes }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: openshift_cluster_cleanup_root_block_devices
+  when: openshift_cluster_cleanup_wipe_block_devices | bool
+
 - name: Clear the beginning of OpenShift root block devices when requested
   ansible.builtin.command:
     argv:
       - dd
       - if=/dev/zero
-      - of={{ item.disks.root.path }}
+      - of={{ item.item.disks.root.path }}
       - bs=1M
       - count=16
       - conv=fsync
-  loop: "{{ openshift_cluster_cleanup_nodes }}"
+  loop: "{{ openshift_cluster_cleanup_root_block_devices.results | default([]) }}"
   loop_control:
-    label: "{{ item.name }}"
-  when: openshift_cluster_cleanup_wipe_block_devices | bool
+    label: "{{ item.item.name }}"
+  when:
+    - openshift_cluster_cleanup_wipe_block_devices | bool
+    - item.stat.exists | default(false)
   changed_when: true
 
-- name: Clear the beginning of OpenShift additional block devices when requested
-  ansible.builtin.command:
-    argv:
-      - dd
-      - if=/dev/zero
-      - of={{ item.1.path }}
-      - bs=1M
-      - count=16
-      - conv=fsync
+- name: Check whether the OpenShift additional block devices exist
+  ansible.builtin.stat:
+    path: "{{ item.1.path }}"
   loop: >-
     {{
       query(
@@ -91,5 +96,22 @@
     }}
   loop_control:
     label: "{{ item.0.name }}:{{ item.1.name | default(item.1.path) }}"
+  register: openshift_cluster_cleanup_additional_block_devices
   when: openshift_cluster_cleanup_wipe_block_devices | bool
+
+- name: Clear the beginning of OpenShift additional block devices when requested
+  ansible.builtin.command:
+    argv:
+      - dd
+      - if=/dev/zero
+      - of={{ item.item.1.path }}
+      - bs=1M
+      - count=16
+      - conv=fsync
+  loop: "{{ openshift_cluster_cleanup_additional_block_devices.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.0.name }}:{{ item.item.1.name | default(item.item.1.path) }}"
+  when:
+    - openshift_cluster_cleanup_wipe_block_devices | bool
+    - item.stat.exists | default(false)
   changed_when: true

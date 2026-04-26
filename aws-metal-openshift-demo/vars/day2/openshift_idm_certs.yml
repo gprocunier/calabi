@@ -1,5 +1,5 @@
 ---
-openshift_idm_certs:
+openshift_idm_certs_defaults:
   ingress:
     secret_name: ingress-default-idm-tls
     service_principal: HTTP/apps.ocp.workshop.lan
@@ -8,3 +8,5 @@ openshift_idm_certs:
   ingress_profile:
     id: ocpWildcardIngress
     description: OpenShift wildcard ingress certificate profile
+
+openshift_idm_certs: "{{ openshift_idm_certs_defaults }}"

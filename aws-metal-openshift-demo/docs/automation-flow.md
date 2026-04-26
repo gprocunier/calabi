@@ -164,7 +164,7 @@ experiences in practice.
    - Renders the bastion-local inventory.
    - Installs bastion execution prerequisites, including `python3-pip` and the
      Python requirements needed for WinRM-backed Windows orchestration.
-   - Installs the bastion profile snippet and user helper links so `cloud-user` and members of IdM `access-linux-admin` land with working `oc`, `kubectl`, `openshift-install`, helper scripts, and a conditional `KUBECONFIG`.
+   - Installs the bastion profile snippet and user helper links so `cloud-user` and IdM `admins` land with working `oc`, `kubectl`, `openshift-install`, helper scripts, and a conditional `KUBECONFIG`.
    - Example:
      - `RUN LOCALLY`
        ```bash
@@ -198,6 +198,10 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
      instead of being rebuilt automatically. A deliberate fresh support-stack
      replay also needs the support guest block devices wiped; VM removal alone
      is no longer treated as a true clean boundary.
+   - The support-service path now does real convergence checks for existing
+     `ad-01`, `idm-01`, `bastion-01`, and bastion IdM enrollment. If a guest is
+     already present, reachable, and matches the expected completed end state,
+     `site-lab.yml` skips that phase instead of trying to rebuild it.
    - The mirror-registry phase now records successful mirror completion for the
      rendered content set and skips the expensive `oc-mirror` execution on
      rerun unless a force flag is set.
@@ -230,6 +234,10 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
      enables WinRM, installs guest tools and remaining virtio drivers, then
      configures AD DS, AD CS, Web Enrollment, demo users and groups, and
      exports the root CA.
+   - On rerun, an already-converged AD server is now treated as complete and
+     skipped. The guest configuration path also tolerates detached install
+     media as long as the QEMU guest agent and the rest of the completed AD
+     state are already present.
    - This phase is optional and default-disabled.
    - Example:
      - `RUN ON BASTION`
@@ -249,6 +257,9 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
      staging and after the optional AD build when enabled.
    - The IdM install path uses the FreeIPA server role for server/KRA and
      FreeIPA modules for users, groups, password policies, and sudo rules.
+   - On rerun, an existing healthy IdM server is now detected and skipped based
+     on service, IPA-data, DNS, and `calabi-shell` completion checks rather
+     than just VM existence.
    - Example:
      - `RUN ON BASTION`
        ```bash
@@ -282,6 +293,9 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
      `with-sudo` so domain users receive home directories and SSSD sudo rules
      on first login. The join path no longer performs a general bastion update
      or reboot; that remains part of the earlier `site-bootstrap.yml` flow.
+   - Both the bastion base build and the later IdM join now have convergence
+     probes, so reruns skip the base guest phase and the join phase
+     independently when each is already complete.
    - Example:
      - `RUN ON BASTION`
        ```bash
@@ -293,6 +307,9 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
        ```
 12. `playbooks/lab/mirror-registry.yml`
    - Builds `mirror-registry`, joins it to IdM, installs Quay, and prepares disconnected content tooling.
+   - `calabi-shell` is installed after RHSM registration and package access
+     are available, because the system-wide install requires `git`; it runs
+     before content mirroring begins.
    - Static-IP support guests no longer rely on SSSD dynamic DNS updates. The
      play reasserts the mirror-registry A/PTR records in authoritative IdM DNS
      and validates them before returning.
@@ -307,6 +324,10 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
    - Subsequent `m2d` and `d2m` runs also write guest-side logs such as:
      - `/var/log/oc-mirror-m2d.log`
      - `/var/log/oc-mirror-d2m.log`
+   - The mirror commands default to `--parallel-images 16` and
+     `--parallel-layers 12`; both are tunable through
+     `mirror_registry_oc_mirror_parallel_images` and
+     `mirror_registry_oc_mirror_parallel_layers`.
    - Example:
      - `RUN ON BASTION`
        ```bash
@@ -409,6 +430,20 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
       `HTPasswd` breakglass auth, NMState, ODF, Keycloak, OIDC auth, optional
       legacy LDAP auth, Virtualization, Pipelines, Web Terminal, AAP,
       NetObserv, then validation.
+    - ODF now has two supported modes under the same ordering slot:
+      internal ODF through the existing local-storage path, or external ODF
+      through an imported Ceph-cluster-details secret and external
+      `StorageCluster`. External mode is selected with
+      `openshift_post_install_odf_mode: external`; it is intended to leave the
+      internal ODF orchestration disabled rather than partially reusing it.
+    - External ODF also converges the cluster Network Operator host-routing
+      settings before applying the `StorageCluster`, because external Ceph
+      endpoints may be reachable from the node network while still unreachable
+      from ODF pods without OVN host routing and global IP forwarding.
+    - The enable flags decide which phases belong to the selected profile.
+      The force flags decide whether an enabled phase reruns even when its
+      health probe already reports converged. Normal continuation should keep
+      force flags false.
     - The supported default auth model is:
       breakglass `HTPasswd` plus Keycloak OIDC. Direct OpenShift LDAP auth is
       disabled by default and retained only as an optional compatibility path.
@@ -472,7 +507,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
   - `bastion-join`
   - `mirror-registry`
 - the bastion now also presents a ready-to-use shell environment for
-  `cloud-user` and members of IdM `access-linux-admin`, including helper links under `$HOME/bin`,
+  `cloud-user` and IdM `admins`, including helper links under `$HOME/bin`,
   cluster artifacts under `$HOME/etc`, and conditional login-time `KUBECONFIG`
 - `playbooks/maintenance/cleanup.yml` remains the aggregated teardown entrypoint
 - the latest validated rebuild path reaches:
@@ -491,7 +526,7 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
   - `kubeadmin` is retired
   - Keycloak is deployed from mirrored content
   - OpenShift OAuth uses Keycloak OIDC and `groups` claim sync
-  - `access-openshift-admin` is bound to `cluster-admin`
+  - `openshift-admin` is bound to `cluster-admin`
 - the remaining confidence step is one uninterrupted
   `./scripts/run_remote_bastion_playbook.sh`
   <a href="../playbooks/site-lab.yml"><kbd>playbooks/site-lab.yml</kbd></a>
@@ -502,3 +537,6 @@ workspace so repeated cluster renders can recreate `generated/ocp` cleanly.
     DNS updates
   - IdM and OpenShift DNS publishing phases validate the new records before
     returning
+- the on-prem external-Ceph profile reuses this shared flow after bastion
+  staging; its profile-specific override contract is documented in
+  <a href="../../on-prem-openshift-demo/docs/override-mechanism.md"><kbd>ON-PREM OVERRIDES</kbd></a>

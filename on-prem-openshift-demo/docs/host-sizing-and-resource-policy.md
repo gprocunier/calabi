@@ -10,6 +10,7 @@ Nearby docs:
 <a href="./prerequisites.md"><kbd>&nbsp;&nbsp;PREREQUISITES&nbsp;&nbsp;</kbd></a>
 <a href="./automation-flow.md"><kbd>&nbsp;&nbsp;AUTOMATION FLOW&nbsp;&nbsp;</kbd></a>
 <a href="./manual-process.md"><kbd>&nbsp;&nbsp;MANUAL PROCESS&nbsp;&nbsp;</kbd></a>
+<a href="./override-mechanism.md"><kbd>&nbsp;&nbsp;OVERRIDES&nbsp;&nbsp;</kbd></a>
 <a href="./portability-and-gap-analysis.md"><kbd>&nbsp;&nbsp;PORTABILITY / GAPS&nbsp;&nbsp;</kbd></a>
 <a href="./README.md"><kbd>&nbsp;&nbsp;ON-PREM DOCS MAP&nbsp;&nbsp;</kbd></a>
 
@@ -328,6 +329,22 @@ If your environment cannot supply the VLAN/trunk model cleanly, the current
 network design will need more change than the CPU or memory policy.
 
 ## Practical On-Prem Sizing Guidance
+
+### Current external-Ceph cluster profile
+
+The current on-prem external-Ceph profile is intentionally smaller than the
+full AWS 9-node OpenShift topology but still runs a meaningful day-2 stack:
+
+- 3 control-plane nodes at `16384` MiB each
+- 3 worker nodes at `32768` MiB each
+- external ODF instead of internal infra-node ODF
+- AAP, Keycloak, Web Terminal, NetObserv, and validation enabled
+- OpenShift Virtualization and Pipelines disabled
+
+The worker memory target is based on Kubernetes requested-memory scheduling.
+Do not reduce it just because the hypervisor shows low pressure from KSM or
+zram. Those host-side mechanisms can reduce physical pressure, but they do not
+change OpenShift node allocatable memory or pod requests.
 
 ### “Near `m5.metal`” host
 

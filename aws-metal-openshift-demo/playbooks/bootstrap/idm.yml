@@ -1,4 +1,187 @@
 ---
+- name: Probe whether an existing IDM guest is already fully converged
+  hosts: aws_metal
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/pki.yml
+    - ../../vars/global/rhsm.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/bastion_vm.yml
+    - ../../vars/guests/mirror_registry_vm.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/global/name_resolution.yml
+    - ../../vars/global/lab_switch_ports.yml
+
+  tasks:
+    - name: Check whether the IDM libvirt domain already exists
+      ansible.builtin.command:
+        argv:
+          - virsh
+          - dominfo
+          - "{{ idm_vm.name }}.{{ idm_vm.domain }}"
+      register: idm_probe_domain_info
+      changed_when: false
+      failed_when: false
+
+    - name: Wait briefly for SSH on an existing IDM guest
+      ansible.builtin.wait_for:
+        host: "{{ idm_vm.network.ipv4_address }}"
+        port: 22
+        timeout: 20
+        sleep: 5
+      register: idm_probe_ssh
+      changed_when: false
+      failed_when: false
+      when:
+        - idm_probe_domain_info.rc == 0
+        - not (idm_vm.provisioning.recreate_domain | bool)
+        - not (idm_vm.provisioning.rebuild_disk_from_image | bool)
+
+    - name: Register the existing IDM guest for completion probing
+      ansible.builtin.add_host:
+        name: idm_probe
+        groups:
+          - idm_probe
+        ansible_host: "{{ idm_vm.network.ipv4_address }}"
+        ansible_user: "{{ idm_vm.access.admin_user }}"
+        ansible_ssh_private_key_file: >-
+          {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+        ansible_become: true
+        ansible_ssh_common_args: >-
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          -o ProxyCommand="ssh -i {{
+          hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          {{ hostvars[inventory_hostname].ansible_user }}@{{
+          hostvars[inventory_hostname].ansible_host }} -W %h:%p"
+      when:
+        - idm_probe_domain_info.rc == 0
+        - (idm_probe_ssh.state | default('')) == 'started'
+        - not (idm_vm.provisioning.recreate_domain | bool)
+        - not (idm_vm.provisioning.rebuild_disk_from_image | bool)
+
+- name: Check whether the existing IDM guest is already fully configured
+  hosts: idm_probe
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/pki.yml
+    - ../../vars/global/rhsm.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/bastion_vm.yml
+    - ../../vars/guests/mirror_registry_vm.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/global/name_resolution.yml
+    - ../../vars/global/lab_switch_ports.yml
+
+  tasks:
+    - name: Wait for authenticated SSH connectivity to the existing IDM guest
+      ansible.builtin.wait_for_connection:
+        timeout: 60
+        sleep: 10
+        connect_timeout: 10
+
+    - name: Probe the IDM guest completion state
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+
+          reasons=()
+
+          if ! ipactl status >/dev/null 2>&1; then
+            reasons+=("ipactl")
+          fi
+
+          if ! systemctl is-enabled --quiet firewalld || ! systemctl is-active --quiet firewalld; then
+            reasons+=("firewalld")
+          fi
+
+          if ! systemctl is-enabled --quiet oddjobd.service || ! systemctl is-active --quiet oddjobd.service; then
+            reasons+=("oddjobd")
+          fi
+
+          if ! systemctl is-enabled --quiet cockpit.socket || ! systemctl is-active --quiet cockpit.socket; then
+            reasons+=("cockpit.socket")
+          fi
+
+          if [ ! -r /etc/ipa/default.conf ]; then
+            reasons+=("ipa-default-conf")
+          fi
+
+          if [ ! -r /etc/ipa/ca.crt ]; then
+            reasons+=("ipa-ca")
+          fi
+
+          if [ ! -f /var/lib/calabi-shell/installed-revision ] || [ ! -f /etc/profile.d/calabi-shell.sh ]; then
+            reasons+=("calabi-shell")
+          fi
+
+          if [ ! -d /var/log/journal ]; then
+            reasons+=("persistent-journal")
+          fi
+
+          if [ -r /etc/ipa/default.conf ]; then
+            if printf '%s\n' {{ idm_server.admin_password | quote }} | kinit admin >/dev/null 2>&1; then
+              if ! ipa dnszone-show {{ idm_vm.domain | quote }} >/dev/null 2>&1; then
+                reasons+=("dnszone:{{ idm_vm.domain }}")
+              fi
+
+              {% for group in idm_server.identity_groups %}
+              if ! ipa group-show {{ group | quote }} >/dev/null 2>&1; then
+                reasons+=("group:{{ group }}")
+              fi
+              {% endfor %}
+
+              {% for user in idm_server.identity_users %}
+              if ! ipa user-show {{ user.name | quote }} >/dev/null 2>&1; then
+                reasons+=("user:{{ user.name }}")
+              fi
+              {% endfor %}
+
+              if ! dig +short @{{ idm_vm.network.ipv4_address }} {{ bastion_vm.name }}.{{ bastion_vm.domain }} A | grep -Fx {{ bastion_vm.network.ipv4_address | regex_replace('/.*$', '') | quote }} >/dev/null 2>&1; then
+                reasons+=("dns-a:{{ bastion_vm.name }}.{{ bastion_vm.domain }}")
+              fi
+
+              kdestroy >/dev/null 2>&1 || true
+            else
+              reasons+=("kinit-admin")
+            fi
+          fi
+
+          if [ "${reasons[0]+set}" != "set" ]; then
+            printf 'idm guest already converged\n'
+            exit 0
+          fi
+
+          printf '%s\n' "${reasons[@]}"
+          exit 1
+      args:
+        executable: /bin/bash
+      register: idm_probe_completion
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Record whether the existing IDM guest is already converged
+      ansible.builtin.group_by:
+        key: >-
+          idm_bootstrap_complete_{{
+            (idm_probe_completion.rc == 0) | ternary('true', 'false')
+          }}
+
+    - name: Publish the IDM guest completion probe result
+      ansible.builtin.debug:
+        msg:
+          completed: "{{ idm_probe_completion.rc == 0 }}"
+          checks: "{{ idm_probe_completion.stdout_lines | default([]) }}"
+
 - name: Build the IDM virtual machine for the OpenShift demo
   hosts: aws_metal
   become: true
@@ -16,6 +199,14 @@
     - ../../vars/cluster/openshift_install_cluster.yml
     - ../../vars/global/name_resolution.yml
     - ../../vars/global/lab_switch_ports.yml
+
+  pre_tasks:
+    - name: Skip IDM VM build when the existing guest is already fully configured
+      ansible.builtin.meta: end_play
+      when:
+        - (groups['idm_bootstrap_complete_true'] | default([])) | length > 0
+        - not (idm_vm.provisioning.recreate_domain | bool)
+        - not (idm_vm.provisioning.rebuild_disk_from_image | bool)
 
   roles:
     - role: idm
@@ -79,6 +270,13 @@
     - ../../vars/global/lab_switch_ports.yml
 
   pre_tasks:
+    - name: Skip IDM guest configuration when the guest is already fully configured
+      ansible.builtin.meta: end_play
+      when:
+        - (groups['idm_bootstrap_complete_true'] | default([])) | length > 0
+        - not (idm_vm.provisioning.recreate_domain | bool)
+        - not (idm_vm.provisioning.rebuild_disk_from_image | bool)
+
     - name: Derive the hypervisor delegate host for IDM reachability checks
       ansible.builtin.set_fact:
         idm_guest_delegate_host: >-
@@ -123,6 +321,13 @@
   vars_files:
     - ../../vars/global/pki.yml
     - ../../vars/guests/idm_vm.yml
+  pre_tasks:
+    - name: Skip IDM media cleanup when the guest is already fully configured
+      ansible.builtin.meta: end_play
+      when:
+        - (groups['idm_bootstrap_complete_true'] | default([])) | length > 0
+        - not (idm_vm.provisioning.recreate_domain | bool)
+        - not (idm_vm.provisioning.rebuild_disk_from_image | bool)
   roles:
     - role: libvirt_cdrom_cleanup
       vars:
@@ -142,6 +347,13 @@
   gather_facts: true
   vars_files:
     - ../../vars/guests/idm_vm.yml
+  pre_tasks:
+    - name: Skip hypervisor IdM DNS preference when the guest is already fully configured
+      ansible.builtin.meta: end_play
+      when:
+        - (groups['idm_bootstrap_complete_true'] | default([])) | length > 0
+        - not (idm_vm.provisioning.recreate_domain | bool)
+        - not (idm_vm.provisioning.rebuild_disk_from_image | bool)
 
   tasks:
     - name: Determine the active NetworkManager connection for the hypervisor uplink

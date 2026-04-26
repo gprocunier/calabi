@@ -2,6 +2,8 @@
 mirror_registry_ocp_release: 4.20.15
 mirror_registry_execute_mirror_requested: true
 mirror_registry_execute_mirror_force_requested: false
+mirror_registry_oc_mirror_parallel_images: 16
+mirror_registry_oc_mirror_parallel_layers: 12
 
 mirror_registry_content:
   enabled: true
@@ -9,6 +11,8 @@ mirror_registry_content:
   validate_with_dry_run: true
   mirror_mode: "{{ mirror_registry_content_mode_override | default('portable') }}"
   workflow: "{{ mirror_registry_content_workflow_override | default('m2d') }}"
+  parallel_images: "{{ mirror_registry_oc_mirror_parallel_images }}"
+  parallel_layers: "{{ mirror_registry_oc_mirror_parallel_layers }}"
   destination:
     namespace: openshift
   auth:
@@ -152,3 +156,5 @@ mirror_registry_content:
   # remain fully functional; only the console UI wizards are absent.
   additional_images:
     - name: registry.redhat.io/rhel9/postgresql-15:latest
+    - name: ghcr.io/stefanprodan/podinfo:6.9.2
+    - name: quay.io/brancz/prometheus-example-app:v0.3.0

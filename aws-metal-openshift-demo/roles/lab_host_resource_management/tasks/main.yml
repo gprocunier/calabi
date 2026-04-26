@@ -11,6 +11,58 @@
       - lab_host_resource_management.performance_domains.gold.partition | length > 0
       - lab_host_resource_management.performance_domains.silver.partition | length > 0
       - lab_host_resource_management.performance_domains.bronze.partition | length > 0
+      - >-
+        lab_host_resource_management.performance_domains.gold.cpu_max_vcpus
+        is not defined or
+        (lab_host_resource_management.performance_domains.gold.cpu_max_vcpus | int) > 0
+      - >-
+        lab_host_resource_management.performance_domains.silver.cpu_max_vcpus
+        is not defined or
+        (lab_host_resource_management.performance_domains.silver.cpu_max_vcpus | int) > 0
+      - >-
+        lab_host_resource_management.performance_domains.bronze.cpu_max_vcpus
+        is not defined or
+        (lab_host_resource_management.performance_domains.bronze.cpu_max_vcpus | int) > 0
+      - >-
+        (
+          lab_host_resource_management.performance_domains.gold.cpu_max_vcpus
+          is not defined and
+          lab_host_resource_management.performance_domains.silver.cpu_max_vcpus
+          is not defined and
+          lab_host_resource_management.performance_domains.bronze.cpu_max_vcpus
+          is not defined
+        ) or (
+          lab_host_resource_management.performance_domains.gold.cpu_max_vcpus
+          is defined and
+          lab_host_resource_management.performance_domains.silver.cpu_max_vcpus
+          is defined and
+          lab_host_resource_management.performance_domains.bronze.cpu_max_vcpus
+          is defined
+        )
+      - >-
+        lab_host_resource_management.performance_domains.gold.cpu_max_vcpus
+        is not defined or
+        (
+          lab_host_resource_management.performance_domains.gold.cpu_max_vcpus
+          | int
+        ) == (
+          lab_host_resource_management.performance_domains.silver.cpu_max_vcpus
+          | int
+        )
+      - >-
+        lab_host_resource_management.performance_domains.gold.cpu_max_vcpus
+        is not defined or
+        (
+          lab_host_resource_management.performance_domains.gold.cpu_max_vcpus
+          | int
+        ) == (
+          lab_host_resource_management.performance_domains.bronze.cpu_max_vcpus
+          | int
+        )
+    fail_msg: >-
+      lab_host_resource_management requires valid Gold/Silver/Bronze
+      performance domains. If cpu_max_vcpus is defined, it must be defined
+      symmetrically for all three tiers with the same positive value.
 
 - name: Ensure host resource management directories exist
   ansible.builtin.file:

@@ -9,6 +9,9 @@ on-prem-openshift-demo/inventory/overrides/*.yml
 # Local docs-site preview output
 _site/
 
+# Generated Cockpit plugin RPM build output
+cockpit/calabi-observer/rpmbuild/
+
 # Local refactor checklist
 CALABI-REFACTOR-CHECKLIST.md
 

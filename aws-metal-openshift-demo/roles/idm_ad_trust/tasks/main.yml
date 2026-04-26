@@ -274,6 +274,15 @@
     name: sssd
     state: restarted
 
+- name: Acquire an IPA admin ticket for AD trust validation
+  ansible.builtin.command:
+    argv:
+      - kinit
+      - admin
+    stdin: "{{ idm_server.admin_password }}\n"
+  changed_when: false
+  no_log: true
+
 - name: Validate that the AD trust exists
   ansible.builtin.command:
     argv:

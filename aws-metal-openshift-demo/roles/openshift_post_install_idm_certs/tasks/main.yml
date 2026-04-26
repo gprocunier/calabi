@@ -1,4 +1,13 @@
 ---
+- name: Normalize partial IdM certs dictionary overrides  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    openshift_idm_certs: >-
+      {{
+        openshift_idm_certs_defaults
+        | default({})
+        | combine(openshift_idm_certs | default({}), recursive=True)
+      }}
+
 - name: Derive post-install IdM ingress certificate paths
   ansible.builtin.set_fact:
     openshift_post_install_idm_certs_oc_local_path: >-

@@ -14,7 +14,7 @@ openshift_post_install_netobserv_source_namespace: openshift-marketplace
 openshift_post_install_netobserv_loki_stack_name: netobserv-loki
 openshift_post_install_netobserv_loki_stack_size: 1x.extra-small
 openshift_post_install_netobserv_loki_storage_class_name: >-
-  ocs-storagecluster-ceph-rbd
+  {{ openshift_post_install_odf_effective_default_storage_class_rbd }}
 openshift_post_install_netobserv_loki_storage_secret_name: netobserv-loki-odf
 openshift_post_install_netobserv_obc_name: netobserv-loki
 openshift_post_install_netobserv_obc_storage_class_name: >-

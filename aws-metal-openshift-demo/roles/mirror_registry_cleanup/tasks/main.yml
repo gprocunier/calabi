@@ -43,6 +43,12 @@
     state: absent
   when: mirror_registry_cleanup_remove_runtime_dir | bool
 
+- name: Check whether the mirror registry block device exists
+  ansible.builtin.stat:
+    path: "{{ mirror_registry_vm.disk_path }}"
+  register: mirror_registry_cleanup_block_device
+  when: mirror_registry_cleanup_wipe_block_device | bool
+
 - name: Clear the beginning of the mirror registry block device when requested
   ansible.builtin.command:
     argv:
@@ -52,5 +58,7 @@
       - bs=1M
       - count=16
       - conv=fsync
-  when: mirror_registry_cleanup_wipe_block_device | bool
+  when:
+    - mirror_registry_cleanup_wipe_block_device | bool
+    - mirror_registry_cleanup_block_device.stat.exists | default(false)
   changed_when: true

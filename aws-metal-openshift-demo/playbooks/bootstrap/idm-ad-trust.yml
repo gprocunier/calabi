@@ -1,4 +1,231 @@
 ---
+- name: Probe whether the optional IdM AD trust path is already fully converged
+  hosts: aws_metal
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/pki.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/ad_group_policy.yml
+    - ../../vars/global/ad_integration.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+    - ../../vars/guests/idm_vm.yml
+
+  pre_tasks:
+    - name: Skip IdM AD trust convergence probing when disabled
+      ansible.builtin.meta: end_play
+      when:
+        - not (idm_ad_trust.enabled | bool)
+          or not (lab_build_ad_server | bool)
+
+  tasks:
+    - name: Wait briefly for SSH on an existing IdM guest before trust probing
+      ansible.builtin.wait_for:
+        host: "{{ idm_vm.network.ipv4_address }}"
+        port: 22
+        timeout: 20
+        sleep: 5
+      register: idm_ad_trust_probe_idm_ssh
+      changed_when: false
+      failed_when: false
+
+    - name: Wait briefly for WinRM on an existing AD guest before trust probing
+      ansible.builtin.wait_for:
+        host: "{{ ad_vm.network.ipv4_address }}"
+        port: "{{ ad_server_winrm_port | default(5985) }}"
+        timeout: 20
+        sleep: 5
+      register: idm_ad_trust_probe_ad_winrm
+      changed_when: false
+      failed_when: false
+
+    - name: Register the IdM guest for AD trust completion probing
+      ansible.builtin.add_host:
+        name: idm_ad_trust_probe
+        groups:
+          - idm_ad_trust_probe
+        ansible_host: "{{ idm_vm.network.ipv4_address }}"
+        ansible_user: "{{ idm_vm.access.admin_user }}"
+        ansible_ssh_private_key_file: >-
+          {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+        ansible_become: true
+        ansible_ssh_common_args: >-
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      when: (idm_ad_trust_probe_idm_ssh.state | default('')) == 'started'
+
+    - name: Register the AD guest for trust completion probing
+      ansible.builtin.add_host:
+        name: idm_ad_trust_ad_probe
+        groups:
+          - idm_ad_trust_ad_probe
+        ansible_host: "{{ ad_vm.network.ipv4_address }}"
+        ansible_user: "{{ ad_vm.access.admin_user }}"
+        ansible_password: "{{ ad_vm.access.admin_password }}"
+        ansible_connection: ansible.builtin.winrm
+        ansible_port: 5985
+        ansible_winrm_transport: basic
+        ansible_winrm_server_cert_validation: ignore
+      when: (idm_ad_trust_probe_ad_winrm.state | default('')) == 'started'
+
+- name: Check whether the AD guest already has the expected IdM conditional forwarder
+  hosts: idm_ad_trust_ad_probe
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/pki.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/ad_group_policy.yml
+    - ../../vars/global/ad_integration.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+    - ../../vars/guests/idm_vm.yml
+
+  tasks:
+    - name: Wait for authenticated WinRM connectivity to the AD guest for trust probing
+      ansible.builtin.wait_for_connection:
+        timeout: 60
+        sleep: 10
+        connect_timeout: 10
+
+    - name: Probe the AD conditional forwarder completion state
+      ansible.windows.win_powershell:
+        script: |
+          $zoneName = "{{ idm_vm.domain }}"
+          $expectedMaster = "{{ idm_vm.network.ipv4_address }}"
+          $expectedHost = "{{ idm_vm.name }}.{{ idm_vm.domain }}"
+
+          $zone = Get-DnsServerZone -Name $zoneName -ErrorAction SilentlyContinue
+          if ($null -eq $zone -or $zone.ZoneType -ne 'Forwarder') {
+            [pscustomobject]@{
+              completed = $false
+              reasons = @('conditional-forwarder')
+            } | ConvertTo-Json -Compress
+            return
+          }
+
+          $masters = @((Get-DnsServerConditionalForwarderZone -Name $zoneName).MasterServers |
+            ForEach-Object { $_.IPAddressToString })
+          if ($masters -notcontains $expectedMaster) {
+            [pscustomobject]@{
+              completed = $false
+              reasons = @('conditional-forwarder-master')
+            } | ConvertTo-Json -Compress
+            return
+          }
+
+          try {
+            Resolve-DnsName -Name $expectedHost -Server 127.0.0.1 -Type A | Out-Null
+          } catch {
+            [pscustomobject]@{
+              completed = $false
+              reasons = @('conditional-forwarder-resolution')
+            } | ConvertTo-Json -Compress
+            return
+          }
+
+          [pscustomobject]@{
+            completed = $true
+            reasons = @('ad trust forwarder already converged')
+          } | ConvertTo-Json -Compress
+      register: idm_ad_trust_ad_probe_completion
+      changed_when: false
+
+    - name: Record whether the AD conditional forwarder is already converged
+      ansible.builtin.group_by:
+        key: >-
+          idm_ad_trust_forwarder_complete_{{
+            (
+              (idm_ad_trust_ad_probe_completion.output | first) | from_json
+            ).completed | ternary('true', 'false')
+          }}
+
+    - name: Publish the AD trust forwarder completion probe result
+      ansible.builtin.debug:
+        msg: "{{ (idm_ad_trust_ad_probe_completion.output | first) | from_json }}"
+
+- name: Check whether the IdM guest already has the expected AD trust state
+  hosts: idm_ad_trust_probe
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/pki.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/ad_group_policy.yml
+    - ../../vars/global/ad_integration.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+    - ../../vars/guests/idm_vm.yml
+
+  tasks:
+    - name: Wait for authenticated SSH connectivity to the IdM guest for trust probing
+      ansible.builtin.wait_for_connection:
+        timeout: 60
+        sleep: 10
+        connect_timeout: 10
+
+    - name: Probe the IdM AD trust completion state
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+
+          reasons=()
+
+          if ! printf '%s\n' {{ idm_server.admin_password | quote }} | kinit admin >/dev/null 2>&1; then
+            reasons+=("kinit-admin")
+          else
+            if ! ipa trust-show {{ idm_ad_trust.ad_domain | quote }} >/dev/null 2>&1; then
+              reasons+=("ipa-trust")
+            fi
+
+            if ! ipa dnsforwardzone-show {{ idm_ad_trust.ad_domain | quote }} >/dev/null 2>&1; then
+              reasons+=("ipa-forward-zone")
+            fi
+
+            if ! sssctl domain-list 2>/dev/null | grep -Fx {{ idm_ad_trust.ad_domain | quote }} >/dev/null 2>&1; then
+              reasons+=("sssd-domain")
+            fi
+
+            {% set _idm_ad_trust_policy_mappings = (ad_group_policy.mappings | default([])) if (ad_group_policy.enabled | default(false) | bool) else [] %}
+            {% for mapping in _idm_ad_trust_policy_mappings %}
+            if ! ipa group-show {{ mapping.idm_external_group | quote }} --all 2>/dev/null | grep -F ipaexternalgroup >/dev/null 2>&1; then
+              reasons+=("external-group:{{ mapping.idm_external_group }}")
+            fi
+
+            if ! ipa group-show {{ mapping.idm_local_group | quote }} --all 2>/dev/null | grep -F {{ mapping.idm_external_group | quote }} >/dev/null 2>&1; then
+              reasons+=("local-group-nesting:{{ mapping.idm_local_group }}")
+            fi
+            {% endfor %}
+
+            kdestroy >/dev/null 2>&1 || true
+          fi
+
+          if [ "${reasons[0]+set}" != "set" ]; then
+            printf 'idm ad trust already converged\n'
+            exit 0
+          fi
+
+          printf '%s\n' "${reasons[@]}"
+          exit 1
+      args:
+        executable: /bin/bash
+      register: idm_ad_trust_probe_completion
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Record whether the IdM AD trust is already converged
+      ansible.builtin.group_by:
+        key: >-
+          idm_ad_trust_complete_{{
+            (idm_ad_trust_probe_completion.rc == 0) | ternary('true', 'false')
+          }}
+
+    - name: Publish the IdM AD trust completion probe result
+      ansible.builtin.debug:
+        msg:
+          completed: "{{ idm_ad_trust_probe_completion.rc == 0 }}"
+          checks: "{{ idm_ad_trust_probe_completion.stdout_lines | default([]) }}"
+
 - name: Register the IDM guest for optional AD trust configuration
   hosts: aws_metal
   become: true
@@ -16,6 +243,12 @@
     - name: Skip IdM AD trust configuration when disabled
       ansible.builtin.meta: end_play
       when: not (idm_ad_trust.enabled | bool)
+
+    - name: Skip IdM AD trust registration when trust is already fully converged
+      ansible.builtin.meta: end_play
+      when:
+        - (groups['idm_ad_trust_complete_true'] | default([])) | length > 0
+        - (groups['idm_ad_trust_forwarder_complete_true'] | default([])) | length > 0
 
   tasks:
     - name: Require the AD server when IdM AD trust is enabled
@@ -65,6 +298,12 @@
     - ../../vars/guests/idm_vm.yml
 
   pre_tasks:
+    - name: Skip AD conditional forwarder reconciliation when AD trust is already fully converged
+      ansible.builtin.meta: end_play
+      when:
+        - (groups['idm_ad_trust_complete_true'] | default([])) | length > 0
+        - (groups['idm_ad_trust_forwarder_complete_true'] | default([])) | length > 0
+
     - name: Wait for authenticated WinRM connectivity to the AD guest
       ansible.builtin.wait_for_connection:
         timeout: 900
@@ -136,6 +375,12 @@
       when:
         - not (idm_ad_trust.enabled | bool)
           or not (lab_build_ad_server | bool)
+
+    - name: Skip IdM AD trust reconciliation when trust is already fully converged
+      ansible.builtin.meta: end_play
+      when:
+        - (groups['idm_ad_trust_complete_true'] | default([])) | length > 0
+        - (groups['idm_ad_trust_forwarder_complete_true'] | default([])) | length > 0
 
     - name: Derive the hypervisor delegate host for IDM reachability checks
       ansible.builtin.set_fact:

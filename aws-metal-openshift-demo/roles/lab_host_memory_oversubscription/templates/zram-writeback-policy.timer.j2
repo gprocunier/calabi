@@ -1,0 +1,11 @@
+[Unit]
+Description=Schedule Calabi zram writeback policy
+
+[Timer]
+OnBootSec=15m
+OnUnitActiveSec={{ lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.interval }}
+Persistent=true
+Unit=calabi-zram-writeback-policy.service
+
+[Install]
+WantedBy=timers.target

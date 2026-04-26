@@ -1,0 +1,93 @@
+---
+- name: Derive OpenShift cluster convergence probe paths
+  ansible.builtin.set_fact:
+    openshift_cluster_probe_oc_path: >-
+      {{
+        (
+          lab_execution_tools_root ~ '/'
+          ~ mirror_registry_ocp_release ~ '/bin/oc'
+        )
+        if (mirror_registry_ocp_release is defined)
+        else (lab_execution_tools_root ~ '/current/oc')
+      }}
+    openshift_cluster_probe_kubeconfig_path: >-
+      {{ lab_execution_ocp_generated_root }}/auth/kubeconfig
+    openshift_cluster_probe_expected_node_names: >-
+      {{
+        (
+          openshift_install_cluster.nodes
+          | map(attribute='name')
+          | list
+        )
+      }}
+    openshift_cluster_probe_force_rebuild_requested: >-
+      {{ openshift_cluster_recreate_existing_domains | default(false) | bool }}
+
+- name: Check whether the pinned oc binary exists for cluster convergence probing
+  ansible.builtin.stat:
+    path: "{{ openshift_cluster_probe_oc_path }}"
+  delegate_to: localhost
+  become: false
+  register: openshift_cluster_probe_oc_stat
+
+- name: Check whether the generated kubeconfig exists for cluster convergence probing
+  ansible.builtin.stat:
+    path: "{{ openshift_cluster_probe_kubeconfig_path }}"
+  delegate_to: localhost
+  become: false
+  register: openshift_cluster_probe_kubeconfig_stat
+
+- name: Probe whether the existing OpenShift cluster is already converged
+  ansible.builtin.shell: |
+    set -euo pipefail
+    oc="{{ openshift_cluster_probe_oc_path }}"
+    for node in {{ openshift_cluster_probe_expected_node_names | map('quote') | join(' ') }}; do
+      ready="$("${oc}" --kubeconfig "{{ openshift_cluster_probe_kubeconfig_path }}" \
+        --request-timeout=10s \
+        get node "${node}" \
+        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
+      [[ "${ready}" == "True" ]] || { echo false; exit 0; }
+    done
+    version_health="$("${oc}" --kubeconfig "{{ openshift_cluster_probe_kubeconfig_path }}" \
+      --request-timeout=10s \
+      get clusterversion version \
+      -o jsonpath='{.status.conditions[?(@.type=="Available")].status},{.status.conditions[?(@.type=="Progressing")].status}' 2>/dev/null || true)"
+    if [[ "${version_health}" == "True,False" ]]; then
+      echo true
+    else
+      echo false
+    fi
+  args:
+    executable: /bin/bash
+  delegate_to: localhost
+  become: false
+  register: openshift_cluster_probe_converged
+  changed_when: false
+  when:
+    - not openshift_cluster_probe_force_rebuild_requested | bool
+    - openshift_cluster_probe_oc_stat.stat.exists
+    - openshift_cluster_probe_kubeconfig_stat.stat.exists
+
+- name: Record whether the existing OpenShift cluster is already converged
+  ansible.builtin.set_fact:
+    openshift_cluster_already_converged: >-
+      {{
+        (
+          not openshift_cluster_probe_force_rebuild_requested | bool
+        ) and
+        (
+          openshift_cluster_probe_oc_stat.stat.exists
+          and openshift_cluster_probe_kubeconfig_stat.stat.exists
+        ) and
+        (
+          openshift_cluster_probe_converged.stdout | default('false') | trim
+        ) == 'true'
+      }}
+
+- name: Report the OpenShift cluster convergence probe result
+  ansible.builtin.debug:
+    msg:
+      cluster_already_converged: "{{ openshift_cluster_already_converged }}"
+      force_rebuild_requested: "{{ openshift_cluster_probe_force_rebuild_requested }}"
+      kubeconfig_exists: "{{ openshift_cluster_probe_kubeconfig_stat.stat.exists }}"
+      oc_exists: "{{ openshift_cluster_probe_oc_stat.stat.exists }}"

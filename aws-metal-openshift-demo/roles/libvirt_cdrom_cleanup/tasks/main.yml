@@ -43,10 +43,12 @@
   ansible.builtin.shell: |
     set -euo pipefail
     virsh dumpxml "{{ libvirt_cdrom_cleanup_domain }}" \
-      | python3 -c 'import sys,xml.etree.ElementTree as ET; target=sys.argv[1]; outfile=sys.argv[2]; root=ET.fromstring(sys.stdin.read()); devices=root.find("devices"); assert devices is not None, "devices section not found"; match=next((disk for disk in devices.findall("disk") if disk.get("device")=="cdrom" and disk.find("target") is not None and disk.find("target").get("dev")==target), None); (match is not None) or (_ for _ in ()).throw(SystemExit(f"cdrom target {target} not found")); ET.ElementTree(match).write(outfile, encoding="unicode")' "{{ item }}" "{{ libvirt_cdrom_cleanup_tempdir.path }}/{{ item }}.xml"
+      | python3 -c 'import sys,xml.etree.ElementTree as ET; target=sys.argv[1]; outfile=sys.argv[2]; root=ET.fromstring(sys.stdin.read()); devices=root.find("devices"); assert devices is not None, "devices section not found"; match=next((disk for disk in devices.findall("disk") if disk.get("device")=="cdrom" and disk.find("target") is not None and disk.find("target").get("dev")==target), None); (match is not None) or (_ for _ in ()).throw(SystemExit(f"cdrom target {target} not found")); ET.ElementTree(match).write(outfile, encoding="unicode")' "{{ libvirt_cdrom_cleanup_target }}" "{{ libvirt_cdrom_cleanup_tempdir.path }}/{{ libvirt_cdrom_cleanup_target }}.xml"
   args:
     executable: /bin/bash
   loop: "{{ libvirt_cdrom_cleanup_targets.stdout_lines | default([]) }}"
+  loop_control:
+    loop_var: libvirt_cdrom_cleanup_target
   when:
     - libvirt_cdrom_cleanup_domain_info.rc == 0
     - (libvirt_cdrom_cleanup_targets.stdout_lines | default([])) | length > 0
@@ -58,11 +60,13 @@
       - virsh
       - change-media
       - "{{ libvirt_cdrom_cleanup_domain }}"
-      - "{{ item }}"
+      - "{{ libvirt_cdrom_cleanup_target }}"
       - --eject
       - --config
       - --live
   loop: "{{ libvirt_cdrom_cleanup_targets.stdout_lines | default([]) }}"
+  loop_control:
+    loop_var: libvirt_cdrom_cleanup_target
   register: libvirt_cdrom_cleanup_media_eject
   when:
     - libvirt_cdrom_cleanup_domain_info.rc == 0
@@ -76,9 +80,11 @@
       - virsh
       - detach-device
       - "{{ libvirt_cdrom_cleanup_domain }}"
-      - "{{ libvirt_cdrom_cleanup_tempdir.path }}/{{ item }}.xml"
+      - "{{ libvirt_cdrom_cleanup_tempdir.path }}/{{ libvirt_cdrom_cleanup_target }}.xml"
       - --live
   loop: "{{ libvirt_cdrom_cleanup_targets.stdout_lines | default([]) }}"
+  loop_control:
+    loop_var: libvirt_cdrom_cleanup_target
   register: libvirt_cdrom_cleanup_live_detach
   when:
     - libvirt_cdrom_cleanup_domain_info.rc == 0
@@ -93,41 +99,70 @@
       - "{{ libvirt_cdrom_cleanup_domain }}"
       - --remove-device
       - --disk
-      - "target={{ item }}"
+      - "target={{ libvirt_cdrom_cleanup_target }}"
   loop: "{{ libvirt_cdrom_cleanup_targets.stdout_lines | default([]) }}"
-  register: libvirt_cdrom_cleanup_remove_device
+  loop_control:
+    loop_var: libvirt_cdrom_cleanup_target
+  register: libvirt_cdrom_cleanup_remove_device_result
   when:
     - libvirt_cdrom_cleanup_domain_info.rc == 0
     - (libvirt_cdrom_cleanup_targets.stdout_lines | default([])) | length > 0
     - libvirt_cdrom_cleanup_remove_device | bool
-  changed_when: libvirt_cdrom_cleanup_remove_device.rc == 0
+  changed_when: libvirt_cdrom_cleanup_remove_device_result.rc == 0
   failed_when: false
 
-- name: Detect whether the libvirt domain already uses per-device boot order
-  ansible.builtin.shell: |
-    set -euo pipefail
-    virsh dumpxml "{{ libvirt_cdrom_cleanup_domain }}" \
-      | python3 -c 'import sys, xml.etree.ElementTree as ET; root = ET.fromstring(sys.stdin.read()); print("yes" if root.findall(".//devices/*/boot") else "no")'
-  args:
-    executable: /bin/bash
-  register: libvirt_cdrom_cleanup_has_device_boot_order
-  changed_when: false
+- name: Create a temporary workspace for libvirt boot-order reset XML
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: libvirt-boot-reset-
+  register: libvirt_cdrom_cleanup_boot_reset_tempdir
   when:
     - libvirt_cdrom_cleanup_domain_info.rc == 0
     - libvirt_cdrom_cleanup_reset_boot_to_hd_only | bool
 
-- name: Reset boot order to disk only when requested
-  ansible.builtin.command:
-    argv:
-      - virt-xml
-      - "{{ libvirt_cdrom_cleanup_domain }}"
-      - --edit
-      - --boot
-      - hd
+- name: Render persistent disk-only boot XML
+  ansible.builtin.shell: |
+    set -euo pipefail
+    virsh dumpxml --inactive "{{ libvirt_cdrom_cleanup_domain }}" \
+      | python3 -c '
+    import sys
+    import xml.etree.ElementTree as ET
+
+    outfile = sys.argv[1]
+    root = ET.fromstring(sys.stdin.read())
+    os_element = root.find("os")
+    if os_element is None:
+        raise SystemExit("domain XML has no os element")
+
+    for device_boot in list(root.findall(".//devices/*/boot")):
+        parent = next(
+            element for element in root.findall(".//devices/*")
+            if device_boot in list(element)
+        )
+        parent.remove(device_boot)
+
+    for os_boot in list(os_element.findall("boot")):
+        os_element.remove(os_boot)
+
+    ET.SubElement(os_element, "boot", {"dev": "hd"})
+    ET.ElementTree(root).write(outfile, encoding="unicode")
+    ' "{{ libvirt_cdrom_cleanup_boot_reset_tempdir.path }}/domain.xml"
+  args:
+    executable: /bin/bash
   when:
     - libvirt_cdrom_cleanup_domain_info.rc == 0
     - libvirt_cdrom_cleanup_reset_boot_to_hd_only | bool
-    - (libvirt_cdrom_cleanup_has_device_boot_order.stdout | default('no') | trim) != 'yes'
+  changed_when: true
+
+- name: Reset persistent boot order to disk only when requested
+  ansible.builtin.shell: |
+    set -euo pipefail
+    virsh define "{{ libvirt_cdrom_cleanup_boot_reset_tempdir.path }}/domain.xml"
+  args:
+    executable: /bin/bash
+  when:
+    - libvirt_cdrom_cleanup_domain_info.rc == 0
+    - libvirt_cdrom_cleanup_reset_boot_to_hd_only | bool
   changed_when: true
 
 - name: Re-check matching CD-ROM media after cleanup
@@ -158,6 +193,14 @@
   when:
     - libvirt_cdrom_cleanup_tempdir is defined
     - libvirt_cdrom_cleanup_tempdir.path is defined
+
+- name: Remove the temporary boot-order reset workspace
+  ansible.builtin.file:
+    path: "{{ libvirt_cdrom_cleanup_boot_reset_tempdir.path }}"
+    state: absent
+  when:
+    - libvirt_cdrom_cleanup_boot_reset_tempdir is defined
+    - libvirt_cdrom_cleanup_boot_reset_tempdir.path is defined
 
 - name: Remove the source CD-ROM file when requested
   ansible.builtin.file:

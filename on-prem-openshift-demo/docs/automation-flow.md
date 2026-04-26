@@ -9,6 +9,7 @@ Nearby docs:
 
 <a href="./prerequisites.md"><kbd>&nbsp;&nbsp;PREREQUISITES&nbsp;&nbsp;</kbd></a>
 <a href="./manual-process.md"><kbd>&nbsp;&nbsp;MANUAL PROCESS&nbsp;&nbsp;</kbd></a>
+<a href="./override-mechanism.md"><kbd>&nbsp;&nbsp;OVERRIDES&nbsp;&nbsp;</kbd></a>
 <a href="./host-sizing-and-resource-policy.md"><kbd>&nbsp;&nbsp;HOST SIZING&nbsp;&nbsp;</kbd></a>
 <a href="./portability-and-gap-analysis.md"><kbd>&nbsp;&nbsp;PORTABILITY / GAPS&nbsp;&nbsp;</kbd></a>
 <a href="../../aws-metal-openshift-demo/docs/automation-flow.md"><kbd>&nbsp;&nbsp;AWS AUTOMATION FLOW&nbsp;&nbsp;</kbd></a>
@@ -103,6 +104,8 @@ For hosts that should stop before cluster bring-up:
   PID/log/RC state under `/var/tmp/bastion-playbooks-onprem/`
 - `./scripts/run_remote_bastion_playbook.sh` — refreshes bastion staging from
   the workstation, then hands the play off to the bastion-side tracked runner
+- the remote-bastion wrapper restages both repo trees and the selected override
+  file before handoff, so local override edits are part of the same run
 - `./scripts/lab-dashboard.sh` — watches the tracked runner state locally
   before the bastion handoff and can continue tracking bastion-side state after
   handoff
@@ -134,6 +137,11 @@ For hosts that should stop before cluster bring-up:
      ```bash
      ./scripts/run_local_playbook.sh playbooks/bootstrap/site.yml
      ```
+   - this host bootstrap now also applies the baseline host memory
+     oversubscription policy:
+     - `zram`
+     - THP `madvise`
+     - KSM
    - for the support-services-only AD profile, pass the override:
      ```bash
      ./scripts/run_local_playbook.sh playbooks/bootstrap/site.yml \
@@ -175,6 +183,46 @@ For hosts that should stop before cluster bring-up:
      ```
    - from this point, use the stock flow reference:
      - <a href="../../aws-metal-openshift-demo/docs/automation-flow.md#recommended-run-order"><kbd>AWS AUTOMATION FLOW: RECOMMENDED RUN ORDER</kbd></a>
+   - current cluster-capable external Ceph profile:
+     - <a href="../inventory/overrides/core-services-ad-plus-openshift-3node-external-ceph.yml.example"><kbd>core-services-ad-plus-openshift-3node-external-ceph.yml.example</kbd></a>
+     - enables the supported day-2 baseline with external ODF
+     - disables internal ODF, infra conversion, LDAP auth, OpenShift
+       Virtualization, and Pipelines
+     - carries the external Ceph cluster-details payload inline as base64, so
+       the bastion-side run does not depend on an operator-local
+       cluster-details file path
+     - documents its phase-selection and resource-sizing contract in
+       <a href="./override-mechanism.md"><kbd>OVERRIDE MECHANISM</kbd></a>
+
+### Cluster-capable external Ceph run order
+
+For the current 3-control-plane / 3-worker external Ceph profile, keep the
+same override on every phase of the run:
+
+```bash
+cd <project-root>/on-prem-openshift-demo
+
+./scripts/run_local_playbook.sh playbooks/site-bootstrap.yml \
+  -e @inventory/overrides/core-services-ad-plus-openshift-3node-external-ceph.yml.example
+
+./scripts/run_remote_bastion_playbook.sh playbooks/site-lab.yml \
+  -e @inventory/overrides/core-services-ad-plus-openshift-3node-external-ceph.yml.example
+```
+
+If the support services are already healthy and only day-2 needs to continue,
+run the shared day-2 play through the on-prem remote-bastion wrapper:
+
+```bash
+cd <project-root>/on-prem-openshift-demo
+
+./scripts/run_remote_bastion_playbook.sh \
+  ../aws-metal-openshift-demo/playbooks/day2/openshift-post-install.yml \
+  -e @inventory/overrides/core-services-ad-plus-openshift-3node-external-ceph.yml.example
+```
+
+The wrapper refreshes staging and the override before handing off to bastion.
+Do not run the shared day-2 play directly from the workstation against the
+cluster API.
 
 ### Support-services-only run order
 
@@ -201,6 +249,9 @@ For hosts sized for support services but not cluster VMs, such as the
    - optional `idm-ad-trust`
    - `bastion-join`
    - `mirror-registry`
+1. Healthy support-service phases are now skipped on rerun when the existing
+   AD, IdM, bastion base, and bastion-join state already matches the expected
+   completed end state.
 1. Stop there. Do not continue to `site-lab.yml` unless the host has been
    expanded to a cluster-capable profile.
 
@@ -242,7 +293,7 @@ At that point:
 
 - for cluster-capable profiles, use:
   - <a href="../../aws-metal-openshift-demo/docs/automation-flow.md"><kbd>AWS AUTOMATION FLOW</kbd></a>
-  - <a href="../../aws-metal-openshift-demo/docs/manual-process.md#12-optionally-build-ad-ds-and-ad-cs-from-bastion"><kbd>AWS MANUAL PROCESS: STEP 12</kbd></a>
+  - <a href="../../aws-metal-openshift-demo/docs/manual-process.md#13a-optionally-build-ad-ds-and-ad-cs-from-bastion"><kbd>AWS MANUAL PROCESS: STEP 13A</kbd></a>
 - for support-services-only profiles such as `core-services` or
   `core-services-ad`, run
   <a href="../playbooks/site-precluster.yml"><kbd>playbooks/site-precluster.yml</kbd></a>

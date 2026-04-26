@@ -1,4 +1,13 @@
 ---
+- name: Normalize partial Keycloak dictionary overrides  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    openshift_keycloak: >-
+      {{
+        openshift_keycloak_defaults
+        | default({})
+        | combine(openshift_keycloak | default({}), recursive=True)
+      }}
+
 - name: Derive OpenShift Keycloak orchestration context
   ansible.builtin.set_fact:
     openshift_post_install_keycloak_oc_local_path: >-

@@ -1,0 +1,15 @@
+---
+exclude_paths:
+  - generated/
+  - ../aws-metal-openshift-demo/
+  - node_modules/
+
+warn_list:
+  - jinja[spacing]
+  - key-order
+  - name[play]
+  - no-changed-when
+  - no-handler
+  - package-latest
+  - var-naming
+  - yaml

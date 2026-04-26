@@ -41,7 +41,7 @@ spec:
     - metadata:
         name: pgdata
       spec:
-        storageClassName: {{ openshift_keycloak.database_storage_class }}
+        storageClassName: {{ openshift_keycloak.database_storage_class | default(openshift_post_install_odf_effective_default_storage_class_rbd) }}
         accessModes:
           - ReadWriteOnce
         resources:

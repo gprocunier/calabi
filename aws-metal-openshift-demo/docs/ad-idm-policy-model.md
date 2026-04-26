@@ -19,24 +19,19 @@ The current orchestration already does:
 - AD trust into IdM
 - Keycloak OIDC for OpenShift
 - IdM compat LDAP federation for Keycloak
-- local IdM group `access-openshift-admin` bound to OpenShift `cluster-admin`
-- local IdM group `access-linux-admin` bound to the `admins-nopasswd-all` sudo rule
+- local IdM group `openshift-admin` bound to OpenShift `cluster-admin`
+- local IdM group `admins` bound to the `admins-nopasswd-all` sudo rule
 
-The current implementation now also includes the active policy-bridge slice:
+The current implementation now also includes the first policy-bridge slice:
 
 - canonical mapping data in
   <a href="../vars/global/ad_group_policy.yml"><kbd>vars/global/ad_group_policy.yml</kbd></a>
-- creation and validation of one IdM external group per mapped AD group during
-  <a href="../playbooks/bootstrap/idm-ad-trust.yml"><kbd>playbooks/bootstrap/idm-ad-trust.yml</kbd></a>
-- SID resolution and `ipaexternalmember` reconciliation for each mapped AD
-  source group
-- nesting of each IdM external group into the target local IdM policy group
-- OIDC claim validation for both a native IdM test user and the AD-trusted test
-  user when AD trust is enabled
+- optional creation of one IdM external group per mapped AD group
+- optional nesting of those external groups into the target local IdM groups
+  during <a href="../playbooks/bootstrap/idm-ad-trust.yml"><kbd>playbooks/bootstrap/idm-ad-trust.yml</kbd></a>
 
-What is still pending is broader consumer-side proof that changing AD group
-membership alone changes the resulting RHEL and OpenShift authorization end to
-end.
+What is still pending is consumer-side proof that those bridged local groups
+drive the intended RHEL and OpenShift access end to end.
 
 ## Target Model
 
@@ -70,11 +65,11 @@ The current planned mappings are:
 
 | AD group | IdM external group | IdM local group | Intended access |
 | --- | --- | --- | --- |
-| `ad-corp-openshift-admins` | `ad-corp-openshift-admins` | `access-openshift-admin` | OpenShift `cluster-admin` |
-| `ad-corp-linux-admins` | `ad-corp-linux-admins` | `access-linux-admin` | RHEL passwordless sudo via `admins-nopasswd-all` |
-| `ad-corp-openshift-virt-admins` | `ad-corp-openshift-virt-admins` | `access-virt-admin` | virtualization-scoped policy target |
-| `ad-corp-developers` | `ad-corp-developers` | `access-developer` | non-admin application access target |
-| `ad-corp-aap-admins` | `ad-corp-aap-admins` | `access-aap-admin` | AAP authorization target |
+| `OpenShift-Admins` | `ad-openshift-admins` | `openshift-admin` | OpenShift `cluster-admin` |
+| `Linux-Admins` | `ad-linux-admins` | `admins` | RHEL passwordless sudo via `admins-nopasswd-all` |
+| `OpenShift-Virt-Admins` | `ad-openshift-virt-admins` | `virt-admin` | future virtualization-scoped policy |
+| `Developers` | `ad-developers` | `developer` | future non-admin application access |
+| `Ansible-Automation-Admins` | `ad-aap-admins` | `aap-admin` | future AAP authorization path |
 
 ## Deferred Hygiene: Naming And Descriptions
 
@@ -99,7 +94,7 @@ Planned description pattern:
 | Group type | Description template | Example |
 | --- | --- | --- |
 | IdM local access group | `Access group: <permission>` | `Access group: OpenShift cluster-admin` |
-| IdM external AD source group | `AD source group: <domain>/<group>` | `AD source group: corp.lan/ad-corp-openshift-admins` |
+| IdM external AD source group | `AD source group: <domain>/<group>` | `AD source group: corp.lan/OpenShift-Admins` |
 
 Why this is deferred:
 
@@ -120,21 +115,15 @@ What exists now:
 - IdM trust and compat are enabled
 - Keycloak reads users and groups from the IdM compat tree
 - the AD-to-IdM policy bridge data model is defined centrally
-- IdM external groups are created from that mapping during the AD trust play
-- trusted AD group SIDs are reconciled into the corresponding IdM external
-  groups
-- mapped IdM external groups are nested into the target local IdM policy groups
-- Keycloak OIDC validation asserts that the AD-trusted test user receives the
-  bridged local OpenShift admin group in the `groups` claim
+- IdM external groups and local-group nesting are now created from that mapping
+  during the AD trust play
 
 What does not exist yet:
 
-- repeatable proof that changing AD group membership alone changes both RHEL and
-  OpenShift authorization without any broader fallback path masking the result
-- proof that RHEL sudo and HBAC are being granted through the bridged local
-  groups rather than through broader trust behavior
-- revocation-side proof that removing an AD user from a mapped source group also
-  removes the resulting OpenShift and RHEL access on the expected timeline
+- validation that an AD group change alone changes RHEL and OpenShift access
+- proof that Keycloak emits the bridged local IdM groups for trusted AD users
+- proof that RHEL sudo/HBAC are being granted through the bridged local groups
+  rather than through broader trust behavior
 
 ## Implementation Plan
 
@@ -184,9 +173,8 @@ Status:
 Validate that:
 
 - the AD-backed Linux admin user resolves through SSSD
-- that user gains the local IdM `access-linux-admin` policy
-- `admins-nopasswd-all` applies through `access-linux-admin` without granting
-  access via raw AD groups
+- that user gains the local IdM `admins` policy
+- `admins-nopasswd-all` applies without granting access via raw AD groups
 
 Likely ownership:
 
@@ -199,20 +187,13 @@ Likely ownership:
 Validate that:
 
 - Keycloak emits the local IdM group names in the `groups` claim
-- OpenShift continues to bind only the local group `access-openshift-admin`
-- an AD user in `ad-corp-openshift-admins` becomes cluster-admin only through
-  the local IdM group bridge
+- OpenShift continues to bind only the local group `openshift-admin`
+- an AD user in `OpenShift-Admins` becomes cluster-admin only through the
+  local IdM group bridge
 
 Likely ownership:
 
 - <a href="../roles/openshift_post_install_oidc_auth/tasks/main.yml"><kbd>roles/openshift_post_install_oidc_auth/tasks/main.yml</kbd></a>
-
-Status:
-
-- token issuance and `groups` claim validation already exist for both the
-  native IdM test user and the AD-trusted test user
-- what remains is stronger end-to-end proof that AD membership changes alone are
-  what grant and revoke the resulting OpenShift authorization
 
 ### Phase 5: Optional AAP Alignment
 
@@ -231,7 +212,7 @@ When this work is implemented, keep these constraints:
 - do not bind raw AD group names directly to OpenShift RBAC
 - do not bind raw AD group names directly to IPA sudo rules
 - keep `HTPasswd` breakglass unchanged
-- keep the existing local IdM access groups as the authorization boundary
+- keep the existing local IdM groups as the authorization boundary
 
 ## Validation Checklist
 

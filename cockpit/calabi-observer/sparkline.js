@@ -15,6 +15,10 @@
  * @param {number} [opts.max]                - explicit y-axis maximum
  * @param {string} [opts.spotColor]          - if set, draw a dot on the last point
  * @param {number} [opts.spotRadius=2.5]     - radius of the last-point dot
+ * @param {object} [opts.refLine]            - horizontal reference line
+ * @param {number} opts.refLine.value        - y-axis value for the reference line
+ * @param {string} opts.refLine.color        - stroke color
+ * @param {number[]} [opts.refLine.dash]     - dash pattern (default [4,3])
  */
 function drawSparkline(canvas, data, opts) {
     if (!canvas || !data || data.length < 2) return;
@@ -90,6 +94,22 @@ function drawSparkline(canvas, data, opts) {
         ctx.fillStyle = spotColor;
         ctx.fill();
     }
+
+    // Reference line
+    if (opts.refLine && opts.refLine.value !== undefined) {
+        var ry = yPos(opts.refLine.value);
+        if (ry >= pad && ry <= ch - pad) {
+            ctx.save();
+            ctx.strokeStyle = opts.refLine.color || "#c62828";
+            ctx.lineWidth = 1;
+            ctx.setLineDash(opts.refLine.dash || [4, 3]);
+            ctx.beginPath();
+            ctx.moveTo(pad, ry);
+            ctx.lineTo(cw - pad, ry);
+            ctx.stroke();
+            ctx.restore();
+        }
+    }
 }
 
 /**
@@ -101,6 +121,7 @@ function drawSparkline(canvas, data, opts) {
  * @param {object} [opts]
  * @param {number} [opts.barHeight] - height of the bar (defaults to canvas height - 4)
  * @param {number} [opts.radius=3] - corner radius
+ * @param {number} [opts.minSegmentWidth] - minimum visible width for non-zero segments
  */
 function drawStackedBar(canvas, segments, total, opts) {
     if (!canvas || !segments || !total) return;
@@ -118,6 +139,7 @@ function drawStackedBar(canvas, segments, total, opts) {
     var barH = opts.barHeight || (ch - 4);
     var barY = (ch - barH) / 2;
     var radius = opts.radius !== undefined ? opts.radius : 3;
+    var minSegmentWidth = opts.minSegmentWidth || 0;
 
     ctx.clearRect(0, 0, cw, ch);
 
@@ -131,6 +153,10 @@ function drawStackedBar(canvas, segments, total, opts) {
     for (var i = 0; i < segments.length; i++) {
         var seg = segments[i];
         var w = (seg.value / total) * cw;
+        if (minSegmentWidth > 0 && seg.value > 0 && w > 0 && w < minSegmentWidth) {
+            w = minSegmentWidth;
+        }
+        if (x + w > cw) w = cw - x;
         if (w < 0.5) continue;
         ctx.fillStyle = seg.color;
         // First segment gets left radius, last gets right radius
@@ -139,6 +165,96 @@ function drawStackedBar(canvas, segments, total, opts) {
         roundRectCustom(ctx, x, barY, w, barH, rLeft, rRight);
         ctx.fill();
         x += w;
+    }
+}
+
+/**
+ * Draw a radial arc gauge on a canvas element.
+ *
+ * @param {HTMLCanvasElement} canvas
+ * @param {number} value - current value
+ * @param {number} max - maximum value (100 for percentages)
+ * @param {object} [opts]
+ * @param {string} [opts.color="#1565c0"]    - fill arc color
+ * @param {string} [opts.track]              - track color (default: rgba based on theme)
+ * @param {number} [opts.lineWidth=10]       - arc thickness
+ * @param {string} [opts.label]              - text shown below value
+ * @param {string} [opts.valueText]          - override displayed text (otherwise value.toFixed(1))
+ * @param {string} [opts.textColor]          - value text color
+ * @param {string} [opts.labelColor]         - label text color
+ * @param {Array<{stop: number, color: string}>} [opts.gradient] - severity gradient stops
+ */
+function drawRadialGauge(canvas, value, max, opts) {
+    if (!canvas) return;
+
+    opts = opts || {};
+    var dpr = window.devicePixelRatio || 1;
+    var cw = canvas.clientWidth;
+    var ch = canvas.clientHeight;
+    canvas.width = cw * dpr;
+    canvas.height = ch * dpr;
+
+    var ctx = canvas.getContext("2d");
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, cw, ch);
+
+    var lineWidth = opts.lineWidth || 10;
+    var radius = Math.min(cw, ch) / 2 - lineWidth / 2 - 2;
+    var cx = cw / 2;
+    var cy = ch / 2 + radius * 0.12;
+
+    // 270-degree arc: starts at 135° (bottom-left), ends at 405° (bottom-right)
+    var startAngle = (135 * Math.PI) / 180;
+    var endAngle = (405 * Math.PI) / 180;
+    var totalAngle = endAngle - startAngle;
+
+    var fraction = Math.max(0, Math.min(value / (max || 1), 1));
+    var valueAngle = startAngle + totalAngle * fraction;
+
+    // Track
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, startAngle, endAngle);
+    ctx.strokeStyle = opts.track || "rgba(128, 128, 128, 0.15)";
+    ctx.lineWidth = lineWidth;
+    ctx.lineCap = "round";
+    ctx.stroke();
+
+    // Fill arc
+    if (fraction > 0.001) {
+        if (opts.gradient && opts.gradient.length >= 2) {
+            // Create a linear gradient mapped to the arc direction
+            var gx1 = cx - radius;
+            var gx2 = cx + radius;
+            var grad = ctx.createLinearGradient(gx1, cy, gx2, cy);
+            for (var gi = 0; gi < opts.gradient.length; gi++) {
+                grad.addColorStop(opts.gradient[gi].stop, opts.gradient[gi].color);
+            }
+            ctx.strokeStyle = grad;
+        } else {
+            ctx.strokeStyle = opts.color || "#1565c0";
+        }
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, startAngle, valueAngle);
+        ctx.lineWidth = lineWidth;
+        ctx.lineCap = "round";
+        ctx.stroke();
+    }
+
+    // Value text
+    var displayText = opts.valueText !== undefined ? opts.valueText : (value != null ? value.toFixed(1) : "—");
+    var fontSize = Math.max(12, Math.floor(radius * 0.48));
+    ctx.fillStyle = opts.textColor || "#f0f6fc";
+    ctx.font = "800 " + fontSize + "px " + (opts.fontFamily || "system-ui, sans-serif");
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(displayText, cx, cy - 2);
+
+    // Label text
+    if (opts.label) {
+        var labelSize = Math.max(9, Math.floor(radius * 0.22));
+        ctx.fillStyle = opts.labelColor || "rgba(128, 128, 128, 0.7)";
+        ctx.font = "600 " + labelSize + "px system-ui, sans-serif";
+        ctx.fillText(opts.label, cx, cy + fontSize * 0.55 + 2);
     }
 }
 

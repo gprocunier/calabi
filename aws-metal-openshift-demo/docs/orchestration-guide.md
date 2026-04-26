@@ -145,6 +145,9 @@ Execution model:
     `/var/tmp/bastion-playbooks/`
 - support VMs (`ad-01`, `idm-01`, `bastion-01`, and `mirror-registry`) default to
   preserving existing disks and libvirt domains on rerun
+- the support-service bootstrap path now probes for completed AD, IdM, bastion
+  base, and bastion-join state and skips those phases when the existing guests
+  are already converged
 - a true fresh support-services rebuild now means both removing the support VMs
   and wiping their backing block devices before replaying
   `./scripts/run_local_playbook.sh`
@@ -226,6 +229,9 @@ Important behavior:
   - Web Enrollment
   - demo users and groups for the trust-oriented identity story
 - exports the AD root CA after successful configuration
+- probes an existing guest for completed DC/CA state and skips the build/config
+  path on rerun when that state is already present and no explicit rebuild was
+  requested
 
 > [!NOTE]
 > The bastion-first AD build is validated. The deeper IdM trust and
@@ -325,6 +331,9 @@ Important behavior:
 - intentionally does not join IdM during the initial bastion build
 - leaves IdM enrollment to `playbooks/bootstrap/bastion-join.yml` after IdM is
   available
+- probes an existing guest for the completed bastion package/service/tooling
+  baseline and skips the base build/config phases on rerun when that state is
+  already present
 
 ### `playbooks/bootstrap/bastion-stage.yml`
 
@@ -347,7 +356,7 @@ Execution model:
   - installs `/etc/profile.d/openshift-bastion.sh`
   - publishes a stable `generated/tools/current` symlink
   - creates `$HOME/bin` and `$HOME/etc` link sets for `cloud-user` and current
-    members of IdM `access-linux-admin`
+    IdM `admins`
   - seeds the same helper layout into `/etc/skel` for future admin logins
   - verifies SSH from bastion to `virt-01`
 
@@ -365,6 +374,9 @@ Operator helper:
     `scripts/run_bastion_playbook.sh` helper on the bastion
   - this is the preferred way to rerun bastion-native playbooks after local
     repository changes
+  - restages the selected override file from the workstation repo before the
+    bastion-side play starts, so local override edits are part of the same
+    handoff
 - `scripts/lab-dashboard.sh`
   - runs on either the operator workstation or bastion
   - on the workstation, it reads local tracked state first and then switches to
@@ -396,16 +408,23 @@ Day-2 rerun behavior:
 - destructive ODF recovery is force-only:
   - `-e openshift_post_install_force_odf_rebuild=true`
   - legacy alias: `-e openshift_post_install_odf_force_osd_device_reset=true`
+- ODF can now run in either `internal` or `external` mode, with the external
+  path creating the imported external-cluster secret and external
+  `StorageCluster` in the same ordering slot that internal ODF previously owned
 
 The shell profile installed by bastion-stage:
 
-- prepends `$HOME/bin` and `generated/tools/current/bin` to `PATH`
+- prepends `$HOME/bin` and `generated/tools/current` to `PATH`
 - exports `KUBECONFIG_ADMIN=$HOME/etc/kubeconfig.local`
 - exports `KUBECONFIG=$HOME/etc/kubeconfig` when that writable working copy
   exists, otherwise falls back to `KUBECONFIG_ADMIN`
 - keeps the generated cluster artifact kubeconfig as the source snapshot rather
   than the default mutable login target
 - leaves early bastion logins clean even before OpenShift auth artifacts exist
+
+The `generated/tools/current` path is already a symlink to the active tool
+directory. Do not append another `/bin` component when documenting or
+debugging bastion helper links.
 
 ### `playbooks/bootstrap/bastion-join.yml`
 
@@ -432,6 +451,9 @@ Important behavior:
   - `with-sudo`
 - leaves the bastion ready for IdM-backed operator access before
   `mirror-registry` and cluster work begin
+- probes bastion for completed IdM enrollment and skips the join path on rerun
+  when the existing guest already has the expected client config, DNS, and IPA
+  host record
 
 ## AD Roles
 
@@ -463,6 +485,8 @@ Important behavior:
 - configures AD CS and Web Enrollment
 - seeds demo users and groups
 - exports the root CA
+- tolerates reruns after the setup ISOs have been detached by skipping the
+  media-backed virtio step when the guest agent is already installed
 
 ### `playbooks/lab/mirror-registry.yml`
 
@@ -486,6 +510,8 @@ Important behavior:
 
 - applies the Bronze guest policy described in
   <a href="./host-resource-management.md"><kbd>RESOURCE MANAGEMENT</kbd></a>
+- installs `calabi-shell` after RHSM registration and package access are
+  available, because the system-wide install requires `git`
 - joins IdM without relying on client-driven dynamic DNS updates for the
   guest's static address
 - reasserts the mirror-registry A/PTR records in authoritative IdM DNS after
@@ -664,6 +690,19 @@ Execution model:
   - `HTPasswd` breakglass authentication
   - Kubernetes NMState deployment
   - ODF declarative deployment
+    - branches on `openshift_post_install_odf_mode`
+    - `internal` keeps the existing Local Storage Operator plus internal Ceph
+      path
+    - `external` installs the ODF operator, creates the imported
+      `rook-ceph-external-cluster-details` secret, and creates the external
+      `StorageCluster`
+    - both modes occupy the same ordering slot so downstream roles do not gain
+      a new dependency edge
+    - external mode applies and waits for the Network Operator host-routing
+      settings before the external `StorageCluster` is created when the
+      profile requests it
+    - external mode is intended to leave infra conversion and storage-node
+      tainting disabled unless the profile explicitly needs them
     - destructive recovery is skipped on a healthy rerun unless explicitly
       forced
     - destructive recovery wipes the first 2 GiB, fixed BlueStore label
@@ -804,7 +843,7 @@ Execution model:
 - creates or updates the Keycloak `aap` client in the existing realm
 - creates or updates the Keycloak `groups` and `aap-audience` protocol mappers
 - creates the `Red Hat build of Keycloak` gateway authenticator
-- creates the `access-aap-admin AAP superuser` authenticator map
+- creates the `access-openshift-admin AAP superuser` authenticator map
 - removes the legacy direct-LDAP authenticator when present
 - validates AD-backed OIDC login after the gateway rollout when trust is
   enabled, otherwise validates the native IdM user path
@@ -813,7 +852,7 @@ Validated live result:
 
 - route `https://aap.apps.ocp.workshop.lan`
 - login page shows `Red Hat build of Keycloak`
-- `ad-aapadmin@corp.lan` authenticates through Keycloak/IdM on the live trust
+- `ad-ocpadmin@corp.lan` authenticates through Keycloak/IdM on the live trust
   path
 - the resulting AAP user has `is_superuser: true`
 - a clean AAP teardown and redeploy was revalidated on the same OIDC path
@@ -894,6 +933,8 @@ Execution model:
 - verifies node, operator, CSR, and cluster version state
 - refreshes the bastion helper kubeconfigs from the current generated cluster
   kubeconfig after validation succeeds
+- refreshes the bastion helper `kubeadmin-password` alongside the kubeconfigs
+- refreshes the helper copies for `cloud-user` as well as the IdM `admins`
 - exports `configmap/kube-root-ca.crt` from the live cluster and installs that
   bundle into bastion system trust so `oc login` works without
   `--insecure-skip-tls-verify`
@@ -1177,7 +1218,7 @@ Critical tasks:
   CIDRs defined in the OVS VLAN model
 - creates IPA groups and users for workshop use
 - creates group-scoped IPA password policies for the seeded lab-user groups
-- creates an IPA sudo rule for the `access-linux-admin` group that permits passwordless
+- creates an IPA sudo rule for the `admins` group that permits passwordless
   execution of any command on any host
 - resets the managed user passwords
 - resets seeded-user password expiration explicitly because IdM password policy
@@ -1196,10 +1237,9 @@ Key outputs of this role:
   cached responses from all lab VLAN CIDRs
 - trusted recursion for all lab CIDRs
 - IdM users/groups for later OpenShift auth demos
-- group-scoped lab password policy for `access-openshift-admin`,
-  `access-virt-admin`, `access-developer`, `access-aap-admin`, and
-  `access-linux-admin`
-- an `admins-nopasswd-all` IPA sudo rule that grants `access-linux-admin` unrestricted
+- group-scoped lab password policy for `admins`, `openshift-admin`,
+  `virt-admin`, and `developer`
+- an `admins-nopasswd-all` IPA sudo rule that grants `admins` unrestricted
   passwordless `sudo` on enrolled lab hosts
 - Cockpit and session recording enabled
 
@@ -1415,6 +1455,9 @@ Important nuance:
 - validates auth and archive prerequisites based on workflow
 - merges the Red Hat pull secret with the local registry auth when needed
 - builds the right `oc-mirror --v2` command line
+- passes the configured mirror parallelism to `oc-mirror`:
+  - `mirror_registry_oc_mirror_parallel_images`
+  - `mirror_registry_oc_mirror_parallel_layers`
 - can run:
   - direct registry mirroring
   - `m2d`
@@ -1448,6 +1491,9 @@ Current live status:
 - the observed archive for `4.20.15` plus the current operator set was about
   `95 GiB`
 - same-host practical sizing was revised to `400 GiB` for `mirror-registry`
+- mirror guest memory was revised to `8192` MiB with 4 vCPU; the mirror job is
+  normally quiet after build and the `oc-mirror` parallelism is now explicit
+  and tunable
 
 Operational helper:
 

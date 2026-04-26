@@ -8,7 +8,7 @@ openshift_post_install_virtualization_source_namespace: openshift-marketplace
 openshift_post_install_virtualization_operatorgroup_name: openshift-cnv
 openshift_post_install_virtualization_hco_name: kubevirt-hyperconverged
 openshift_post_install_virtualization_default_storage_class: >-
-  ocs-storagecluster-ceph-rbd
+  {{ openshift_post_install_odf_effective_default_storage_class_rbd }}
 openshift_post_install_virtualization_ha_namespace: >-
   openshift-workload-availability
 openshift_post_install_virtualization_ha_operatorgroup_name: >-

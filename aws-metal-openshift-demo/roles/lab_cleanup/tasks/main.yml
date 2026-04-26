@@ -57,6 +57,33 @@
   changed_when: true
   failed_when: false
 
+- name: Query the current permanent firewalld policies
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --permanent
+      - --get-policies
+  register: lab_cleanup_policy_list
+  changed_when: false
+  failed_when: false
+
+- name: Remove the lab-to-external firewalld policy before deleting the lab zone
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --permanent
+      - --delete-policy=lab-to-external
+  register: lab_cleanup_delete_policy
+  changed_when: "'success' in lab_cleanup_delete_policy.stdout"
+  failed_when:
+    - lab_cleanup_delete_policy.rc != 0
+    - "'INVALID_POLICY' not in lab_cleanup_delete_policy.stderr"
+  when: >-
+    'lab-to-external' in (
+      (lab_cleanup_policy_list.stdout | default(''))
+      .split()
+    )
+
 - name: Remove the lab firewalld zone
   ansible.builtin.command:
     argv:
@@ -88,6 +115,7 @@
       - firewall-cmd
       - --reload
   when: >-
+    (lab_cleanup_delete_policy is defined and lab_cleanup_delete_policy.changed) or
     lab_cleanup_delete_zone.changed or
     lab_cleanup_remove_masquerade.changed
   changed_when: true

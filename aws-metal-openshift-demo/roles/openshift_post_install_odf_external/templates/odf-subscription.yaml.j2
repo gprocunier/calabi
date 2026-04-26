@@ -1,0 +1,21 @@
+---
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: {{ openshift_post_install_odf_external_operatorgroup_name }}
+  namespace: {{ openshift_post_install_odf_external_storage_cluster_namespace }}
+spec:
+  targetNamespaces:
+    - {{ openshift_post_install_odf_external_storage_cluster_namespace }}
+---
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: {{ openshift_post_install_odf_external_subscription_name }}
+  namespace: {{ openshift_post_install_odf_external_storage_cluster_namespace }}
+spec:
+  channel: {{ openshift_post_install_odf_external_channel }}
+  installPlanApproval: Automatic
+  name: {{ openshift_post_install_odf_external_package_name }}
+  source: {{ openshift_post_install_odf_external_source }}
+  sourceNamespace: {{ openshift_post_install_odf_external_source_namespace }}

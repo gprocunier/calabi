@@ -32,6 +32,7 @@ on the current codebase without live repair during that attempt.
 | understand the underlying design (`Teaching Reference`) | [Network Topology](./network-topology.md) | [Host Resource Management](./host-resource-management.md), [AWS IaaS Resource Model](./iaas-resource-model.md), [OpenShift Cluster Matrix](./openshift-cluster-matrix.md), [ODF Declarative Plan](./odf-declarative-plan.md) |
 | troubleshoot or resume work | [Investigating](./investigating.md) | [Issues Ledger](./issues.md), [Secrets And Sanitization](./secrets-and-sanitization.md) |
 | change the code (`Teaching Reference`) | [Orchestration Guide](./orchestration-guide.md) | `./scripts/run_local_playbook.sh` <a href="../playbooks/site-bootstrap.yml"><kbd>playbooks/site-bootstrap.yml</kbd></a>, `./scripts/run_remote_bastion_playbook.sh` <a href="../playbooks/site-lab.yml"><kbd>playbooks/site-lab.yml</kbd></a> |
+| run the on-prem external-Ceph path | [On-Prem Docs](../../on-prem-openshift-demo/docs/README.md) | [On-Prem Override Mechanism](../../on-prem-openshift-demo/docs/override-mechanism.md), [Automation Flow](./automation-flow.md) |
 
 ## AWS Golden Path Reading Order
 
@@ -70,6 +71,7 @@ Those pages cover:
 - the on-prem host contract
 - LVM-backed guest volume provisioning
 - the on-prem bastion staging wrapper
+- override-driven profile selection, including the external-Ceph day-2 profile
 
 They then hand you back to this main docs set once the bastion is built and the
 normal Calabi sequencing resumes.

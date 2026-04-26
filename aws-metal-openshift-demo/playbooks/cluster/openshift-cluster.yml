@@ -11,6 +11,13 @@
     - ../../vars/cluster/openshift_install_artifacts.yml
 
   pre_tasks:
+    - name: Derive existing OpenShift cluster convergence state
+      ansible.builtin.include_tasks: tasks/derive-cluster-convergence.yml
+
+    - name: Skip OpenShift cluster VM orchestration when the cluster is already converged
+      ansible.builtin.meta: end_play
+      when: openshift_cluster_already_converged | default(false) | bool
+
     - name: Read generated agent media attachment plan from the control node
       ansible.builtin.set_fact:
         openshift_cluster_generated_attachment_plan_content: >-

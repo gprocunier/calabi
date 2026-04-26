@@ -1,0 +1,46 @@
+{% set base_spec = {
+  'arbiter': {},
+  'encryption': {
+    'keyRotation': {
+      'schedule': '@weekly'
+    },
+    'kms': {}
+  },
+  'externalStorage': {
+    'enable': True
+  },
+  'labelSelector': {},
+  'managedResources': {
+    'cephBlockPools': {
+      'defaultStorageClass': True
+    },
+    'cephCluster': {},
+    'cephConfig': {},
+    'cephDashboard': {},
+    'cephFilesystems': {},
+    'cephNonResilientPools': {},
+    'cephObjectStoreUsers': {},
+    'cephObjectStores': {},
+    'cephRBDMirror': {},
+    'cephToolbox': {}
+  },
+  'network': {
+    'connections': {
+      'encryption': {}
+    },
+    'multiClusterService': {}
+  }
+} %}
+{% set merged_spec = base_spec | combine(openshift_post_install_odf_external_storage_cluster_spec_overrides, recursive=True) %}
+---
+apiVersion: ocs.openshift.io/v1
+kind: StorageCluster
+metadata:
+  name: {{ openshift_post_install_odf_external_storage_cluster_name }}
+  namespace: {{ openshift_post_install_odf_external_storage_cluster_namespace }}
+{% if openshift_post_install_odf_external_storage_cluster_annotations | length > 0 %}
+  annotations:
+{{ openshift_post_install_odf_external_storage_cluster_annotations | to_nice_yaml(indent=2) | indent(4, true) }}
+{% endif %}
+spec:
+{{ merged_spec | to_nice_yaml(indent=2) | indent(2, true) }}

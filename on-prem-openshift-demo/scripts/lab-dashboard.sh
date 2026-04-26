@@ -10,6 +10,7 @@
 #   ./scripts/lab-dashboard.sh site-bootstrap       # watch workstation bootstrap state
 #   ./scripts/lab-dashboard.sh site-precluster      # watch bastion-side precluster runner
 #   ./scripts/lab-dashboard.sh site-lab             # watch the full on-prem lab runner
+#   ./scripts/lab-dashboard.sh mirror-registry-refresh  # watch mirror-only reruns
 #
 # Environment overrides:
 #   REFRESH        — pane refresh interval in seconds (default: 10)
@@ -46,6 +47,7 @@ INVENTORY_PATH="${PROJECT_ROOT}/inventory/hosts.yml"
 BASTION_HOST="${BASTION_HOST:-172.16.0.30}"
 LOCAL_STATE_DIR="${XDG_STATE_HOME:-${HOME}/.local/state}/calabi-playbooks-onprem"
 BASTION_STATE_DIR="/var/tmp/bastion-playbooks-onprem"
+ALT_BASTION_STATE_DIR="/var/tmp/bastion-playbooks"
 STAGED_PROJECT_KEY="/opt/openshift/on-prem-openshift-demo/secrets/id_ed25519"
 SHARED_PROJECT_KEY="/opt/openshift/secrets/id_ed25519"
 LOCAL_PROJECT_KEY="${PROJECT_ROOT}/secrets/id_ed25519"
@@ -113,22 +115,30 @@ fi
 
 # --- Detect active playbook stem -----------------------------------------
 
-detect_runner() {
-  if [[ $# -ge 1 && -n "$1" ]]; then
-    printf '%s' "$1"
-    return
-  fi
+bastion_probe() {
+  ssh -q -i "$SSH_KEY" \
+    -o BatchMode=yes \
+    -o ConnectTimeout=5 \
+    -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o ProxyCommand="ssh -q -i ${SSH_KEY} -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${VIRT_USER}@${VIRT_HOST} -W %h:%p" \
+    "cloud-user@${BASTION_HOST}" "$@" 2>/dev/null
+}
+
+detect_runner_in_dir() {
+  local state_dir="$1"
   local newest_live=""
   local newest_live_ts=0
   local newest_stale=""
   local newest_stale_ts=0
   local newest_log=""
   local newest_log_ts=0
-  for pid_file in "${STATE_DIR}"/*.pid; do
+
+  for pid_file in "${state_dir}"/*.pid; do
     [[ -f "$pid_file" ]] || continue
     local stem
     stem="$(basename "$pid_file" .pid)"
-    local rc_file="${STATE_DIR}/${stem}.rc"
+    local rc_file="${state_dir}/${stem}.rc"
     local pid
     pid="$(cat "$pid_file" 2>/dev/null || true)"
     local ts
@@ -143,16 +153,18 @@ detect_runner() {
       newest_stale_ts="$ts"
     fi
   done
+
   if [[ -n "$newest_live" ]]; then
-    printf '%s' "$newest_live"
+    printf '%s|%s\n' "$newest_live" "$state_dir"
     return
   fi
+
   if [[ -z "$newest_stale" ]]; then
-    for log_file in "${STATE_DIR}"/*.log; do
+    for log_file in "${state_dir}"/*.log; do
       [[ -f "$log_file" ]] || continue
       local stem
       stem="$(basename "$log_file" .log)"
-      local rc_file="${STATE_DIR}/${stem}.rc"
+      local rc_file="${state_dir}/${stem}.rc"
       local ts
       ts="$(stat -c %Y "$log_file" 2>/dev/null || echo 0)"
       if [[ ! -f "$rc_file" && "$ts" -gt "$newest_log_ts" ]]; then
@@ -161,17 +173,126 @@ detect_runner() {
       fi
     done
   fi
+
   if [[ -n "$newest_stale" ]]; then
-    printf '%s' "$newest_stale"
+    printf '%s|%s\n' "$newest_stale" "$state_dir"
+  elif [[ -n "$newest_log" ]]; then
+    printf '%s|%s\n' "$newest_log" "$state_dir"
+  fi
+}
+
+detect_remote_runner() {
+  bastion_probe '
+    best_stem=""
+    best_dir=""
+    best_rank=0
+    best_ts=0
+
+    choose() {
+      local rank="$1" ts="$2" stem="$3" dir="$4"
+      if (( rank > best_rank || (rank == best_rank && ts > best_ts) )); then
+        best_rank="$rank"
+        best_ts="$ts"
+        best_stem="$stem"
+        best_dir="$dir"
+      fi
+    }
+
+    for dir in /var/tmp/bastion-playbooks-onprem /var/tmp/bastion-playbooks; do
+      [ -d "$dir" ] || continue
+      for pid_file in "$dir"/*.pid; do
+        [ -f "$pid_file" ] || continue
+        stem=${pid_file##*/}
+        stem=${stem%.pid}
+        rc_file="$dir/$stem.rc"
+        pid=$(cat "$pid_file" 2>/dev/null || true)
+        ts=$(stat -c %Y "$pid_file" 2>/dev/null || echo 0)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+          choose 3 "$ts" "$stem" "$dir"
+        elif [ ! -f "$rc_file" ]; then
+          choose 2 "$ts" "$stem" "$dir"
+        fi
+      done
+      for log_file in "$dir"/*.log; do
+        [ -f "$log_file" ] || continue
+        stem=${log_file##*/}
+        stem=${stem%.log}
+        rc_file="$dir/$stem.rc"
+        ts=$(stat -c %Y "$log_file" 2>/dev/null || echo 0)
+        if [ ! -f "$rc_file" ]; then
+          choose 1 "$ts" "$stem" "$dir"
+        fi
+      done
+    done
+
+    if [ -n "$best_stem" ]; then
+      printf "%s|%s\n" "$best_stem" "$best_dir"
+    fi
+  '
+}
+
+detect_remote_state_dir_for_stem() {
+  local stem="$1"
+  bastion_probe "
+    for dir in '$BASTION_STATE_DIR' '$ALT_BASTION_STATE_DIR'; do
+      if [ -f \"\$dir/${stem}.log\" ] || [ -f \"\$dir/${stem}.pid\" ] || [ -f \"\$dir/${stem}.rc\" ]; then
+        printf '%s\n' \"\$dir\"
+        exit 0
+      fi
+    done
+    exit 1
+  "
+}
+
+detect_runner() {
+  if [[ $# -ge 1 && -n "$1" ]]; then
+    printf '%s\n' "$1"
+    return
+  fi
+
+  local candidate=""
+  if [[ "$DASHBOARD_MODE" == "bastion" ]]; then
+    candidate="$(detect_runner_in_dir "$BASTION_STATE_DIR" || true)"
+    if [[ -z "$candidate" ]]; then
+      candidate="$(detect_runner_in_dir "$ALT_BASTION_STATE_DIR" || true)"
+    fi
   else
-    printf '%s' "${newest_log:-site-bootstrap}"
+    candidate="$(detect_runner_in_dir "$LOCAL_STATE_DIR" || true)"
+    if [[ -z "$candidate" ]]; then
+      candidate="$(detect_remote_runner || true)"
+    fi
+  fi
+
+  if [[ -n "$candidate" ]]; then
+    printf '%s\n' "${candidate%%|*}"
+  else
+    printf '%s\n' "site-bootstrap"
   fi
 }
 
 RUNNER_STEM="$(detect_runner "${1:-}")"
+REMOTE_STATE_DIR_DEFAULT=""
+if [[ "$DASHBOARD_MODE" == "bastion" ]]; then
+  if [[ -f "${ALT_BASTION_STATE_DIR}/${RUNNER_STEM}.log" || -f "${ALT_BASTION_STATE_DIR}/${RUNNER_STEM}.pid" || -f "${ALT_BASTION_STATE_DIR}/${RUNNER_STEM}.rc" ]]; then
+    STATE_DIR="${ALT_BASTION_STATE_DIR}"
+  else
+    STATE_DIR="${BASTION_STATE_DIR}"
+  fi
+else
+  REMOTE_STATE_DIR_DEFAULT="$(detect_remote_state_dir_for_stem "${RUNNER_STEM}" || true)"
+fi
+
 LOG_PATH="${STATE_DIR}/${RUNNER_STEM}.log"
 PID_PATH="${STATE_DIR}/${RUNNER_STEM}.pid"
 RC_PATH="${STATE_DIR}/${RUNNER_STEM}.rc"
+REMOTE_PID_PATH_DEFAULT=""
+REMOTE_RC_PATH_DEFAULT=""
+REMOTE_LOG_PATH_DEFAULT=""
+if [[ -n "${REMOTE_STATE_DIR_DEFAULT}" ]]; then
+  REMOTE_PID_PATH_DEFAULT="${REMOTE_STATE_DIR_DEFAULT}/${RUNNER_STEM}.pid"
+  REMOTE_RC_PATH_DEFAULT="${REMOTE_STATE_DIR_DEFAULT}/${RUNNER_STEM}.rc"
+  REMOTE_LOG_PATH_DEFAULT="${REMOTE_STATE_DIR_DEFAULT}/${RUNNER_STEM}.log"
+fi
 REMOTE_ENV_PATH="${LOCAL_STATE_DIR}/${RUNNER_STEM}.remote.env"
 STAGE_PATH="${LOCAL_STATE_DIR}/${RUNNER_STEM}.stage"
 
@@ -367,6 +488,7 @@ PLAYBOOK_MAP=(
   "site-bootstrap:playbooks/site-bootstrap.yml"
   "site-precluster:playbooks/site-precluster.yml"
   "site-lab:playbooks/site-lab.yml"
+  "mirror-registry-refresh:../aws-metal-openshift-demo/playbooks/lab/mirror-registry-refresh.yml"
 )
 
 PLAYBOOK_PATH=""
@@ -393,6 +515,9 @@ MANIFEST="__MANIFEST__"
 MANIFEST_STATUS="__MANIFEST_STATUS__"
 LISTTASKS_ERR="__LISTTASKS_ERR__"
 REMOTE_ENV_PATH="__REMOTE_ENV_PATH__"
+REMOTE_PID_PATH_DEFAULT="__REMOTE_PID_PATH_DEFAULT__"
+REMOTE_RC_PATH_DEFAULT="__REMOTE_RC_PATH_DEFAULT__"
+REMOTE_LOG_PATH_DEFAULT="__REMOTE_LOG_PATH_DEFAULT__"
 BASTION_HOST="__BASTION_HOST__"
 BASTION_USER="cloud-user"
 HYPERVISOR_HOST="__HYPERVISOR_HOST__"
@@ -404,9 +529,10 @@ SSH_HELPERS="__SSH_HELPERS__"
 source "$SSH_HELPERS"
 
 bastion_ssh_manifest() {
-  [[ -f "$REMOTE_ENV_PATH" ]] || return 1
-  # shellcheck disable=SC1090
-  source "$REMOTE_ENV_PATH"
+  if [[ -f "$REMOTE_ENV_PATH" ]]; then
+    # shellcheck disable=SC1090
+    source "$REMOTE_ENV_PATH"
+  fi
   bastion_ssh_mux "$@"
 }
 
@@ -458,6 +584,9 @@ sed -i \
   -e "s|__MANIFEST_STATUS__|${MANIFEST_STATUS}|g" \
   -e "s|__LISTTASKS_ERR__|${PANE_DIR}/list-tasks.err|g" \
   -e "s|__REMOTE_ENV_PATH__|${REMOTE_ENV_PATH}|g" \
+  -e "s|__REMOTE_PID_PATH_DEFAULT__|${REMOTE_PID_PATH_DEFAULT}|g" \
+  -e "s|__REMOTE_RC_PATH_DEFAULT__|${REMOTE_RC_PATH_DEFAULT}|g" \
+  -e "s|__REMOTE_LOG_PATH_DEFAULT__|${REMOTE_LOG_PATH_DEFAULT}|g" \
   -e "s|__BASTION_HOST__|${BASTION_HOST}|g" \
   -e "s|__HYPERVISOR_HOST__|${VIRT_HOST}|g" \
   -e "s|__HYPERVISOR_USER__|${VIRT_USER}|g" \
@@ -508,6 +637,9 @@ MANIFEST="__MANIFEST__"
 MANIFEST_STATUS="__MANIFEST_STATUS__"
 DASHBOARD_MODE="__DASHBOARD_MODE__"
 REMOTE_ENV_PATH="__REMOTE_ENV_PATH__"
+REMOTE_PID_PATH_DEFAULT="__REMOTE_PID_PATH_DEFAULT__"
+REMOTE_RC_PATH_DEFAULT="__REMOTE_RC_PATH_DEFAULT__"
+REMOTE_LOG_PATH_DEFAULT="__REMOTE_LOG_PATH_DEFAULT__"
 STAGE_PATH="__STAGE_PATH__"
 BASTION_HOST="__BASTION_HOST__"
 BASTION_USER="cloud-user"
@@ -528,9 +660,18 @@ bastion_ssh() {
 }
 
 load_remote_env() {
-  [[ -f "$REMOTE_ENV_PATH" ]] || return 1
-  # shellcheck disable=SC1090
-  source "$REMOTE_ENV_PATH"
+  if [[ -f "$REMOTE_ENV_PATH" ]]; then
+    # shellcheck disable=SC1090
+    source "$REMOTE_ENV_PATH"
+    return 0
+  fi
+  if [[ -n "$REMOTE_PID_PATH_DEFAULT" || -n "$REMOTE_RC_PATH_DEFAULT" || -n "$REMOTE_LOG_PATH_DEFAULT" ]]; then
+    REMOTE_PID_PATH="${REMOTE_PID_PATH_DEFAULT}"
+    REMOTE_RC_PATH="${REMOTE_RC_PATH_DEFAULT}"
+    REMOTE_LOG_PATH="${REMOTE_LOG_PATH_DEFAULT}"
+    return 0
+  fi
+  return 1
 }
 
 load_stage_env() {
@@ -586,6 +727,39 @@ cat_for_source() {
   else
     cat "$target_path"
   fi
+}
+
+live_pid_for_source() {
+  local source_kind="$1"
+  local current_pid_path="$PID_PATH"
+  if [[ "$source_kind" == "remote" ]] && load_remote_env; then
+    current_pid_path="$REMOTE_PID_PATH"
+  fi
+
+  if ! file_exists_for_source "$source_kind" "$current_pid_path"; then
+    return 1
+  fi
+
+  local pid
+  pid="$(cat_for_source "$source_kind" "$current_pid_path" 2>/dev/null || true)"
+  [[ -n "${pid:-}" ]] || return 1
+
+  if [[ "$source_kind" == "remote" ]]; then
+    if bastion_ssh "kill -0 '${pid}' 2>/dev/null"; then
+      printf '%s\n' "$pid"
+      return 0
+    fi
+  elif [[ "$source_kind" == "bastion" ]]; then
+    if kill -0 "$pid" 2>/dev/null; then
+      printf '%s\n' "$pid"
+      return 0
+    fi
+  elif kill -0 "$pid" 2>/dev/null; then
+    printf '%s\n' "$pid"
+    return 0
+  fi
+
+  return 1
 }
 
 stat_epoch_for_source() {
@@ -856,15 +1030,21 @@ runner_status() {
   local current_pid_path="$PID_PATH"
   local current_rc_path="$RC_PATH"
   local current_log_path="$LOG_PATH"
+  local live_pid=""
   if [[ "$source_kind" == "remote" ]] && load_remote_env; then
     current_pid_path="$REMOTE_PID_PATH"
     current_rc_path="$REMOTE_RC_PATH"
     current_log_path="$REMOTE_LOG_PATH"
   fi
 
+  live_pid="$(live_pid_for_source "$source_kind" 2>/dev/null || true)"
   if file_exists_for_source "$source_kind" "$current_rc_path"; then
     local rc
     rc="$(cat_for_source "$source_kind" "$current_rc_path" 2>/dev/null)"
+    if [[ -n "$live_pid" ]]; then
+      printf '\033[1;35mINCONSISTENT (pid=%s rc=%s)\033[0m' "$live_pid" "$rc"
+      return
+    fi
     local finished_ago=""
     local rc_ts
     rc_ts="$(stat_epoch_for_source "$source_kind" "$current_rc_path")"
@@ -881,20 +1061,9 @@ runner_status() {
   fi
 
   # Check tracked PID first
-  if file_exists_for_source "$source_kind" "$current_pid_path"; then
-    local pid
-    pid="$(cat_for_source "$source_kind" "$current_pid_path" 2>/dev/null || true)"
-    if [[ -n "${pid:-}" ]]; then
-      if [[ "$source_kind" == "remote" ]]; then
-        if bastion_ssh "kill -0 '${pid}' 2>/dev/null"; then
-          printf '\033[1;33mRUNNING (pid=%s)\033[0m' "$pid"
-          return
-        fi
-      elif kill -0 "$pid" 2>/dev/null; then
-        printf '\033[1;33mRUNNING (pid=%s)\033[0m' "$pid"
-        return
-      fi
-    fi
+  if [[ -n "$live_pid" ]]; then
+    printf '\033[1;33mRUNNING (pid=%s)\033[0m' "$live_pid"
+    return
   fi
 
   # PID file is stale or missing — if the log exists but no .rc file,
@@ -971,6 +1140,9 @@ compute_progress() {
       sub(/^PLAY \[/, "", name)
       sub(/\] \**$/, "", name)
       current_play_name = name
+      current_task_name = "(waiting for first task in current play)"
+      current_task_prefix = current_play_name
+      current_prefix_started = 0
     }
     /^TASK \[/ {
       current_play_tasks++
@@ -1023,11 +1195,21 @@ while true; do
   current_prefix_started="${progress_state[6]:-0}"
 
   runner_rc=""
+  runner_has_conflicting_rc=0
+  if file_exists_for_source "$state_source" "$(
+    if [[ "$state_source" == "remote" ]] && load_remote_env; then
+      printf '%s' "$REMOTE_RC_PATH"
+    else
+      printf '%s' "$RC_PATH"
+    fi
+  )" && [[ -n "$(live_pid_for_source "$state_source" 2>/dev/null || true)" ]]; then
+    runner_has_conflicting_rc=1
+  fi
   if [[ "$state_source" == "remote" ]] && load_remote_env; then
-    if file_exists_for_source remote "$REMOTE_RC_PATH"; then
+    if (( ! runner_has_conflicting_rc )) && file_exists_for_source remote "$REMOTE_RC_PATH"; then
       runner_rc="$(cat_for_source remote "$REMOTE_RC_PATH" 2>/dev/null || true)"
     fi
-  elif [[ -f "$RC_PATH" ]]; then
+  elif (( ! runner_has_conflicting_rc )) && [[ -f "$RC_PATH" ]]; then
     runner_rc="$(cat "$RC_PATH" 2>/dev/null || true)"
   fi
 
@@ -1063,7 +1245,10 @@ while true; do
     if (( expected_current > 0 && completed_current > expected_current )); then
       completed_current="$expected_current"
     fi
-    if [[ -n "$runner_rc" && "$runner_rc" != "0" ]]; then
+    if (( runner_has_conflicting_rc )); then
+      overall_state="indeterminate"
+      play_state="indeterminate"
+    elif [[ -n "$runner_rc" && "$runner_rc" != "0" ]]; then
       overall_state="failed"
       play_state="failed"
     elif (( expected_current > 0 && completed_current >= expected_current )); then
@@ -1174,6 +1359,9 @@ while true; do
   fi
   sync_bootstrap_log_pane "$latest_task"
   printf '\033[1mSource:\033[0m %s\n' "$state_source"
+  if (( runner_has_conflicting_rc )); then
+    printf '\033[1mState:\033[0m rc file is present but tracked pid is still alive\n'
+  fi
   printf '\033[1mPhase:\033[0m %s\n' "$(clip_text "$display_play_name" $(( PANE_WIDTH - 8 )))"
   if [[ "$state_source" == "local" && -n "$current_stage" ]]; then
     printf '\033[1mStage:\033[0m %s\n' "$(clip_text "$current_stage" $(( PANE_WIDTH - 8 )))"
@@ -1200,6 +1388,9 @@ sed -i \
   -e "s|__MANIFEST_STATUS__|${MANIFEST_STATUS}|g" \
   -e "s|__DASHBOARD_MODE__|${DASHBOARD_MODE}|g" \
   -e "s|__REMOTE_ENV_PATH__|${REMOTE_ENV_PATH}|g" \
+  -e "s|__REMOTE_PID_PATH_DEFAULT__|${REMOTE_PID_PATH_DEFAULT}|g" \
+  -e "s|__REMOTE_RC_PATH_DEFAULT__|${REMOTE_RC_PATH_DEFAULT}|g" \
+  -e "s|__REMOTE_LOG_PATH_DEFAULT__|${REMOTE_LOG_PATH_DEFAULT}|g" \
   -e "s|__STAGE_PATH__|${STAGE_PATH}|g" \
   -e "s|__BASTION_HOST__|${BASTION_HOST}|g" \
   -e "s|__HYPERVISOR_HOST__|${VIRT_HOST}|g" \
@@ -1304,7 +1495,7 @@ cat > "${PANE_DIR}/ocp.sh" <<'OCPEOF'
 REFRESH="__REFRESH__"
 KUBECONFIG_CANDIDATES=(
   "$HOME/etc/kubeconfig"
-  "/opt/openshift/on-prem-openshift-demo/generated/ocp/auth/kubeconfig"
+  "/opt/openshift/aws-metal-openshift-demo/generated/ocp/auth/kubeconfig"
 )
 
 find_readable_kubeconfig() {
@@ -1408,6 +1599,9 @@ cat > "${PANE_DIR}/log.sh" <<'LOGEOF'
 LOG_PATH="__LOG_PATH__"
 DASHBOARD_MODE="__DASHBOARD_MODE__"
 REMOTE_ENV_PATH="__REMOTE_ENV_PATH__"
+REMOTE_PID_PATH_DEFAULT="__REMOTE_PID_PATH_DEFAULT__"
+REMOTE_RC_PATH_DEFAULT="__REMOTE_RC_PATH_DEFAULT__"
+REMOTE_LOG_PATH_DEFAULT="__REMOTE_LOG_PATH_DEFAULT__"
 REFRESH="__REFRESH__"
 BASTION_HOST="__BASTION_HOST__"
 BASTION_USER="cloud-user"
@@ -1424,9 +1618,18 @@ bastion_ssh() {
 }
 
 load_remote_env() {
-  [[ -f "$REMOTE_ENV_PATH" ]] || return 1
-  # shellcheck disable=SC1090
-  source "$REMOTE_ENV_PATH"
+  if [[ -f "$REMOTE_ENV_PATH" ]]; then
+    # shellcheck disable=SC1090
+    source "$REMOTE_ENV_PATH"
+    return 0
+  fi
+  if [[ -n "$REMOTE_LOG_PATH_DEFAULT" ]]; then
+    REMOTE_PID_PATH="${REMOTE_PID_PATH_DEFAULT}"
+    REMOTE_RC_PATH="${REMOTE_RC_PATH_DEFAULT}"
+    REMOTE_LOG_PATH="${REMOTE_LOG_PATH_DEFAULT}"
+    return 0
+  fi
+  return 1
 }
 
 while true; do
@@ -1449,6 +1652,9 @@ sed -i \
   -e "s|__LOG_PATH__|${LOG_PATH}|g" \
   -e "s|__DASHBOARD_MODE__|${DASHBOARD_MODE}|g" \
   -e "s|__REMOTE_ENV_PATH__|${REMOTE_ENV_PATH}|g" \
+  -e "s|__REMOTE_PID_PATH_DEFAULT__|${REMOTE_PID_PATH_DEFAULT}|g" \
+  -e "s|__REMOTE_RC_PATH_DEFAULT__|${REMOTE_RC_PATH_DEFAULT}|g" \
+  -e "s|__REMOTE_LOG_PATH_DEFAULT__|${REMOTE_LOG_PATH_DEFAULT}|g" \
   -e "s|__REFRESH__|${REFRESH}|g" \
   -e "s|__BASTION_HOST__|${BASTION_HOST}|g" \
   -e "s|__HYPERVISOR_HOST__|${VIRT_HOST}|g" \
@@ -1468,8 +1674,8 @@ BASTION_USER="cloud-user"
 HYPERVISOR_HOST="__HYPERVISOR_HOST__"
 HYPERVISOR_USER="__HYPERVISOR_USER__"
 SSH_KEY="__SSH_KEY__"
-INSTALL_LOG_PATH="/opt/openshift/on-prem-openshift-demo/generated/ocp/.openshift_install.log"
-LOCAL_INSTALL_LOG_PATH="__PROJECT_ROOT__/generated/ocp/.openshift_install.log"
+INSTALL_LOG_PATH="/opt/openshift/aws-metal-openshift-demo/generated/ocp/.openshift_install.log"
+LOCAL_INSTALL_LOG_PATH="$(dirname "__PROJECT_ROOT__")/aws-metal-openshift-demo/generated/ocp/.openshift_install.log"
 SSH_HELPERS="__SSH_HELPERS__"
 
 # shellcheck disable=SC1090

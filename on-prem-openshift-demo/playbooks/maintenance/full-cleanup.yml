@@ -1,0 +1,28 @@
+---
+- name: Remove support VMs, cluster VMs, and lab networking from the on-prem host
+  import_playbook: ../../../aws-metal-openshift-demo/playbooks/maintenance/cleanup.yml
+  vars:
+    cleanup_destroy_ad_server: true
+    cleanup_destroy_idm: true
+    cleanup_destroy_mirror_registry: true
+    cleanup_destroy_bastion: true
+    cleanup_destroy_openshift_cluster: true
+    cleanup_destroy_idm_certs: true
+    cleanup_destroy_lab_networking: true
+    ad_server_cleanup_wipe_block_device: true
+    idm_cleanup_wipe_block_device: true
+    mirror_registry_cleanup_wipe_block_device: true
+    bastion_cleanup_wipe_block_device: true
+    cleanup_wipe_openshift_cluster_block_devices: true
+
+- name: Return the on-prem host to a predeployment state without rolling back RPMs
+  hosts: aws_metal
+  become: true
+  gather_facts: false
+  vars:
+    on_prem_full_cleanup_remove_host_artifacts: true
+    on_prem_full_cleanup_remove_guest_storage: true
+    on_prem_full_cleanup_wipe_seed_device: true
+
+  roles:
+    - role: on_prem_full_cleanup

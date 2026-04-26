@@ -1,0 +1,24 @@
+[Unit]
+Description=Calabi Observer Prometheus exporter
+Documentation=https://github.com/gprocunier/calabi
+Wants=network-online.target
+After=network-online.target libvirtd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/share/cockpit/calabi-observer/calabi_exporter.py
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/run/calabi-observer
+ReadOnlyPaths=/proc /sys /run/libvirt /var/run/libvirt /etc/calabi-observer
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+UMask=0022
+
+[Install]
+WantedBy=multi-user.target

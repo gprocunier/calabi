@@ -9,6 +9,7 @@
     - ../../vars/global/mirror_content.yml
     - ../../vars/cluster/openshift_install_cluster.yml
     - ../../vars/cluster/openshift_agent_media.yml
+    - ../../vars/guests/openshift_cluster_vm.yml
   vars:
     openshift_install_wait_install_dir: "{{ lab_execution_ocp_generated_root }}"
     openshift_install_wait_binary: >-
@@ -55,6 +56,13 @@
       -o StrictHostKeyChecking=no
       -o UserKnownHostsFile=/dev/null
   tasks:
+    - name: Derive existing OpenShift cluster convergence state
+      ansible.builtin.include_tasks: tasks/derive-cluster-convergence.yml
+
+    - name: Skip OpenShift install wait when the cluster is already converged
+      ansible.builtin.meta: end_play
+      when: openshift_cluster_already_converged | default(false) | bool
+
     - name: Validate the rendered install directory exists
       ansible.builtin.stat:
         path: "{{ openshift_install_wait_install_dir }}"
@@ -80,10 +88,10 @@
           binary at {{ openshift_install_wait_binary }} before waiting for
           bootstrap and install completion.
 
-    - name: Poll assisted-service for agent host status during bootstrap when rendezvous metadata is present
+    - name: Collect assisted-service agent host status during bootstrap when rendezvous metadata is present
       ansible.builtin.shell: |
         set -euo pipefail
-        ssh -i {{ lab_execution_ssh_private_key_file }}           -o BatchMode=yes           -o StrictHostKeyChecking=no           -o UserKnownHostsFile=/dev/null           core@{{ openshift_install_wait_node_zero_ip }} '
+        if ! ssh -i {{ lab_execution_ssh_private_key_file }}           -o BatchMode=yes           -o StrictHostKeyChecking=no           -o UserKnownHostsFile=/dev/null           core@{{ openshift_install_wait_node_zero_ip }} '
             set -euo pipefail
             if [ ! -f /etc/assisted/rendezvous-host.env ]; then
               printf "[]"
@@ -97,16 +105,13 @@
               exit 0
             fi
             curl -sk -H "Authorization: ${USER_AUTH_TOKEN}" "${SERVICE_BASE_URL}api/assisted-install/v2/clusters/${cluster_id}/hosts"
-          '
+          '; then
+          printf "[]"
+        fi
       args:
         executable: /bin/bash
       register: openshift_install_wait_assisted_hosts
       changed_when: false
-      retries: 30
-      delay: 20
-      until:
-        - openshift_install_wait_assisted_hosts.rc == 0
-        - openshift_install_wait_assisted_hosts.stdout | trim | length > 0
 
     - name: Derive control-plane hosts that are waiting for a disk reboot
       ansible.builtin.set_fact:

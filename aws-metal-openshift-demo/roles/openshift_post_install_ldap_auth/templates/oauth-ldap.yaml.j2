@@ -16,19 +16,7 @@ spec:
           name: ldap-ca
         insecure: {{ openshift_ldap_auth.oauth.insecure | bool | lower }}
         attributes:
-          id:
-{% for value in openshift_ldap_auth.oauth.attributes.id %}
-            - "{{ value }}"
-{% endfor %}
-          preferredUsername:
-{% for value in openshift_ldap_auth.oauth.attributes.preferred_username %}
-            - "{{ value }}"
-{% endfor %}
-          name:
-{% for value in openshift_ldap_auth.oauth.attributes.name %}
-            - "{{ value }}"
-{% endfor %}
-          email:
-{% for value in openshift_ldap_auth.oauth.attributes.email %}
-            - "{{ value }}"
-{% endfor %}
+          id: {{ openshift_ldap_auth.oauth.attributes.id | to_json }}
+          preferredUsername: {{ openshift_ldap_auth.oauth.attributes.preferred_username | to_json }}
+          name: {{ openshift_ldap_auth.oauth.attributes.name | to_json }}
+          email: {{ openshift_ldap_auth.oauth.attributes.email | to_json }}

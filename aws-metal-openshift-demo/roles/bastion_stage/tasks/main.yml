@@ -96,7 +96,17 @@
   loop:
     - "{{ bastion_client.project_parent }}"
     - "{{ bastion_client.secrets_root }}"
+
+- name: Ensure the bastion system Ansible collection directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
     - "{{ bastion_client.collection_root }}"
+    - "{{ bastion_client.collection_root }}/ansible_collections"
 
 - name: Ensure the bastion tracked-run state directory exists
   ansible.builtin.file:
@@ -508,6 +518,11 @@
       - "{{ bastion_client.collection_root }}"
   environment:
     ANSIBLE_COLLECTIONS_PATH: "{{ bastion_client.collection_root }}"
+  become: true
+  register: bastion_stage_collection_install
+  retries: 3
+  delay: 10
+  until: bastion_stage_collection_install.rc == 0
   changed_when: false
 
 - name: Install required Python packages for WinRM control on the bastion
@@ -642,6 +657,7 @@
     dest: "/etc/skel/bin/{{ item.link_name }}"
     state: link
     force: true
+    follow: false
   loop: "{{ bastion_stage_user_bin_links }}"
 
 - name: Seed the skeleton bastion etc links for future admin logins
@@ -650,6 +666,7 @@
     dest: "/etc/skel/etc/{{ item.link_name }}"
     state: link
     force: true
+    follow: false
   loop: "{{ bastion_stage_user_etc_links }}"
 
 - name: Seed the skeleton bastion etc files for future admin logins
@@ -701,6 +718,7 @@
     owner: "{{ item.0.user }}"
     group: "{{ item.0.gid }}"
     force: true
+    follow: false
   loop: "{{ (bastion_stage_home_link_targets | default([])) | product(bastion_stage_user_bin_links) | list }}"
 
 - name: Install per-user bastion etc links
@@ -711,6 +729,7 @@
     owner: "{{ item.0.user }}"
     group: "{{ item.0.gid }}"
     force: true
+    follow: false
   loop: "{{ (bastion_stage_home_link_targets | default([])) | product(bastion_stage_user_etc_links) | list }}"
 
 - name: Install per-user bastion etc files

@@ -1,4 +1,152 @@
 ---
+- name: Probe whether the bastion guest is already joined to IdM and converged
+  hosts: aws_metal
+  become: false
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/bastion.yml
+    - ../../vars/global/rhsm.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/pki.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/bastion_vm.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+
+  tasks:
+    - name: Check whether the bastion libvirt domain already exists
+      ansible.builtin.command:
+        argv:
+          - virsh
+          - dominfo
+          - "{{ bastion_vm.name }}.{{ bastion_vm.domain }}"
+      register: bastion_join_probe_domain_info
+      changed_when: false
+      failed_when: false
+      become: true
+
+    - name: Wait briefly for SSH on an existing bastion guest
+      ansible.builtin.wait_for:
+        host: "{{ bastion_vm.network.ipv4_address }}"
+        port: 22
+        timeout: 20
+        sleep: 5
+      register: bastion_join_probe_ssh
+      changed_when: false
+      failed_when: false
+      when:
+        - bastion_join_probe_domain_info.rc == 0
+        - not (bastion_vm.provisioning.recreate_domain | bool)
+        - not (bastion_vm.provisioning.rebuild_disk_from_image | bool)
+
+    - name: Register the bastion guest for join completion probing
+      ansible.builtin.add_host:
+        name: bastion_join_probe
+        groups:
+          - bastion_join_probe
+        ansible_host: "{{ bastion_vm.network.ipv4_address }}"
+        ansible_user: "{{ bastion_vm.access.admin_user }}"
+        ansible_ssh_private_key_file: >-
+          {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+        ansible_ssh_common_args: >-
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          -o ProxyCommand="ssh -i {{
+          hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          {{ hostvars[inventory_hostname].ansible_user }}@{{
+          hostvars[inventory_hostname].ansible_host }} -W %h:%p"
+      when:
+        - bastion_join_probe_domain_info.rc == 0
+        - (bastion_join_probe_ssh.state | default('')) == 'started'
+        - not (bastion_vm.provisioning.recreate_domain | bool)
+        - not (bastion_vm.provisioning.rebuild_disk_from_image | bool)
+
+- name: Check whether the bastion guest is already fully joined to IdM
+  hosts: bastion_join_probe
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/bastion.yml
+    - ../../vars/global/rhsm.yml
+    - ../../vars/global/lab_switch_ports.yml
+    - ../../vars/global/pki.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/bastion_vm.yml
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+
+  tasks:
+    - name: Wait for the bastion guest to accept SSH connections
+      ansible.builtin.wait_for_connection:
+        timeout: 60
+        sleep: 10
+        connect_timeout: 10
+
+    - name: Probe the bastion IdM join completion state
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+
+          reasons=()
+
+          if [ ! -r /etc/ipa/default.conf ]; then
+            reasons+=("ipa-default-conf")
+          fi
+
+          if ! authselect current --raw 2>/dev/null | grep -F with-mkhomedir >/dev/null 2>&1; then
+            reasons+=("authselect-mkhomedir")
+          fi
+
+          if ! authselect current --raw 2>/dev/null | grep -F with-sudo >/dev/null 2>&1; then
+            reasons+=("authselect-sudo")
+          fi
+
+          if ! nmcli -g IP4.DNS device show {{ bastion_vm.network.interface_name | quote }} | grep -Fx {{ idm_vm.network.ipv4_address | quote }} >/dev/null 2>&1; then
+            reasons+=("idm-dns")
+          fi
+
+          if ! dig +short @{{ idm_vm.network.ipv4_address }} {{ bastion_vm.name }}.{{ bastion_vm.domain }} A | grep -Fx {{ bastion_vm.network.ipv4_address | regex_replace('/.*$', '') | quote }} >/dev/null 2>&1; then
+            reasons+=("authoritative-dns")
+          fi
+
+          if [ -r /etc/ipa/default.conf ]; then
+            if printf '%s\n' {{ idm_server.admin_password | quote }} | kinit {{ (bastion_client.admin_principal if '@' in bastion_client.admin_principal else bastion_client.admin_principal ~ '@' ~ idm_server.realm) | quote }} >/dev/null 2>&1; then
+              if ! ipa host-show {{ (bastion_vm.name ~ '.' ~ bastion_vm.domain) | quote }} >/dev/null 2>&1; then
+                reasons+=("ipa-host-show")
+              fi
+              kdestroy >/dev/null 2>&1 || true
+            else
+              reasons+=("kinit-admin")
+            fi
+          fi
+
+          if [ "${reasons[0]+set}" != "set" ]; then
+            printf 'bastion join already converged\n'
+            exit 0
+          fi
+
+          printf '%s\n' "${reasons[@]}"
+          exit 1
+      args:
+        executable: /bin/bash
+      register: bastion_join_probe_completion
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Record whether the bastion guest is already fully joined to IdM
+      ansible.builtin.group_by:
+        key: >-
+          bastion_join_complete_{{
+            (bastion_join_probe_completion.rc == 0) | ternary('true', 'false')
+          }}
+
+    - name: Publish the bastion join completion probe result
+      ansible.builtin.debug:
+        msg:
+          completed: "{{ bastion_join_probe_completion.rc == 0 }}"
+          checks: "{{ bastion_join_probe_completion.stdout_lines | default([]) }}"
+
 - name: Register the bastion guest as a temporary Ansible host for join operations
   hosts: aws_metal
   become: false
@@ -30,6 +178,12 @@
           -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
           {{ hostvars[inventory_hostname].ansible_user }}@{{
           hostvars[inventory_hostname].ansible_host }} -W %h:%p"
+      when:
+        - not (
+            (groups['bastion_join_complete_true'] | default([])) | length > 0
+            and not (bastion_vm.provisioning.recreate_domain | bool)
+            and not (bastion_vm.provisioning.rebuild_disk_from_image | bool)
+          )
 
 - name: Join the bastion guest to IdM after identity services are available
   hosts: openshift_bastion
@@ -46,6 +200,13 @@
     - ../../vars/guests/ad_vm.yml
 
   pre_tasks:
+    - name: Skip bastion IdM join when the guest is already fully configured
+      ansible.builtin.meta: end_play
+      when:
+        - (groups['bastion_join_complete_true'] | default([])) | length > 0
+        - not (bastion_vm.provisioning.recreate_domain | bool)
+        - not (bastion_vm.provisioning.rebuild_disk_from_image | bool)
+
     - name: Wait for the IdM guest SSH port from the bastion network
       ansible.builtin.wait_for:
         host: "{{ idm_vm.network.ipv4_address }}"

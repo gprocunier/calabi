@@ -8,10 +8,18 @@
     idm_role_cloudinit_dir: "{{ idm_runtime_root }}/{{ idm_vm.name }}/cloudinit"
     idm_role_cloudinit_iso: >-
       {{ idm_runtime_root }}/{{ idm_vm.name }}/{{ idm_vm.name }}-cidata.iso
+    idm_role_performance_domain_tier: >-
+      {{ idm_performance_domain_tier | default(idm_vm.performance_domain.tier) }}
+    idm_role_performance_domain_iothreads: >-
+      {{
+        idm_performance_domain_iothreads |
+        default(idm_vm.performance_domain.iothreads)
+      }}
     idm_role_performance_domain_settings: >-
       {{
         lab_host_resource_management.performance_domains[
-          idm_vm.performance_domain.tier
+          idm_performance_domain_tier |
+          default(idm_vm.performance_domain.tier)
         ]
       }}
 
@@ -30,7 +38,7 @@
             'iothreadpin0.cpuset=' ~
             lab_host_resource_management.cpu_pools.host_emulator
           ]
-          if (idm_vm.performance_domain.iothreads | int) > 0
+          if (idm_role_performance_domain_iothreads | int) > 0
           else []
         )
       }}
@@ -61,9 +69,9 @@
         + (
           [
             '--iothreads',
-            'iothreads=' ~ (idm_vm.performance_domain.iothreads | string)
+            'iothreads=' ~ (idm_role_performance_domain_iothreads | string)
           ]
-          if (idm_vm.performance_domain.iothreads | int) > 0
+          if (idm_role_performance_domain_iothreads | int) > 0
           else []
         )
       }}

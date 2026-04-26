@@ -41,11 +41,22 @@
     state: absent
   when: bastion_cleanup_remove_runtime_dir | default(true) | bool
 
-- name: Wipe the bastion block device when requested
+- name: Check whether the bastion block device exists
+  ansible.builtin.stat:
+    path: "{{ bastion_vm.disk_path }}"
+  register: bastion_cleanup_block_device
+  when: bastion_cleanup_wipe_block_device | default(false) | bool
+
+- name: Clear the beginning of the bastion block device when requested
   ansible.builtin.command:
     argv:
-      - wipefs
-      - -a
-      - "{{ bastion_vm.disk_path }}"
-  when: bastion_cleanup_wipe_block_device | default(false) | bool
+      - dd
+      - if=/dev/zero
+      - of={{ bastion_vm.disk_path }}
+      - bs=1M
+      - count=16
+      - conv=fsync
+  when:
+    - bastion_cleanup_wipe_block_device | default(false) | bool
+    - bastion_cleanup_block_device.stat.exists | default(false)
   changed_when: true

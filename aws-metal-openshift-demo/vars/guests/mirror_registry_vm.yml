@@ -17,7 +17,7 @@ mirror_registry_vm:
     cpu_model: host-passthrough
     tpm_enabled: false
   resources:
-    memory_mb: 16384
+    memory_mb: 8192
     vcpus: 4
   performance_domain:
     tier: bronze

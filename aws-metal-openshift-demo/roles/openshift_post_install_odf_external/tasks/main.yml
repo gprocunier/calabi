@@ -1,0 +1,578 @@
+---
+- name: Derive post-install external ODF context
+  ansible.builtin.set_fact:
+    openshift_post_install_odf_external_oc_local_path: >-
+      {{ lab_execution_tools_root }}/{{ mirror_registry_ocp_release }}/bin/oc
+    openshift_post_install_odf_external_kubeconfig_local_path: >-
+      {{ lab_execution_ocp_generated_root }}/auth/kubeconfig
+    openshift_post_install_odf_external_remote_dir: >-
+      /var/tmp/openshift-post-install-odf-external
+    openshift_post_install_odf_external_remote_oc_path: >-
+      /var/tmp/openshift-post-install-odf-external/oc
+    openshift_post_install_odf_external_local_kubeconfig_staged_path: >-
+      {{ lab_execution_ocp_generated_root }}/odf-external-kubeconfig
+    openshift_post_install_odf_external_remote_kubeconfig_path: >-
+      /var/tmp/openshift-post-install-odf-external/kubeconfig
+    openshift_post_install_odf_external_remote_subscription_path: >-
+      /var/tmp/openshift-post-install-odf-external/odf-subscription.yaml
+    openshift_post_install_odf_external_remote_secret_path: >-
+      /var/tmp/openshift-post-install-odf-external/external-cluster-details-secret.yaml
+    openshift_post_install_odf_external_remote_storagecluster_path: >-
+      /var/tmp/openshift-post-install-odf-external/storagecluster-external.yaml
+    openshift_post_install_odf_external_cluster_details_file_content: >-
+      {{
+        lookup('ansible.builtin.file', openshift_post_install_odf_external_cluster_details_file)
+        if (openshift_post_install_odf_external_cluster_details_file | default('') | length > 0)
+        else ''
+      }}
+
+- name: Assert local oc binary exists for external ODF orchestration
+  ansible.builtin.stat:
+    path: "{{ openshift_post_install_odf_external_oc_local_path }}"
+  delegate_to: localhost
+  become: false
+  register: openshift_post_install_odf_external_oc_local_stat
+
+- name: Assert generated kubeconfig exists for external ODF orchestration
+  ansible.builtin.stat:
+    path: "{{ openshift_post_install_odf_external_kubeconfig_local_path }}"
+  delegate_to: localhost
+  become: false
+  register: openshift_post_install_odf_external_kubeconfig_local_stat
+
+- name: Fail when required local external ODF artifacts are missing
+  ansible.builtin.assert:
+    that:
+      - openshift_post_install_odf_external_oc_local_stat.stat.exists
+      - openshift_post_install_odf_external_kubeconfig_local_stat.stat.exists
+    fail_msg: >-
+      External ODF orchestration requires a generated oc binary and kubeconfig
+      on the controller before operator resources can be applied.
+
+- name: Assert exactly one external cluster details source was provided
+  ansible.builtin.assert:
+    that:
+      - >-
+        [
+          openshift_post_install_odf_external_cluster_details | default(''),
+          openshift_post_install_odf_external_cluster_details_b64 | default(''),
+          openshift_post_install_odf_external_cluster_details_file | default('')
+        ] | reject('equalto', '') | list | length == 1
+    fail_msg: >-
+      Provide exactly one of openshift_post_install_odf_external_cluster_details,
+      openshift_post_install_odf_external_cluster_details_b64, or
+      openshift_post_install_odf_external_cluster_details_file.
+
+- name: Derive raw external cluster details content
+  ansible.builtin.set_fact:
+    openshift_post_install_odf_external_cluster_details_raw: >-
+      {{
+        openshift_post_install_odf_external_cluster_details
+        if (openshift_post_install_odf_external_cluster_details | default('') | length > 0)
+        else openshift_post_install_odf_external_cluster_details_file_content
+      }}
+  when: openshift_post_install_odf_external_cluster_details_b64 | default('') | length == 0
+
+- name: Parse external cluster details content
+  ansible.builtin.set_fact:
+    openshift_post_install_odf_external_cluster_details_parsed: >-
+      {{
+        openshift_post_install_odf_external_cluster_details_raw
+        if (
+          openshift_post_install_odf_external_cluster_details_raw is sequence
+          and openshift_post_install_odf_external_cluster_details_raw is not string
+        )
+        else (openshift_post_install_odf_external_cluster_details_raw | from_yaml)
+      }}
+  when: openshift_post_install_odf_external_cluster_details_b64 | default('') | length == 0
+
+- name: Assert external cluster details parse to a list
+  ansible.builtin.assert:
+    that:
+      - openshift_post_install_odf_external_cluster_details_parsed | type_debug == 'list'
+    fail_msg: >-
+      External cluster details must parse to a JSON/YAML list matching the
+      rook-ceph-external-cluster-details payload format.
+  when: openshift_post_install_odf_external_cluster_details_b64 | default('') | length == 0
+
+- name: Derive effective base64 external cluster details payload
+  ansible.builtin.set_fact:
+    openshift_post_install_odf_external_cluster_details_effective_b64: >-
+      {{
+        openshift_post_install_odf_external_cluster_details_b64
+        if (openshift_post_install_odf_external_cluster_details_b64 | default('') | length > 0)
+        else (
+          (
+            openshift_post_install_odf_external_cluster_details_raw
+            if openshift_post_install_odf_external_cluster_details_raw is string
+            else (openshift_post_install_odf_external_cluster_details_parsed | to_json)
+          ) | b64encode
+        )
+      }}
+
+- name: Create remote external ODF workspace
+  ansible.builtin.file:
+    path: "{{ openshift_post_install_odf_external_remote_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Copy pinned oc binary to hypervisor for external ODF orchestration
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_odf_external_oc_local_path }}"
+    dest: "{{ openshift_post_install_odf_external_remote_oc_path }}"
+    mode: "0755"
+
+- name: Stage generated kubeconfig into a bastion-readable external ODF path
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_odf_external_kubeconfig_local_path }}"
+    dest: "{{ openshift_post_install_odf_external_local_kubeconfig_staged_path }}"
+    remote_src: true
+    mode: "0644"
+  delegate_to: localhost
+  become: false
+
+- name: Copy generated kubeconfig to hypervisor for external ODF orchestration
+  ansible.builtin.copy:
+    src: "{{ openshift_post_install_odf_external_local_kubeconfig_staged_path }}"
+    dest: "{{ openshift_post_install_odf_external_remote_kubeconfig_path }}"
+    mode: "0600"
+
+- name: Read current cluster Network configuration for external ODF
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_external_remote_oc_path }}"
+      - get
+      - network.operator.openshift.io
+      - cluster
+      - -o
+      - json
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_external_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_external_network_config
+  changed_when: false
+  when: openshift_post_install_odf_external_configure_network_gateway | bool
+
+- name: Derive current cluster Network gateway settings for external ODF
+  ansible.builtin.set_fact:
+    openshift_post_install_odf_external_network_gateway_current: >-
+      {{
+        (
+          openshift_post_install_odf_external_network_config.stdout
+          | from_json
+        ).spec.defaultNetwork.ovnKubernetesConfig.gatewayConfig
+        | default({})
+      }}
+  when: openshift_post_install_odf_external_configure_network_gateway | bool
+
+- name: Patch OVN gateway settings required by external ODF
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_external_remote_oc_path }}"
+      - patch
+      - network.operator.openshift.io
+      - cluster
+      - --type=merge
+      - -p
+      - >-
+        {{
+          {
+            'spec': {
+              'defaultNetwork': {
+                'ovnKubernetesConfig': {
+                  'gatewayConfig': {
+                    'routingViaHost': openshift_post_install_odf_external_gateway_routing_via_host | bool,
+                    'ipForwarding': openshift_post_install_odf_external_gateway_ip_forwarding
+                  }
+                }
+              }
+            }
+          } | to_json
+        }}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_external_remote_kubeconfig_path }}"
+  changed_when: true
+  when:
+    - openshift_post_install_odf_external_configure_network_gateway | bool
+    - >-
+      (
+        openshift_post_install_odf_external_network_gateway_current.routingViaHost
+        | default(false) | bool
+      ) != (openshift_post_install_odf_external_gateway_routing_via_host | bool)
+      or
+      (
+        openshift_post_install_odf_external_network_gateway_current.ipForwarding
+        | default('')
+      ) != openshift_post_install_odf_external_gateway_ip_forwarding
+
+- name: Wait for cluster Network spec to reflect external ODF gateway settings
+  ansible.builtin.shell: |
+    set -euo pipefail
+    routing="$(
+      "{{ openshift_post_install_odf_external_remote_oc_path }}" get network.operator.openshift.io cluster \
+        -o jsonpath='{.spec.defaultNetwork.ovnKubernetesConfig.gatewayConfig.routingViaHost}'
+    )"
+    forwarding="$(
+      "{{ openshift_post_install_odf_external_remote_oc_path }}" get network.operator.openshift.io cluster \
+        -o jsonpath='{.spec.defaultNetwork.ovnKubernetesConfig.gatewayConfig.ipForwarding}'
+    )"
+    if [[ "${routing}" == "{{ openshift_post_install_odf_external_gateway_routing_via_host | ternary('true', 'false') }}" \
+      && "${forwarding}" == "{{ openshift_post_install_odf_external_gateway_ip_forwarding }}" ]]; then
+      echo true
+    else
+      echo false
+      exit 1
+    fi
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_external_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_external_network_gateway_spec_ready
+  changed_when: false
+  retries: 60
+  delay: 10
+  until: openshift_post_install_odf_external_network_gateway_spec_ready.stdout == 'true'
+  when: openshift_post_install_odf_external_configure_network_gateway | bool
+
+- name: Wait for the Network clusteroperator to reconcile external ODF gateway settings
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_external_remote_oc_path }}"
+      - get
+      - clusteroperator
+      - network
+      - -o
+      - jsonpath={.status.conditions[?(@.type=="Available")].status},{.status.conditions[?(@.type=="Progressing")].status},{.status.conditions[?(@.type=="Degraded")].status}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_external_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_external_network_clusteroperator_health
+  changed_when: false
+  retries: 90
+  delay: 10
+  until: openshift_post_install_odf_external_network_clusteroperator_health.stdout == 'True,False,False'
+  when: openshift_post_install_odf_external_configure_network_gateway | bool
+
+- name: Ensure external ODF storage namespace exists
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_external_remote_oc_path }}"
+      - create
+      - namespace
+      - "{{ openshift_post_install_odf_external_storage_cluster_namespace }}"
+      - --dry-run=client
+      - -o
+      - yaml
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_external_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_external_storage_namespace_manifest
+  changed_when: false
+
+- name: Apply external ODF storage namespace
+  ansible.builtin.shell: |
+    set -o pipefail
+    cat <<'EOF' | "{{ openshift_post_install_odf_external_remote_oc_path }}" apply -f -
+    {{ openshift_post_install_odf_external_storage_namespace_manifest.stdout }}
+    EOF
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_external_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Render external ODF operator subscription manifest
+  ansible.builtin.template:
+    src: odf-subscription.yaml.j2
+    dest: "{{ openshift_post_install_odf_external_remote_subscription_path }}"
+    mode: "0644"
+
+- name: Render external cluster details secret manifest
+  ansible.builtin.template:
+    src: external-cluster-details-secret.yaml.j2
+    dest: "{{ openshift_post_install_odf_external_remote_secret_path }}"
+    mode: "0644"
+
+- name: Render external ODF StorageCluster manifest
+  ansible.builtin.template:
+    src: storagecluster-external.yaml.j2
+    dest: "{{ openshift_post_install_odf_external_remote_storagecluster_path }}"
+    mode: "0644"
+
+- name: Install external ODF operator subscription resources
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_external_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_odf_external_remote_subscription_path }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_external_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Wait for external ODF operator CSV to reach Succeeded
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ openshift_post_install_odf_external_remote_oc_path }}" get subscription \
+      "{{ openshift_post_install_odf_external_subscription_name }}" \
+      -n "{{ openshift_post_install_odf_external_storage_cluster_namespace }}" \
+      -o jsonpath='{.status.installedCSV}' \
+    | xargs -r -I{} "{{ openshift_post_install_odf_external_remote_oc_path }}" get csv {} \
+      -n "{{ openshift_post_install_odf_external_storage_cluster_namespace }}" \
+      -o jsonpath='{.status.phase}'
+  args:
+    executable: /bin/bash
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_external_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_external_csv_phase
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_odf_external_csv_phase.stdout == 'Succeeded'
+
+- name: Wait for external ODF console plugin resources to exist
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_external_remote_oc_path }}"
+      - get
+      - consoleplugin
+      - "{{ item }}"
+      - -o
+      - name
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_external_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_external_console_plugin_checks
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_odf_external_console_plugin_checks.rc == 0
+  loop: "{{ openshift_post_install_odf_external_console_plugins }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Read current Console operator configuration
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_external_remote_oc_path }}"
+      - get
+      - consoles.operator.openshift.io
+      - cluster
+      - -o
+      - json
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_external_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_external_console_operator
+  changed_when: false
+
+- name: Derive merged Console plugin list for external ODF
+  ansible.builtin.set_fact:
+    openshift_post_install_odf_external_console_plugins_merged: >-
+      {{
+        ((openshift_post_install_odf_external_console_operator.stdout | from_json).spec.plugins | default([]))
+        | union(openshift_post_install_odf_external_console_plugins)
+      }}
+
+- name: Enable external ODF console plugins in the Console operator
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_external_remote_oc_path }}"
+      - patch
+      - consoles.operator.openshift.io
+      - cluster
+      - --type=merge
+      - -p
+      - "{{ {'spec': {'plugins': openshift_post_install_odf_external_console_plugins_merged}} | to_json }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_external_remote_kubeconfig_path }}"
+  changed_when: false
+
+- name: Wait for StorageCluster CRD to be available for external ODF
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_external_remote_oc_path }}"
+      - get
+      - crd
+      - storageclusters.ocs.openshift.io
+      - -o
+      - name
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_external_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_external_storagecluster_crd
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: openshift_post_install_odf_external_storagecluster_crd.stdout == 'customresourcedefinition.apiextensions.k8s.io/storageclusters.ocs.openshift.io'
+
+- name: Apply external cluster details secret
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_external_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_odf_external_remote_secret_path }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_external_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Apply external ODF StorageCluster
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_external_remote_oc_path }}"
+      - apply
+      - -f
+      - "{{ openshift_post_install_odf_external_remote_storagecluster_path }}"
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_external_remote_kubeconfig_path }}"
+  changed_when: true
+
+- name: Wait for external ODF StorageCluster to leave error state
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_external_remote_oc_path }}"
+      - get
+      - storagecluster
+      - "{{ openshift_post_install_odf_external_storage_cluster_name }}"
+      - -n
+      - "{{ openshift_post_install_odf_external_storage_cluster_namespace }}"
+      - -o
+      - jsonpath={.status.phase}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_external_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_external_storagecluster_phase
+  changed_when: false
+  retries: 60
+  delay: 15
+  until: openshift_post_install_odf_external_storagecluster_phase.stdout != "Error"
+
+- name: Wait for external ODF StorageCluster to report Available=True
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_external_remote_oc_path }}"
+      - get
+      - storagecluster
+      - "{{ openshift_post_install_odf_external_storage_cluster_name }}"
+      - -n
+      - "{{ openshift_post_install_odf_external_storage_cluster_namespace }}"
+      - -o
+      - jsonpath={.status.conditions[?(@.type=="Available")].status}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_external_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_external_storagecluster_available
+  changed_when: false
+  retries: 60
+  delay: 15
+  until: openshift_post_install_odf_external_storagecluster_available.stdout == 'True'
+
+- name: Wait for external ODF StorageCluster to report Degraded=False
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_external_remote_oc_path }}"
+      - get
+      - storagecluster
+      - "{{ openshift_post_install_odf_external_storage_cluster_name }}"
+      - -n
+      - "{{ openshift_post_install_odf_external_storage_cluster_namespace }}"
+      - -o
+      - jsonpath={.status.conditions[?(@.type=="Degraded")].status}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_external_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_external_storagecluster_degraded
+  changed_when: false
+  retries: 60
+  delay: 15
+  until: openshift_post_install_odf_external_storagecluster_degraded.stdout == 'False'
+
+- name: Wait for external ODF StorageCluster not to be deleting
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_external_remote_oc_path }}"
+      - get
+      - storagecluster
+      - "{{ openshift_post_install_odf_external_storage_cluster_name }}"
+      - -n
+      - "{{ openshift_post_install_odf_external_storage_cluster_namespace }}"
+      - -o
+      - jsonpath={.metadata.deletionTimestamp}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_external_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_external_storagecluster_deleting
+  changed_when: false
+  retries: 20
+  delay: 15
+  until: openshift_post_install_odf_external_storagecluster_deleting.stdout == ''
+
+- name: Wait for external CephCluster to report a connected/ready phase
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_external_remote_oc_path }}"
+      - get
+      - cephcluster
+      - "{{ openshift_post_install_odf_external_cephcluster_name }}"
+      - -n
+      - "{{ openshift_post_install_odf_external_storage_cluster_namespace }}"
+      - -o
+      - jsonpath={.status.phase}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_external_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_external_cephcluster_phase
+  changed_when: false
+  retries: 60
+  delay: 15
+  until: >-
+    openshift_post_install_odf_external_cephcluster_phase.stdout in ['Connected', 'Ready']
+
+- name: Wait for external CephCluster not to be deleting
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_external_remote_oc_path }}"
+      - get
+      - cephcluster
+      - "{{ openshift_post_install_odf_external_cephcluster_name }}"
+      - -n
+      - "{{ openshift_post_install_odf_external_storage_cluster_namespace }}"
+      - -o
+      - jsonpath={.metadata.deletionTimestamp}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_external_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_external_cephcluster_deleting
+  changed_when: false
+  retries: 20
+  delay: 15
+  until: openshift_post_install_odf_external_cephcluster_deleting.stdout == ''
+
+- name: Wait for external ODF-backed storage classes required by later roles
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_external_remote_oc_path }}"
+      - get
+      - storageclass
+      - "{{ item }}"
+      - -o
+      - name
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_external_remote_kubeconfig_path }}"
+  loop: "{{ openshift_post_install_odf_external_required_storage_classes }}"
+  loop_control:
+    label: "{{ item }}"
+  register: openshift_post_install_odf_external_required_storage_class_results
+  changed_when: false
+  retries: 40
+  delay: 15
+  until: openshift_post_install_odf_external_required_storage_class_results is succeeded
+
+- name: Publish external ODF phase summary
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_odf_external_remote_oc_path }}"
+      - get
+      - storagecluster
+      - "{{ openshift_post_install_odf_external_storage_cluster_name }}"
+      - -n
+      - "{{ openshift_post_install_odf_external_storage_cluster_namespace }}"
+      - -o
+      - wide
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_odf_external_remote_kubeconfig_path }}"
+  register: openshift_post_install_odf_external_summary
+  changed_when: false
+
+- name: Show external ODF phase summary
+  ansible.builtin.debug:
+    msg: "{{ openshift_post_install_odf_external_summary.stdout_lines }}"

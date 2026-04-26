@@ -214,6 +214,10 @@
 - name: Refresh facts after the optional update power-cycle
   ansible.builtin.setup:
 
+- name: Install calabi-shell after RHSM registration and guest updates
+  ansible.builtin.include_role:
+    name: calabi_shell
+
 - name: Ensure guest configuration packages are installed
   ansible.builtin.package:
     name: >-

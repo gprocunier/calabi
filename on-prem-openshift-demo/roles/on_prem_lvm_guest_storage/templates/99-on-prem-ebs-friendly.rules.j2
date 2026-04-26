@@ -1,0 +1,5 @@
+# Managed by Ansible from on_prem_lvm_guest_storage.
+# Match whole-disk LVM guest volumes and create stable /dev/ebs/* compatibility links.
+{% for volume in on_prem_lvm_guest_storage_requested_volumes %}
+ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", ENV{DM_VG_NAME}=="{{ on_prem_lvm_volume_group }}", ENV{DM_LV_NAME}=="{{ volume.lv_name }}", SYMLINK+="{{ volume.guest_symlink_effective | regex_replace('^/dev/', '') }}"
+{% endfor %}

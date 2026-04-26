@@ -1,4 +1,5 @@
 ---
 openshift_cluster_runtime_root: /var/lib/aws-metal-openshift-demo
 openshift_cluster_recreate_existing_domains: false
-openshift_cluster_restart_existing_domains_for_boot_media: true
+openshift_cluster_manage_existing_domains_boot_media: false
+openshift_cluster_restart_existing_domains_for_boot_media: false

@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+device="{{ lab_host_memory_oversubscription_effective_settings.zram.device_name }}"
+sysfs="/sys/block/${device}"
+mode="{{ lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.mode }}"
+idle_age_seconds="{{ lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.idle_age_seconds | int }}"
+per_run_budget_mib="{{ lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.per_run_budget_mib | int }}"
+
+if [[ ! -e "${sysfs}/backing_dev" ]]; then
+  echo "zram backing_dev is unavailable for ${device}" >&2
+  exit 1
+fi
+
+backing_dev="$(<"${sysfs}/backing_dev")"
+if [[ "${backing_dev}" == "none" ]]; then
+  echo "zram backing_dev is not configured for ${device}" >&2
+  exit 1
+fi
+
+if [[ -e "${sysfs}/writeback_limit_enable" ]]; then
+  if (( per_run_budget_mib > 0 )); then
+    echo 1 > "${sysfs}/writeback_limit_enable"
+    echo $(( per_run_budget_mib * 1024 * 1024 / 4096 )) > "${sysfs}/writeback_limit"
+  else
+    echo 0 > "${sysfs}/writeback_limit_enable"
+  fi
+fi
+
+case "${mode}" in
+  idle|huge_idle)
+    echo "${idle_age_seconds}" > "${sysfs}/idle"
+    ;;
+  incompressible|huge)
+    ;;
+  *)
+    echo "unsupported zram writeback mode: ${mode}" >&2
+    exit 1
+    ;;
+esac
+
+echo "${mode}" > "${sysfs}/writeback"

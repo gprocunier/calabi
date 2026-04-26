@@ -126,6 +126,8 @@
       - >-
         mirror_registry_content.mirror_mode in
         ['direct', 'portable', 'import', 'advanced']
+      - (mirror_registry_content.parallel_images | int) > 0
+      - (mirror_registry_content.parallel_layers | int) > 0
       - mirror_registry_guest_registry_endpoint | length > 0
       - mirror_registry_content.destination.namespace | length > 0
       - mirror_registry_content.auth.control_node_pull_secret_file | length > 0
@@ -239,11 +241,33 @@
   changed_when: true
 
 - name: Update all packages on the mirror registry guest
-  ansible.builtin.dnf:
-    name: "*"
-    state: latest
-    update_only: true
-  register: mirror_registry_guest_package_update
+  block:
+    - name: Update all packages on the mirror registry guest on the first attempt
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+        update_only: true
+      register: mirror_registry_guest_package_update
+  rescue:
+    - name: Clear stale DNF state after a failed package update
+      ansible.builtin.file:
+        path: /var/cache/dnf
+        state: absent
+
+    - name: Recreate the DNF cache directory after clearing stale state
+      ansible.builtin.file:
+        path: /var/cache/dnf
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Retry the mirror registry guest package update after clearing stale DNF state
+      ansible.builtin.dnf:
+        name: "*"
+        state: latest
+        update_only: true
+      register: mirror_registry_guest_package_update
 
 - name: Power-cycle the mirror registry domain after guest updates so persistent XML changes take effect # noqa no-handler
   when: mirror_registry_guest_package_update.changed
@@ -333,6 +357,10 @@
 
 - name: Refresh facts after the optional update reboot
   ansible.builtin.setup:
+
+- name: Install calabi-shell after RHSM registration and guest updates
+  ansible.builtin.include_role:
+    name: calabi_shell
 
 - name: Ensure mirror registry client packages are installed
   ansible.builtin.package:
@@ -1503,7 +1531,7 @@
   when:
     - mirror_registry_content.enabled | bool
     - mirror_registry_guest_execute_mirror | bool
-    - mirror_registry_guest_effective_workflow in ['direct', 'm2d']
+    - mirror_registry_guest_effective_workflow in ['direct', 'm2d', 'd2m']
     - mirror_registry_guest_pull_secret_stat.stat.exists
   changed_when: true
 
@@ -1516,6 +1544,36 @@
       file://{{ mirror_registry_content.archive.root }}
     mirror_registry_guest_oc_mirror_from: >-
       file://{{ mirror_registry_content.archive.from }}
+  when: mirror_registry_content.enabled | bool
+
+- name: Select an available local executor port for oc-mirror
+  ansible.builtin.shell: |
+    set -euo pipefail
+    python3 - <<'PY'
+    import socket
+
+    for port in range(55000, 55101):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+            print(port)
+            break
+    else:
+        raise SystemExit("no free oc-mirror executor port found in 55000-55100")
+    PY
+  args:
+    executable: /bin/bash
+  register: mirror_registry_guest_oc_mirror_port_select
+  changed_when: false
+  when: mirror_registry_content.enabled | bool
+
+- name: Record the selected oc-mirror local executor port
+  ansible.builtin.set_fact:
+    mirror_registry_guest_oc_mirror_port: >-
+      {{ (mirror_registry_guest_oc_mirror_port_select.stdout | trim) | int }}
   when: mirror_registry_content.enabled | bool
 
 - name: Select the oc-mirror authfile for the requested workflow
@@ -1535,6 +1593,12 @@
         [
           mirror_registry_service.oc_mirror_binary,
           '--v2',
+          '--port',
+          mirror_registry_guest_oc_mirror_port | string,
+          '--parallel-images',
+          mirror_registry_content.parallel_images | string,
+          '--parallel-layers',
+          mirror_registry_content.parallel_layers | string,
           '--config',
           mirror_registry_content.workspace.config_file
         ] +
@@ -1574,6 +1638,12 @@
         [
           mirror_registry_service.oc_mirror_binary,
           '--v2',
+          '--port',
+          mirror_registry_guest_oc_mirror_port | string,
+          '--parallel-images',
+          mirror_registry_content.parallel_images | string,
+          '--parallel-layers',
+          mirror_registry_content.parallel_layers | string,
           '--config',
           mirror_registry_content.workspace.config_file
         ] +
@@ -1715,10 +1785,16 @@
         [
           mirror_registry_service.oc_mirror_binary,
           '--v2',
+          '--port',
+          mirror_registry_guest_oc_mirror_port | string,
+          '--parallel-images',
+          mirror_registry_content.parallel_images | string,
+          '--parallel-layers',
+          mirror_registry_content.parallel_layers | string,
           '--config',
           mirror_registry_content.workspace.config_file,
           '--authfile',
-          mirror_registry_content.auth.local_registry_auth_file,
+          mirror_registry_content.auth.merged_auth_file,
           '--from',
           mirror_registry_guest_oc_mirror_from,
           mirror_registry_guest_oc_mirror_destination

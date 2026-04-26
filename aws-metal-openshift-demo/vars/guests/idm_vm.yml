@@ -16,7 +16,7 @@ idm_vm:
     tpm_enabled: false
   resources:
     memory_mb: 8192
-    vcpus: 2
+    vcpus: 4
   performance_domain:
     tier: silver
     iothreads: 0
@@ -254,13 +254,6 @@ idm_server:
       password: "{{ lab_default_password | default('') }}"
       groups:
         - access-developer
-    - name: aapadmin
-      first_name: AAP
-      last_name: Admin
-      shell: /bin/bash
-      password: "{{ lab_default_password | default('') }}"
-      groups:
-        - access-aap-admin
   sudo_policy:
     enabled: true
     rule_name: admins-nopasswd-all

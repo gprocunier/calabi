@@ -44,6 +44,17 @@ Current defaults:
 | zram | `size` | `16G` | maximum uncompressed capacity of the device |
 | zram | `compression_algorithm` | `zstd` | best ratio-to-speed tradeoff on modern kernels |
 | zram | `swap_priority` | `100` | ensures zram is preferred over any physical swap |
+| zram.writeback | `enabled` | `false` | optional advanced override for a dedicated writeback device |
+| zram.writeback | `manage_lvm` | `false` | create and manage a dedicated LV for writeback |
+| zram.writeback | `volume_group` | `calabi_lab_vg` | VG used when `manage_lvm` is enabled |
+| zram.writeback | `logical_volume` | `zram-writeback` | LV name used when `manage_lvm` is enabled |
+| zram.writeback | `size` | `32G` | dedicated writeback LV size for the managed-LVM path |
+| zram.writeback | `backing_device` | `""` | dedicated block device used only when writeback is enabled |
+| zram.writeback.policy | `enabled` | `false` | run periodic writeback from a systemd timer |
+| zram.writeback.policy | `interval` | `30m` | timer cadence for each writeback pass |
+| zram.writeback.policy | `mode` | `incompressible` | conservative default writeback mode |
+| zram.writeback.policy | `idle_age_seconds` | `21600` | age threshold only for `idle` or `huge_idle` modes |
+| zram.writeback.policy | `per_run_budget_mib` | `256` | writeback budget applied before each timer run |
 | THP | `mode` | `madvise` | application-controlled huge page allocation |
 | THP | `defrag_mode` | `madvise` | application-controlled compaction |
 | KSM | `run` | `1` | scanner active |
@@ -66,8 +77,10 @@ The service lifecycle for zram:
 
 1. tear down any existing zram device (`swapoff`, `zramctl --reset`, `modprobe -r`)
 2. load the zram module with `num_devices=1`
-3. configure the device: `zramctl /dev/zram0 --algorithm zstd --size 16G`
-4. format and activate: `mkswap`, `swapon --priority 100 --discard`
+3. configure the compression algorithm
+4. optionally attach a dedicated writeback backing device before initialization
+5. set the zram disk size
+6. format and activate: `mkswap`, `swapon --priority 100 --discard`
 
 THP and KSM are applied in a follow-on `ExecStart` that writes directly to
 `/sys/kernel/mm/transparent_hugepage/` and `/sys/kernel/mm/ksm/`.
@@ -99,6 +112,117 @@ The swap priority of `100` ensures zram is always preferred over any physical
 swap device. The `--discard` flag enables TRIM so that freed pages are
 immediately released back to the host rather than lingering as stale compressed
 blocks.
+
+An optional advanced override can also attach a dedicated block device through
+`/sys/block/zram0/backing_dev` before zram is initialized. This is disabled by
+default and intended for hosts that deliberately repurpose a device for zram
+writeback experimentation or cold-page pressure relief.
+
+For on-prem hosts, the override can manage that device as a dedicated logical
+volume in `calabi_lab_vg`. The shipped managed-LVM defaults use a `32G`
+`zram-writeback` LV, which is a reasonable starting point for the current
+~128 GiB host class because it adds a modest cold-page spill tier without
+pretending to create planned RAM capacity.
+
+Applicability:
+
+- The zram writeback capability itself is **not** on-prem-only. The role can
+  attach any dedicated block device when `manage_lvm: false` and
+  `backing_device` is set explicitly.
+- The managed-LVM convenience path is effectively on-prem-specific in this repo
+  because it assumes the local `calabi_lab_vg` layout used by the on-prem
+  deployment flow.
+- The repo currently ships a ready-to-use on-prem example override for this
+  capability. It does **not** ship an AWS-target override or AWS-specific
+  backing-device provisioning for writeback.
+
+> [!WARNING]
+> Enabling a writeback backing device does not turn disk into planned memory
+> capacity. It is an emergency pressure-relief tier and should not be counted
+> in steady-state cluster sizing.
+
+> [!NOTE]
+> The current role only attaches the backing device when the override is
+> enabled. Periodic writeback is a separate opt-in policy block and remains off
+> by default.
+
+> [!WARNING]
+> The writeback backing device must be dedicated. Do not point the override at
+> a mounted filesystem or an active swap device. The role explicitly fails if
+> the configured device is already mounted or active as swap.
+
+> [!WARNING]
+> The managed-LVM path creates the writeback LV when requested, but it does
+> **not** resize an existing writeback LV in place. If the LV already exists at
+> a different size, the role fails fast rather than mutating storage
+> automatically.
+
+Example override shape:
+
+```yaml
+lab_host_memory_oversubscription_settings:
+  zram:
+    writeback:
+      enabled: true
+      manage_lvm: true
+      volume_group: calabi_lab_vg
+      logical_volume: zram-writeback
+      size: 32G
+      policy:
+        enabled: true
+        interval: 30m
+        mode: incompressible
+        per_run_budget_mib: 256
+```
+
+If you prefer to point at an already-provisioned block device instead, leave
+`manage_lvm: false` and set `backing_device` directly.
+
+The managed LV or explicit device must be dedicated to zram writeback. Do not
+point the override at a mounted filesystem or an active swap device.
+
+For the current on-prem deployment, the shipped example is:
+
+- `on-prem-openshift-demo/inventory/overrides/core-services-ad-128g.yml.example`
+
+## Periodic Writeback Policy
+
+When `zram.writeback.policy.enabled` is true, the role installs:
+
+- `calabi-zram-writeback-policy.service`
+- `calabi-zram-writeback-policy.timer`
+
+The timer triggers a small writeback pass at the configured interval. Before
+each run, the helper script applies the configured per-run budget through
+`writeback_limit` so the host does not dump an unlimited amount of data to the
+backing device in one burst.
+
+Recommended starting point for the current ~128 GiB host class:
+
+- mode: `incompressible`
+- interval: `30m`
+- per-run budget: `256 MiB`
+
+That mode is intentional. The current kernel on the on-prem host exposes zram
+writeback support, but age-based idle tracking may not be available on every
+target kernel. The role therefore only allows `idle` or `huge_idle` modes when
+`CONFIG_ZRAM_TRACK_ENTRY_ACTIME=y` is present on the running kernel.
+
+Treat this timer as pressure relief, not planned memory inventory.
+
+Additional caveats:
+
+- The timer only becomes useful after a backing device is attached. Enabling
+  the policy block without a working writeback device is not a valid
+  configuration.
+- The current default mode, `incompressible`, is intentionally conservative.
+  It avoids broad idle-page sweeps on kernels that lack age-based tracking.
+- The timer applies a per-run `writeback_limit` budget to reduce the chance of
+  sudden I/O bursts, but heavy writeback can still add latency to the backing
+  storage tier under memory pressure.
+- On hosts that still keep a separate physical swap device enabled, zram
+  writeback does not remove that device from the reclaim path automatically.
+  Disk-backed swap remains a separate policy decision.
 
 ## Transparent Huge Pages
 
@@ -201,6 +325,10 @@ systemctl is-active calabi-host-memory-oversubscription.service
 # zram device
 zramctl
 swapon --show
+cat /sys/block/zram0/backing_dev
+systemctl is-enabled calabi-zram-writeback-policy.timer
+systemctl is-active calabi-zram-writeback-policy.timer
+cat /sys/block/zram0/bd_stat
 
 # THP mode
 cat /sys/kernel/mm/transparent_hugepage/enabled
@@ -222,6 +350,8 @@ Expected current behavior:
 - service is enabled and active
 - `zramctl` shows `/dev/zram0` with `zstd` algorithm and `16G` disk size
 - `swapon` shows `/dev/zram0` at priority `100`
+- `backing_dev` matches the configured override when writeback is enabled
+- the writeback timer is enabled and active when policy is enabled
 - THP enabled shows `[madvise]` (bracketed = active selection)
 - THP defrag shows `[madvise]`
 - KSM `run` is `1`

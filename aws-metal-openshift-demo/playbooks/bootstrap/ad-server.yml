@@ -1,4 +1,163 @@
 ---
+- name: Probe whether an existing AD guest is already fully converged
+  hosts: aws_metal
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+
+  pre_tasks:
+    - name: Skip AD convergence probe when AD is disabled
+      ansible.builtin.meta: end_play
+      when: not (lab_build_ad_server | bool)
+
+  tasks:
+    - name: Check whether the AD libvirt domain already exists
+      ansible.builtin.command:
+        argv:
+          - virsh
+          - dominfo
+          - "{{ ad_vm.name }}.{{ ad_vm.domain }}"
+      register: ad_server_probe_domain_info
+      changed_when: false
+      failed_when: false
+
+    - name: Wait briefly for WinRM on an existing AD guest
+      ansible.builtin.wait_for:
+        host: "{{ ad_vm.network.ipv4_address }}"
+        port: "{{ ad_server_winrm_port | default(5985) }}"
+        timeout: 20
+        sleep: 5
+      register: ad_server_probe_winrm
+      changed_when: false
+      failed_when: false
+      when:
+        - ad_server_probe_domain_info.rc == 0
+        - not (ad_vm.provisioning.recreate_domain | bool)
+        - not (ad_vm.provisioning.rebuild_disk | bool)
+
+    - name: Register the existing AD guest for completion probing
+      ansible.builtin.add_host:
+        name: ad_server_probe
+        groups:
+          - ad_server_probe
+        ansible_host: "{{ ad_vm.network.ipv4_address }}"
+        ansible_user: "{{ ad_vm.access.admin_user }}"
+        ansible_password: "{{ ad_vm.access.admin_password }}"
+        ansible_connection: ansible.builtin.winrm
+        ansible_port: 5985
+        ansible_winrm_transport: basic
+        ansible_winrm_server_cert_validation: ignore
+      when:
+        - ad_server_probe_domain_info.rc == 0
+        - (ad_server_probe_winrm.state | default('')) == 'started'
+        - not (ad_vm.provisioning.recreate_domain | bool)
+        - not (ad_vm.provisioning.rebuild_disk | bool)
+
+- name: Check whether the existing AD guest is already fully configured
+  hosts: ad_server_probe
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/ad_server.yml
+    - ../../vars/guests/ad_vm.yml
+
+  tasks:
+    - name: Wait for authenticated WinRM connectivity to the existing AD guest
+      ansible.builtin.wait_for_connection:
+        timeout: 60
+        sleep: 10
+        connect_timeout: 10
+
+    - name: Verify WinRM connectivity to the existing AD guest
+      ansible.windows.win_ping:
+
+    - name: Probe the AD guest completion state
+      ansible.windows.win_powershell:
+        script: |
+          $svc = Get-Service | Where-Object {
+            $_.Name -in @('QEMU-GA', 'qemu-ga') -or
+            $_.DisplayName -like '*QEMU*Guest*Agent*'
+          } | Select-Object -First 1
+
+          $dcReady = $false
+          $domainRoot = ''
+          try {
+            $domain = Get-ADDomain -ErrorAction Stop
+            $domainRoot = $domain.DNSRoot
+            Get-ADDomainController -ErrorAction Stop | Out-Null
+            $dcReady = $true
+          } catch {
+          }
+
+          $caReady = $false
+          $null = certutil -ping
+          if ($LASTEXITCODE -eq 0) {
+            $caReady = $true
+          }
+
+          $requiredGroups = @(
+          {% for group in ad_server.identity_groups %}
+            '{{ group }}'{{ ',' if not loop.last else '' }}
+          {% endfor %}
+          )
+          $missingGroups = @(
+            $requiredGroups | Where-Object {
+              -not (Get-ADGroup -Filter "Name -eq '$_'" -ErrorAction SilentlyContinue)
+            }
+          )
+
+          $requiredUsers = @(
+          {% for user in ad_server.identity_users %}
+            '{{ user.name }}'{{ ',' if not loop.last else '' }}
+          {% endfor %}
+          )
+          $missingUsers = @(
+            $requiredUsers | Where-Object {
+              -not (Get-ADUser -Filter "SamAccountName -eq '$_'" -ErrorAction SilentlyContinue)
+            }
+          )
+
+          $workshopZone = Get-DnsServerZone -Name 'workshop.lan' -ErrorAction SilentlyContinue
+          $system = Get-CimInstance Win32_ComputerSystem
+          $isDomainController = ([int]$system.DomainRole -ge 4)
+          $qemuReady = [bool]$svc
+
+          [pscustomobject]@{
+            completed = (
+              $isDomainController -and
+              $dcReady -and
+              $domainRoot -eq '{{ ad_server.domain_name }}' -and
+              $caReady -and
+              $qemuReady -and
+              [bool]$workshopZone -and
+              $missingGroups.Count -eq 0 -and
+              $missingUsers.Count -eq 0
+            )
+            is_domain_controller = $isDomainController
+            domain_root = $domainRoot
+            ca_ready = $caReady
+            qemu_ready = $qemuReady
+            workshop_zone = [bool]$workshopZone
+            missing_groups = @($missingGroups)
+            missing_users = @($missingUsers)
+          } | ConvertTo-Json -Compress
+      register: ad_server_probe_completion
+      changed_when: false
+
+    - name: Record whether the existing AD guest is already converged
+      ansible.builtin.group_by:
+        key: >-
+          ad_server_bootstrap_complete_{{
+            (
+              (ad_server_probe_completion.output | first) | from_json
+            ).completed | ternary('true', 'false')
+          }}
+
+    - name: Publish the AD guest completion probe result
+      ansible.builtin.debug:
+        msg: "{{ (ad_server_probe_completion.output | first) | from_json }}"
+
 - name: Build the AD/ADCS virtual machine for the Calabi lab
   hosts: aws_metal
   become: true
@@ -15,6 +174,13 @@
     - name: Skip AD server bootstrap when disabled
       ansible.builtin.meta: end_play
       when: not (lab_build_ad_server | bool)
+
+    - name: Skip AD VM build when the existing guest is already fully configured
+      ansible.builtin.meta: end_play
+      when:
+        - (groups['ad_server_bootstrap_complete_true'] | default([])) | length > 0
+        - not (ad_vm.provisioning.recreate_domain | bool)
+        - not (ad_vm.provisioning.rebuild_disk | bool)
 
   roles:
     - role: ad_server
@@ -46,6 +212,13 @@
     - name: Skip AD server bootstrap when disabled
       ansible.builtin.meta: end_play
       when: not (lab_build_ad_server | bool)
+
+    - name: Skip AD unattended install wait when the guest is already fully configured
+      ansible.builtin.meta: end_play
+      when:
+        - (groups['ad_server_bootstrap_complete_true'] | default([])) | length > 0
+        - not (ad_vm.provisioning.recreate_domain | bool)
+        - not (ad_vm.provisioning.rebuild_disk | bool)
 
     - name: Skip AD guest configuration when running the boot-only installer profile
       ansible.builtin.meta: end_play
@@ -79,6 +252,13 @@
       ansible.builtin.meta: end_play
       when: not (lab_build_ad_server | bool)
 
+    - name: Skip AD guest configuration when the guest is already fully configured
+      ansible.builtin.meta: end_play
+      when:
+        - (groups['ad_server_bootstrap_complete_true'] | default([])) | length > 0
+        - not (ad_vm.provisioning.recreate_domain | bool)
+        - not (ad_vm.provisioning.rebuild_disk | bool)
+
     - name: Skip AD guest configuration when running the boot-only installer profile
       ansible.builtin.meta: end_play
       when: ad_server_install_profile | default('full') in ['vanilla', 'minimal', 'boot-only']
@@ -108,17 +288,36 @@
       ansible.builtin.meta: end_play
       when: not (lab_build_ad_server | bool)
 
+    - name: Skip AD installation media cleanup when the guest is already fully configured
+      ansible.builtin.meta: end_play
+      when:
+        - (groups['ad_server_bootstrap_complete_true'] | default([])) | length > 0
+        - not (ad_vm.provisioning.recreate_domain | bool)
+        - not (ad_vm.provisioning.rebuild_disk | bool)
+
     - name: Skip AD installation media cleanup when running the boot-only installer profile
       ansible.builtin.meta: end_play
       when: ad_server_install_profile | default('full') in ['vanilla', 'minimal', 'boot-only']
 
-  roles:
-    - role: libvirt_cdrom_cleanup
+  tasks:
+    - name: Detach staged AD installation media and restore disk boot order
+      ansible.builtin.include_role:
+        name: libvirt_cdrom_cleanup
       vars:
         libvirt_cdrom_cleanup_domain: >-
           {{ ad_vm.name }}.{{ ad_vm.domain }}
-        libvirt_cdrom_cleanup_media_path: >-
-          /var/lib/aws-metal-openshift-demo/{{ ad_vm.name }}/{{
-          ad_vm.name }}-autounattend.iso
+        libvirt_cdrom_cleanup_media_path: "{{ item }}"
         libvirt_cdrom_cleanup_remove_media_file: true
         libvirt_cdrom_cleanup_reset_boot_to_hd_only: true
+      loop:
+        - >-
+          /var/lib/aws-metal-openshift-demo/{{ ad_vm.name }}/{{
+          ad_vm.install_iso | basename }}
+        - >-
+          /var/lib/aws-metal-openshift-demo/{{ ad_vm.name }}/{{
+          ad_vm.virtio_iso | basename }}
+        - >-
+          /var/lib/aws-metal-openshift-demo/{{ ad_vm.name }}/{{
+          ad_vm.name }}-autounattend.iso
+      loop_control:
+        label: "{{ item }}"

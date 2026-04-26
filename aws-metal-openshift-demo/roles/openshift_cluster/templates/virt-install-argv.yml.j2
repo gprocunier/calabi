@@ -1,0 +1,75 @@
+{% set performance_domain = openshift_cluster_node.performance_domain | default(openshift_cluster_vm_defaults.performance_domain) -%}
+{% set tier_settings = lab_host_resource_management.performance_domains[performance_domain.tier] -%}
+{% set root_disk = openshift_cluster_node.disks.root -%}
+{% set root_disk_defaults = openshift_cluster_vm_defaults.disks.root -%}
+{% set root_disk_arg -%}
+path={{ root_disk.path }},format=raw,bus={{ root_disk.bus | default(root_disk_defaults.bus) }},cache={{ root_disk.cache | default(root_disk_defaults.cache) }},io={{ root_disk.io | default(root_disk_defaults.io) }},discard={{ root_disk.discard | default(root_disk_defaults.discard) }},rotation_rate={{ root_disk.rotation_rate | default(root_disk_defaults.rotation_rate) }}{% if root_disk.serial | default(root_disk_defaults.serial) | length > 0 %},serial={{ root_disk.serial | default(root_disk_defaults.serial) }}{% endif %}
+{%- endset %}
+{% set cputune_arg -%}
+shares={{ tier_settings.cpu_shares }},emulatorpin.cpuset={{ lab_host_resource_management.cpu_pools.host_emulator }}{% for vcpu in range(openshift_cluster_node.resources.vcpus | int) %},vcpupin{{ vcpu }}.vcpu={{ vcpu }},vcpupin{{ vcpu }}.cpuset={{ lab_host_resource_management.cpu_pools.guest_domain }}{% endfor %}{% if (performance_domain.iothreads | default(tier_settings.default_iothreads) | int) > 0 %},iothreadpin0.iothread=1,iothreadpin0.cpuset={{ lab_host_resource_management.cpu_pools.host_emulator }}{% endif %}
+{%- endset %}
+- virt-install
+- --name
+- {{ (openshift_cluster_node.name ~ '.' ~ (openshift_cluster_node.domain | default(openshift_cluster_effective_domain))) | to_json }}
+- --osinfo
+- {{ (openshift_cluster_node.osinfo | default(openshift_cluster_vm_defaults.osinfo)) | to_json }}
+- --boot
+- {{ (openshift_cluster_node.boot.firmware | default(openshift_cluster_vm_defaults.boot.firmware)) | to_json }}
+- --machine
+- {{ (openshift_cluster_node.boot.machine | default(openshift_cluster_vm_defaults.boot.machine)) | to_json }}
+- --memory
+- {{ (openshift_cluster_node.resources.memory_mb | string) | to_json }}
+- --vcpus
+- {{ (openshift_cluster_node.resources.vcpus | string) | to_json }}
+- --cpu
+- {{ (openshift_cluster_node.boot.cpu_model | default(openshift_cluster_vm_defaults.boot.cpu_model)) | to_json }}
+- --controller
+- type=scsi,model=virtio-scsi
+- --disk
+- {{ root_disk_arg | trim | to_json }}
+{% for disk in openshift_cluster_node.disks.additional | default([]) %}
+{% set disk_arg -%}
+path={{ disk.path }},format=raw,bus={{ disk.bus | default(root_disk_defaults.bus) }},cache={{ disk.cache | default(root_disk_defaults.cache) }},io={{ disk.io | default(root_disk_defaults.io) }},discard={{ disk.discard | default(root_disk_defaults.discard) }},rotation_rate={{ disk.rotation_rate | default(root_disk_defaults.rotation_rate) }}{% if disk.serial is defined %},serial={{ disk.serial }}{% endif %}
+{%- endset %}
+- --disk
+- {{ disk_arg | trim | to_json }}
+{% endfor %}
+{% if openshift_cluster_node.access.attach_agent_boot_media | default(openshift_cluster_vm_defaults.access.attach_agent_boot_media) | bool %}
+- --disk
+- {{ ('path=' ~ (openshift_cluster_node.access.agent_boot_media_path | default(openshift_cluster_vm_defaults.access.agent_boot_media_path)) ~ ',device=cdrom,bus=scsi') | to_json }}
+{% endif %}
+- --network
+- {{ ('network=' ~ (openshift_cluster_node.network.libvirt_network | default(openshift_cluster_vm_defaults.network.libvirt_network)) ~ ',portgroup=' ~ (openshift_cluster_node.network.libvirt_portgroup | default(openshift_cluster_vm_defaults.network.libvirt_portgroup)) ~ ',model=virtio,mac=' ~ openshift_cluster_node.mac_address) | to_json }}
+{% for interface in openshift_cluster_node.network.additional_interfaces | default([]) %}
+{% set interface_arg -%}
+network={{ interface.libvirt_network }},portgroup={{ interface.libvirt_portgroup }},model={{ interface.model | default('virtio') }},mac={{ interface.mac_address }}{% if interface.mtu | default('') | string | length > 0 %},mtu.size={{ interface.mtu }}{% endif %}
+{%- endset %}
+- --network
+- {{ interface_arg | trim | to_json }}
+{% endfor %}
+- --rng
+- builtin
+- --import
+{% if (openshift_cluster_node.console.graphics_type | default(openshift_cluster_vm_defaults.console.graphics_type)) == 'vnc' %}
+- --graphics
+- {{ ('vnc,listen=' ~ (openshift_cluster_node.console.vnc_listen | default(openshift_cluster_vm_defaults.console.vnc_listen))) | to_json }}
+{% else %}
+- --graphics
+- none
+{% endif %}
+- --resource
+- {{ ('partition=' ~ tier_settings.partition) | to_json }}
+- --cputune
+- {{ cputune_arg | trim | to_json }}
+{% if (performance_domain.iothreads | default(tier_settings.default_iothreads) | int) > 0 %}
+- --iothreads
+- {{ ('iothreads=' ~ (performance_domain.iothreads | default(tier_settings.default_iothreads))) | to_json }}
+{% endif %}
+- --console
+- pty,target_type=serial
+- --autostart
+- --noautoconsole
+{% if not (openshift_cluster_node.boot.tpm_enabled | default(openshift_cluster_vm_defaults.boot.tpm_enabled) | bool) %}
+- --tpm
+- none
+{% endif %}

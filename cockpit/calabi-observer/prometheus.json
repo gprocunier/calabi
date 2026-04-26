@@ -1,0 +1,6 @@
+{
+  "firewall": "closed",
+  "interval_seconds": 5,
+  "listen_address": "127.0.0.1:9910",
+  "web_config_enabled": false
+}

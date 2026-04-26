@@ -1,0 +1,560 @@
+---
+# Example full override for the current ~128 GiB on-prem host class:
+# AD + bastion + IdM + mirror-registry + a 3-master/3-worker OpenShift
+# cluster with a dedicated jumbo-frame external Ceph storage NIC.
+
+on_prem_lvm_volume_group: calabi_lab_vg
+on_prem_lvm_seed_enabled: true
+on_prem_lvm_seed_device: /dev/nvme0n1
+on_prem_lvm_seed_force: true
+
+guest_volumes:
+  - name: ad-01
+    size_gib: 60
+    guest_symlink: /dev/ebs/ad-01
+  - name: idm-01
+    size_gib: 120
+    guest_symlink: /dev/ebs/idm-01
+  - name: bastion-01
+    size_gib: 120
+    guest_symlink: /dev/ebs/bastion-01
+  - name: mirror-registry
+    size_gib: 400
+    guest_symlink: /dev/ebs/mirror-registry
+  - name: ocp-master-01
+    size_gib: 250
+    guest_symlink: /dev/ebs/ocp-master-01
+  - name: ocp-master-02
+    size_gib: 250
+    guest_symlink: /dev/ebs/ocp-master-02
+  - name: ocp-master-03
+    size_gib: 250
+    guest_symlink: /dev/ebs/ocp-master-03
+  - name: ocp-worker-01
+    size_gib: 250
+    guest_symlink: /dev/ebs/ocp-worker-01
+  - name: ocp-worker-02
+    size_gib: 250
+    guest_symlink: /dev/ebs/ocp-worker-02
+  - name: ocp-worker-03
+    size_gib: 250
+    guest_symlink: /dev/ebs/ocp-worker-03
+
+lab_configure_ad_trust: true
+lab_build_ad_server: true
+mirror_registry_execute_mirror_requested: true
+mirror_registry_oc_mirror_parallel_images: 16
+mirror_registry_oc_mirror_parallel_layers: 12
+
+# Optional external ODF overrides. Set these when the imported external Ceph
+# environment uses names other than the default external assumptions.
+#
+# StorageCluster defaults:
+#   name: ocs-external-storagecluster
+#   namespace: openshift-storage
+#   cephcluster: <storagecluster-name>-cephcluster
+#
+# Storage class defaults:
+#   default block class: ceph-rbd
+#   required classes checked by day-2 health: [ceph-rbd]
+#
+# openshift_post_install_odf_storage_cluster_name: ocs-external-storagecluster
+# openshift_post_install_odf_storage_cluster_namespace: openshift-storage
+# openshift_post_install_odf_cephcluster_name: ocs-external-storagecluster-cephcluster
+# openshift_post_install_odf_default_storage_class_rbd: ceph-rbd
+# openshift_post_install_odf_required_storage_classes:
+#   - ceph-rbd
+#
+# Provide exactly one external cluster details source:
+# openshift_post_install_odf_external_cluster_details_file: /absolute/path/to/external-cluster-details.json
+# openshift_post_install_odf_external_cluster_details_b64: <base64-encoded-external-cluster-details>
+
+# Keep auth, staging, and registry services out of the worker-facing bronze
+# band. These override hooks avoid replacing the full guest VM dictionaries.
+ad_server_performance_domain_tier: silver
+bastion_performance_domain_tier: silver
+idm_performance_domain_tier: silver
+mirror_registry_performance_domain_tier: silver
+
+lab_extra_ovs_bridges:
+  - name: ext-storage
+    mtu: 9000
+    uplink_interface: enp3s0f0np0
+    retired_uplink_interfaces:
+      - eno1np0
+    uplink_trunks:
+      - 11
+
+lab_extra_libvirt_networks:
+  - name: ext-storage
+    bridge_name: ext-storage
+    xml_path: /etc/libvirt/ext-storage.xml
+    portgroups:
+      - name: ext-storage-vlan11
+        default: true
+        vlan_id: 11
+
+openshift_cluster_nodes:
+  - name: ocp-master-01
+    role: control-plane
+    mac_address: "52:54:00:20:00:10"
+    resources:
+      vcpus: 8
+      memory_mb: 16384
+    performance_domain:
+      tier: gold
+      iothreads: 0
+    network:
+      additional_interfaces:
+        - name: nic1
+          libvirt_network: ext-storage
+          libvirt_portgroup: ext-storage-vlan11
+          mac_address: "52:54:00:21:00:10"
+          mtu: 9000
+    disks:
+      root:
+        path: /dev/ebs/ocp-master-01
+        serial: ocpmaster01root
+  - name: ocp-master-02
+    role: control-plane
+    mac_address: "52:54:00:20:00:11"
+    resources:
+      vcpus: 8
+      memory_mb: 16384
+    performance_domain:
+      tier: gold
+      iothreads: 0
+    network:
+      additional_interfaces:
+        - name: nic1
+          libvirt_network: ext-storage
+          libvirt_portgroup: ext-storage-vlan11
+          mac_address: "52:54:00:21:00:11"
+          mtu: 9000
+    disks:
+      root:
+        path: /dev/ebs/ocp-master-02
+        serial: ocpmaster02root
+  - name: ocp-master-03
+    role: control-plane
+    mac_address: "52:54:00:20:00:12"
+    resources:
+      vcpus: 8
+      memory_mb: 16384
+    performance_domain:
+      tier: gold
+      iothreads: 0
+    network:
+      additional_interfaces:
+        - name: nic1
+          libvirt_network: ext-storage
+          libvirt_portgroup: ext-storage-vlan11
+          mac_address: "52:54:00:21:00:12"
+          mtu: 9000
+    disks:
+      root:
+        path: /dev/ebs/ocp-master-03
+        serial: ocpmaster03root
+  - name: ocp-worker-01
+    role: worker
+    mac_address: "52:54:00:20:00:31"
+    resources:
+      vcpus: 12
+      memory_mb: 32768
+    performance_domain:
+      tier: bronze
+      iothreads: 0
+    network:
+      additional_interfaces:
+        - name: nic1
+          libvirt_network: ext-storage
+          libvirt_portgroup: ext-storage-vlan11
+          mac_address: "52:54:00:21:00:20"
+          mtu: 9000
+    disks:
+      root:
+        path: /dev/ebs/ocp-worker-01
+        serial: ocpworker01root
+  - name: ocp-worker-02
+    role: worker
+    mac_address: "52:54:00:20:00:32"
+    resources:
+      vcpus: 12
+      memory_mb: 32768
+    performance_domain:
+      tier: bronze
+      iothreads: 0
+    network:
+      additional_interfaces:
+        - name: nic1
+          libvirt_network: ext-storage
+          libvirt_portgroup: ext-storage-vlan11
+          mac_address: "52:54:00:21:00:21"
+          mtu: 9000
+    disks:
+      root:
+        path: /dev/ebs/ocp-worker-02
+        serial: ocpworker02root
+  - name: ocp-worker-03
+    role: worker
+    mac_address: "52:54:00:20:00:33"
+    resources:
+      vcpus: 12
+      memory_mb: 32768
+    performance_domain:
+      tier: bronze
+      iothreads: 0
+    network:
+      additional_interfaces:
+        - name: nic1
+          libvirt_network: ext-storage
+          libvirt_portgroup: ext-storage-vlan11
+          mac_address: "52:54:00:21:00:22"
+          mtu: 9000
+    disks:
+      root:
+        path: /dev/ebs/ocp-worker-03
+        serial: ocpworker03root
+
+openshift_install_cluster:
+  name: ocp
+  base_domain: workshop.lan
+  full_domain: ocp.workshop.lan
+  network:
+    machine_vlan_id: 200
+    machine_cidr: 172.16.10.0/24
+    machine_gateway: 172.16.10.1
+    machine_dns_servers:
+      - 172.16.0.10
+    storage_vlan_id: 201
+    storage_cidr: 172.16.11.0/24
+    storage_gateway: ""
+    migration_vlan_id: 202
+    migration_cidr: 172.16.12.0/24
+    migration_gateway: 172.16.12.1
+    api_vip: 172.16.10.5
+    ingress_vip: 172.16.10.7
+  dns:
+    api_fqdn: api.ocp.workshop.lan
+    api_int_fqdn: api-int.ocp.workshop.lan
+    wildcard_apps_fqdn: "*.apps.ocp.workshop.lan"
+  services:
+    idm_dns_ntp_server: idm-01.workshop.lan
+    idm_dns_ntp_ipv4: 172.16.0.10
+    mirror_registry_fqdn: mirror-registry.workshop.lan
+    mirror_registry_ipv4: 172.16.0.20
+  nodes:
+    - name: ocp-master-01
+      role: control-plane
+      fqdn: ocp-master-01.ocp.workshop.lan
+      mac_address: "52:54:00:20:00:10"
+      machine_network:
+        ipv4_address: 172.16.10.11
+        prefix_length: 24
+      storage_network:
+        ipv4_address: 172.16.11.11
+        prefix_length: 24
+      additional_interfaces:
+        - name: nic1
+          mac_address: "52:54:00:21:00:10"
+          mtu: 9000
+          ipv4_address: 172.18.5.55
+          prefix_length: 24
+    - name: ocp-master-02
+      role: control-plane
+      fqdn: ocp-master-02.ocp.workshop.lan
+      mac_address: "52:54:00:20:00:11"
+      machine_network:
+        ipv4_address: 172.16.10.12
+        prefix_length: 24
+      storage_network:
+        ipv4_address: 172.16.11.12
+        prefix_length: 24
+      additional_interfaces:
+        - name: nic1
+          mac_address: "52:54:00:21:00:11"
+          mtu: 9000
+          ipv4_address: 172.18.5.56
+          prefix_length: 24
+    - name: ocp-master-03
+      role: control-plane
+      fqdn: ocp-master-03.ocp.workshop.lan
+      mac_address: "52:54:00:20:00:12"
+      machine_network:
+        ipv4_address: 172.16.10.13
+        prefix_length: 24
+      storage_network:
+        ipv4_address: 172.16.11.13
+        prefix_length: 24
+      additional_interfaces:
+        - name: nic1
+          mac_address: "52:54:00:21:00:12"
+          mtu: 9000
+          ipv4_address: 172.18.5.57
+          prefix_length: 24
+    - name: ocp-worker-01
+      role: worker
+      fqdn: ocp-worker-01.ocp.workshop.lan
+      mac_address: "52:54:00:20:00:31"
+      machine_network:
+        ipv4_address: 172.16.10.31
+        prefix_length: 24
+      storage_network:
+        ipv4_address: 172.16.11.31
+        prefix_length: 24
+      additional_interfaces:
+        - name: nic1
+          mac_address: "52:54:00:21:00:20"
+          mtu: 9000
+          ipv4_address: 172.18.5.58
+          prefix_length: 24
+    - name: ocp-worker-02
+      role: worker
+      fqdn: ocp-worker-02.ocp.workshop.lan
+      mac_address: "52:54:00:20:00:32"
+      machine_network:
+        ipv4_address: 172.16.10.32
+        prefix_length: 24
+      storage_network:
+        ipv4_address: 172.16.11.32
+        prefix_length: 24
+      additional_interfaces:
+        - name: nic1
+          mac_address: "52:54:00:21:00:21"
+          mtu: 9000
+          ipv4_address: 172.18.5.59
+          prefix_length: 24
+    - name: ocp-worker-03
+      role: worker
+      fqdn: ocp-worker-03.ocp.workshop.lan
+      mac_address: "52:54:00:20:00:33"
+      machine_network:
+        ipv4_address: 172.16.10.33
+        prefix_length: 24
+      storage_network:
+        ipv4_address: 172.16.11.33
+        prefix_length: 24
+      additional_interfaces:
+        - name: nic1
+          mac_address: "52:54:00:21:00:22"
+          mtu: 9000
+          ipv4_address: 172.18.5.60
+          prefix_length: 24
+
+openshift_post_install_odf_mode: external
+# External ODF requires OVN host routing so pods can reach off-cluster Ceph
+# endpoints on the routed storage network before the StorageCluster is applied.
+openshift_post_install_odf_external_gateway_routing_via_host: true
+openshift_post_install_odf_external_gateway_ip_forwarding: Global
+# openshift_post_install_odf_external_cluster_details_file: /absolute/path/to/external-cluster-details.json
+# Set exactly one external cluster-details source before using this profile.
+openshift_post_install_odf_external_cluster_details_b64: ""
+openshift_post_install_odf_default_storage_class_rbd: >-
+  {{ openshift_post_install_odf_storage_cluster_name | default('ocs-external-storagecluster') }}-ceph-rbd
+openshift_post_install_odf_required_storage_classes:
+  - "{{ openshift_post_install_odf_default_storage_class_rbd }}"
+
+openshift_keycloak:
+  namespace: keycloak
+  operatorgroup_name: keycloak
+  subscription_name: rhbk-operator
+  channel: stable-v26.2
+  source: cs-redhat-operator-index-v4-20
+  source_namespace: openshift-marketplace
+  installplan_approval: Manual
+  instance_name: workshop-keycloak
+  route_name: workshop-keycloak
+  route_host: sso.apps.ocp.workshop.lan
+  tls_secret_name: workshop-keycloak-tls
+  bootstrap_admin_secret_name: workshop-keycloak-bootstrap-admin
+  bootstrap_admin_username: admin
+  bootstrap_admin_password: "{{ lab_default_password | default('') }}"
+  database_secret_name: workshop-keycloak-db
+  database_user: keycloak
+  database_password: "{{ lab_default_password | default('') }}"
+  database_name: keycloak
+  database_host: postgres-db
+  database_port: 5432
+  database_image: registry.redhat.io/rhel9/postgresql-15:latest
+  database_storage_class: "{{ openshift_post_install_odf_default_storage_class_rbd }}"
+  database_storage_size: 5Gi
+  discovery_realm: master
+openshift_aap:
+  namespace: aap
+  operatorgroup_name: aap
+  subscription_name: ansible-automation-platform-operator
+  channel: stable-2.6
+  source: cs-redhat-operator-index-v4-20
+  source_namespace: openshift-marketplace
+  instance_name: workshop-aap
+  admin_username: admin
+  admin_password: "{{ lab_default_password | default('') }}"
+  admin_password_secret_name: workshop-aap-admin-password
+  idm_ca_secret_name: workshop-aap-idm-ca
+  route_host: aap.apps.ocp.workshop.lan
+  bundle_cacert_secret: workshop-aap-idm-ca
+  validation_username: sysop
+  validation_password: "{{ lab_default_password | default('') }}"
+  database:
+    postgres_storage_class: "{{ openshift_post_install_odf_default_storage_class_rbd }}"
+    storage: 20Gi
+    resource_requirements:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+  controller:
+    disabled: false
+    name: workshop-aap-controller
+  hub:
+    disabled: true
+  eda:
+    disabled: true
+  lightspeed:
+    disabled: true
+  no_log: false
+  image_pull_policy: IfNotPresent
+  authentication:
+    mode: keycloak
+    create_objects: true
+    remove_users: false
+    order: 2
+  keycloak:
+    authenticator_name: Red Hat build of Keycloak
+    realm_name: "{{ openshift_oidc_auth.realm_name }}"
+    client_id: aap
+    client_secret: "{{ lab_default_password | default('') }}"
+    groups_claim: groups
+    required_group_names:
+      - access-openshift-admin
+    protocol_mapper:
+      name: groups
+      claim_name: groups
+      full_path: false
+    audience_mapper:
+      name: aap-audience
+      included_client_audience: aap
+    validation_username: >-
+      {{
+        openshift_oidc_auth.validation.ad_test_user
+        if (lab_configure_ad_trust | default(false) | bool)
+        else openshift_oidc_auth.validation.native_test_user
+      }}
+    validation_password: >-
+      {{
+        openshift_oidc_auth.validation.ad_test_password
+        if (lab_configure_ad_trust | default(false) | bool)
+        else openshift_oidc_auth.validation.native_test_password
+      }}
+  ldap:
+    authenticator_name: Red Hat Identity Management
+
+# Day-2 phase selection for the on-prem external Ceph profile:
+# include the full day-2 path except internal ODF, OpenShift Virtualization,
+# and OpenShift Pipelines. Keep infra conversion off so there are no infra-node
+# placement or storage-taint assumptions in this profile.
+#
+# Toggle types:
+#   enable_* includes or excludes a phase from the run entirely.
+#   force_* reruns an enabled phase even when its health probe says it is
+#   already converged.
+openshift_post_install_enable_disconnected_operatorhub: true
+openshift_post_install_enable_infra_conversion: false
+openshift_post_install_enable_idm_ingress_certs: true
+openshift_post_install_enable_breakglass_auth: true
+openshift_post_install_enable_nmstate: true
+openshift_post_install_nmstate_configure_migration_vlan: false
+openshift_post_install_nmstate_configure_vm_data_vlans: false
+openshift_post_install_enable_odf: true
+openshift_post_install_enable_keycloak: true
+openshift_post_install_enable_oidc_auth: true
+openshift_post_install_enable_ldap_auth: false
+openshift_post_install_enable_virtualization: false
+openshift_post_install_enable_pipelines: false
+openshift_post_install_enable_web_terminal: true
+openshift_post_install_enable_aap: true
+openshift_post_install_enable_netobserv: true
+openshift_post_install_enable_validation: true
+
+openshift_post_install_force_disconnected_operatorhub: false
+openshift_post_install_force_infra_conversion: false
+openshift_post_install_force_idm_ingress_certs: false
+openshift_post_install_force_breakglass_auth: false
+openshift_post_install_force_nmstate: false
+openshift_post_install_force_odf_rebuild: false
+openshift_post_install_force_keycloak: false
+openshift_post_install_force_oidc_auth: false
+openshift_post_install_force_ldap_auth: false
+openshift_post_install_force_virtualization: false
+openshift_post_install_force_pipelines: false
+openshift_post_install_force_web_terminal: false
+openshift_post_install_force_aap: false
+openshift_post_install_force_netobserv: false
+
+# External ODF does not create storage-labeled/tainted cluster nodes, so NetObserv
+# should not inherit the internal-ODF scheduling preferences.
+openshift_post_install_netobserv_loki_node_selector: {}
+openshift_post_install_netobserv_loki_tolerations: []
+
+lab_host_resource_management:
+  enabled: true
+  host_policy:
+    manage_kernel_cmdline: false
+    manage_systemd_cpu_affinity: true
+    manage_irqbalance_guest_ban: false
+  cpu_pools:
+    host_reserved: 0-5,24-29
+    host_housekeeping: 0-1,24-25
+    host_emulator: 2-5,26-29
+    guest_domain: 6-23,30-47
+  kernel_cmdline:
+    systemd_cpu_affinity: systemd.cpu_affinity=0-5,24-29
+    irqaffinity: irqaffinity=0-5,24-29
+  performance_domains:
+    gold:
+      partition: /machine/gold
+      cpu_shares: 512
+      cpu_weight: 512
+      cpu_max_vcpus: 36
+      default_iothreads: 0
+    silver:
+      partition: /machine/silver
+      cpu_shares: 333
+      cpu_weight: 333
+      cpu_max_vcpus: 36
+      default_iothreads: 0
+    bronze:
+      partition: /machine/bronze
+      cpu_shares: 167
+      cpu_weight: 167
+      cpu_max_vcpus: 36
+      default_iothreads: 0
+
+lab_host_memory_oversubscription_settings:
+  enabled: true
+  verify_state: true
+  zram:
+    enabled: true
+    device_name: zram0
+    size: 16G
+    compression_algorithm: zstd
+    swap_priority: 100
+    writeback:
+      enabled: true
+      manage_lvm: true
+      volume_group: calabi_lab_vg
+      logical_volume: zram-writeback
+      size: 32G
+      policy:
+        enabled: true
+        interval: 30m
+        mode: incompressible
+        per_run_budget_mib: 256
+  transparent_hugepages:
+    enabled: true
+    mode: madvise
+    defrag_mode: madvise
+  ksm:
+    enabled: true
+    run: 1
+    pages_to_scan: 1000
+    sleep_millisecs: 20

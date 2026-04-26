@@ -1,5 +1,5 @@
 ---
-openshift_breakglass_auth:
+openshift_breakglass_auth_defaults:
   identity_provider_name: "Breakglass HTPasswd"
   secret_name: "breakglass-htpasswd"
   username: "breakglass-admin"
@@ -13,3 +13,5 @@ openshift_breakglass_auth:
     binding_name: breakglass-admin-cluster-admin
   validation:
     remove_kubeadmin_after_success: true
+
+openshift_breakglass_auth: "{{ openshift_breakglass_auth_defaults }}"

@@ -6,6 +6,7 @@
   vars_files:
     - ../../../aws-metal-openshift-demo/vars/global/execution_environment.yml
     - ../../../aws-metal-openshift-demo/vars/global/host_resource_management.yml
+    - ../../../aws-metal-openshift-demo/vars/global/host_memory_oversubscription.yml
     - ../../../aws-metal-openshift-demo/vars/global/lab_switch_ports.yml
     - ../../../aws-metal-openshift-demo/vars/global/rhsm.yml
     - ../../../aws-metal-openshift-demo/vars/guests/idm_vm.yml
@@ -86,11 +87,15 @@
   roles:
     - role: lab_host_base
     - role: lab_host_resource_management
+    - role: on_prem_lvm_seed
     - role: lab_switch
     - role: lab_firewall
     - role: lab_libvirt
-    - role: on_prem_lvm_seed
+    - role: lab_host_memory_oversubscription
+      tags:
+        - host-memory-oversubscription
     - role: on_prem_lvm_guest_storage
+    - role: calabi_shell
 
   post_tasks:
     - name: >-

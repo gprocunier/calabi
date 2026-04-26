@@ -226,6 +226,39 @@
   loop_control:
     label: "{{ item.item.device_path }}"
 
+- name: Install persistent udev rules for on-prem /dev/ebs compatibility links
+  ansible.builtin.template:
+    src: 99-on-prem-ebs-friendly.rules.j2
+    dest: /etc/udev/rules.d/99-on-prem-ebs-friendly.rules
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Reload udev rules for on-prem /dev/ebs compatibility links
+  ansible.builtin.command:
+    argv:
+      - udevadm
+      - control
+      - --reload-rules
+  changed_when: false
+
+- name: Trigger LVM block-device udev events for /dev/ebs compatibility links
+  ansible.builtin.command:
+    argv:
+      - udevadm
+      - trigger
+      - --subsystem-match=block
+      - --property-match=DM_VG_NAME={{ on_prem_lvm_volume_group }}
+      - --action=change
+  changed_when: false
+
+- name: Wait for udev to settle after refreshing /dev/ebs compatibility links
+  ansible.builtin.command:
+    argv:
+      - udevadm
+      - settle
+  changed_when: false
+
 - name: Publish compatibility symlinks for the stock guest playbooks
   ansible.builtin.file:
     src: "{{ item.device_path }}"

@@ -2,7 +2,31 @@
 # ad_server_guest — Configure AD DS, AD CS, DNS, users, and groups on a
 # Windows Server 2022 guest over WinRM.
 
-- name: Locate the virtio driver media inside the guest
+- name: Detect whether the QEMU guest agent is already installed
+  ansible.windows.win_powershell:
+    script: |
+      $svc = Get-Service | Where-Object {
+        $_.Name -in @('QEMU-GA', 'qemu-ga') -or
+        $_.DisplayName -like '*QEMU*Guest*Agent*'
+      } | Select-Object -First 1
+
+      [pscustomobject]@{
+        installed = [bool]$svc
+        service_name = if ($svc) { $svc.Name } else { '' }
+      } | ConvertTo-Json -Compress
+  register: ad_server_guest_qemu_guest_agent
+  changed_when: false
+  when: ad_server_install_profile | default('full') == 'full'
+
+- name: Remember whether virtio guest tooling is already installed
+  ansible.builtin.set_fact:
+    ad_server_guest_qemu_guest_agent_installed: >-
+      {{
+        ((ad_server_guest_qemu_guest_agent.output | first) | from_json).installed
+      }}
+  when: ad_server_install_profile | default('full') == 'full'
+
+- name: Probe for virtio driver media inside the guest
   ansible.windows.win_powershell:
     script: |
       $candidates = Get-PSDrive -PSProvider FileSystem |
@@ -16,15 +40,44 @@
         }
       }
 
-      throw "virtio driver media was not found in the guest"
+      [pscustomobject]@{ drive = '' } | ConvertTo-Json -Compress
   register: ad_server_guest_virtio_media
+  changed_when: false
   when: ad_server_install_profile | default('full') == 'full'
 
-- name: Remember the virtio driver media drive letter
+- name: Remember whether the virtio driver media is available
   ansible.builtin.set_fact:
     ad_server_guest_virtio_media_drive: >-
       {{ ((ad_server_guest_virtio_media.output | first) | from_json).drive }}
+    ad_server_guest_virtio_media_available: >-
+      {{
+        (
+          ((ad_server_guest_virtio_media.output | first) | from_json).drive
+          | default('')
+        ) | length > 0
+      }}
   when: ad_server_install_profile | default('full') == 'full'
+
+- name: Fail when virtio media is absent and guest tools were never installed
+  ansible.builtin.assert:
+    that:
+      - ad_server_guest_qemu_guest_agent_installed | bool
+    fail_msg: >-
+      virtio driver media was not found in the guest, and the QEMU guest agent
+      is not installed. This usually means the AD VM is in a partial state.
+      Reattach the virtio media or rebuild the AD VM.
+  when:
+    - ad_server_install_profile | default('full') == 'full'
+    - not (ad_server_guest_virtio_media_available | bool)
+
+- name: Remember the virtio driver media drive letter
+  ansible.builtin.debug:
+    msg: >-
+      virtio media is no longer attached; skipping media-backed guest tools and
+      driver installation because the QEMU guest agent is already installed.
+  when:
+    - ad_server_install_profile | default('full') == 'full'
+    - not (ad_server_guest_virtio_media_available | bool)
 
 - name: Locate the virtio guest tools installer on the media
   ansible.windows.win_powershell:
@@ -41,13 +94,17 @@
       }
       throw "virtio guest tools installer was not found on the virtio media"
   register: ad_server_guest_virtio_tools_installer
-  when: ad_server_install_profile | default('full') == 'full'
+  when:
+    - ad_server_install_profile | default('full') == 'full'
+    - ad_server_guest_virtio_media_available | bool
 
 - name: Remember the virtio guest tools installer path
   ansible.builtin.set_fact:
     ad_server_guest_virtio_tools_installer_path: >-
       {{ ((ad_server_guest_virtio_tools_installer.output | first) | from_json).path }}
-  when: ad_server_install_profile | default('full') == 'full'
+  when:
+    - ad_server_install_profile | default('full') == 'full'
+    - ad_server_guest_virtio_media_available | bool
 
 - name: Install the virtio guest tools bundle before AD role configuration
   ansible.windows.win_package:
@@ -58,7 +115,9 @@
       - /norestart
   register: ad_server_guest_virtio_tools
   ignore_unreachable: true
-  when: ad_server_install_profile | default('full') == 'full'
+  when:
+    - ad_server_install_profile | default('full') == 'full'
+    - ad_server_guest_virtio_media_available | bool
 
 - name: Wait for authenticated WinRM after the virtio guest tools bundle
   ansible.builtin.wait_for_connection:
@@ -67,6 +126,7 @@
     connect_timeout: 10
   when:
     - ad_server_install_profile | default('full') == 'full'
+    - ad_server_guest_virtio_media_available | bool
 
 - name: Reboot after the virtio guest tools bundle requests one
   ansible.windows.win_reboot:
@@ -74,6 +134,7 @@
     post_reboot_delay: 30
   when:
     - ad_server_install_profile | default('full') == 'full'
+    - ad_server_guest_virtio_media_available | bool
     - ad_server_guest_virtio_tools is not unreachable
     - ad_server_guest_virtio_tools.reboot_required | default(false) | bool
 
@@ -99,7 +160,9 @@
       if ($changed) { 'CHANGED' } else { 'OK' }
   register: ad_server_guest_virtio_drivers
   changed_when: "'CHANGED' in (ad_server_guest_virtio_drivers.output | join(' '))"
-  when: ad_server_install_profile | default('full') == 'full'
+  when:
+    - ad_server_install_profile | default('full') == 'full'
+    - ad_server_guest_virtio_media_available | bool
 
 - name: Install the QEMU guest agent package from the virtio media
   ansible.windows.win_package:
@@ -108,7 +171,9 @@
     arguments:
       - /qn
       - /norestart
-  when: ad_server_install_profile | default('full') == 'full'
+  when:
+    - ad_server_install_profile | default('full') == 'full'
+    - ad_server_guest_virtio_media_available | bool
 
 - name: Ensure the QEMU guest agent service starts automatically
   ansible.windows.win_powershell:

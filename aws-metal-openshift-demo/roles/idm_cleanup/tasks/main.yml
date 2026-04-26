@@ -41,6 +41,12 @@
     state: absent
   when: idm_cleanup_remove_runtime_dir | bool
 
+- name: Check whether the IDM block device exists
+  ansible.builtin.stat:
+    path: "{{ idm_vm.disk_path }}"
+  register: idm_cleanup_block_device
+  when: idm_cleanup_wipe_block_device | bool
+
 - name: Clear the beginning of the IDM block device when requested
   ansible.builtin.command:
     argv:
@@ -50,5 +56,7 @@
       - bs=1M
       - count=16
       - conv=fsync
-  when: idm_cleanup_wipe_block_device | bool
+  when:
+    - idm_cleanup_wipe_block_device | bool
+    - idm_cleanup_block_device.stat.exists | default(false)
   changed_when: true

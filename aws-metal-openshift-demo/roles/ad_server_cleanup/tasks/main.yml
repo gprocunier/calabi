@@ -42,6 +42,12 @@
     state: absent
   when: ad_server_cleanup_remove_runtime_dir | bool
 
+- name: Check whether the AD block device exists
+  ansible.builtin.stat:
+    path: "{{ ad_vm.disk_path }}"
+  register: ad_server_cleanup_block_device
+  when: ad_server_cleanup_wipe_block_device | bool
+
 - name: Clear the beginning of the AD block device when requested
   ansible.builtin.command:
     argv:
@@ -51,5 +57,7 @@
       - bs=1M
       - count=16
       - conv=fsync
-  when: ad_server_cleanup_wipe_block_device | bool
+  when:
+    - ad_server_cleanup_wipe_block_device | bool
+    - ad_server_cleanup_block_device.stat.exists | default(false)
   changed_when: true

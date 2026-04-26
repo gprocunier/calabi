@@ -5,36 +5,40 @@ After=local-fs.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-{% if lab_host_memory_oversubscription_settings.zram.enabled | bool %}
-ExecStartPre=-/usr/sbin/swapoff /dev/{{ lab_host_memory_oversubscription_settings.zram.device_name }}
-ExecStartPre=-/usr/sbin/zramctl --reset /dev/{{ lab_host_memory_oversubscription_settings.zram.device_name }}
+{% if lab_host_memory_oversubscription_effective_settings.zram.enabled | bool %}
+ExecStartPre=-/usr/sbin/swapoff /dev/{{ lab_host_memory_oversubscription_effective_settings.zram.device_name }}
+ExecStartPre=-/usr/sbin/zramctl --reset /dev/{{ lab_host_memory_oversubscription_effective_settings.zram.device_name }}
 ExecStartPre=-/usr/sbin/modprobe -r zram
 ExecStartPre=/usr/sbin/modprobe zram num_devices=1
-ExecStart=/usr/sbin/zramctl /dev/{{ lab_host_memory_oversubscription_settings.zram.device_name }} --algorithm {{ lab_host_memory_oversubscription_settings.zram.compression_algorithm }} --size {{ lab_host_memory_oversubscription_settings.zram.size }}
-ExecStart=/usr/sbin/mkswap -f /dev/{{ lab_host_memory_oversubscription_settings.zram.device_name }}
-ExecStart=/usr/sbin/swapon --priority {{ lab_host_memory_oversubscription_settings.zram.swap_priority }} --discard /dev/{{ lab_host_memory_oversubscription_settings.zram.device_name }}
-ExecStop=-/usr/sbin/swapoff /dev/{{ lab_host_memory_oversubscription_settings.zram.device_name }}
-ExecStop=-/usr/sbin/zramctl --reset /dev/{{ lab_host_memory_oversubscription_settings.zram.device_name }}
+{% if lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled | bool %}
+ExecStart=/usr/bin/bash -lc 'if [ -e /sys/block/{{ lab_host_memory_oversubscription_effective_settings.zram.device_name }}/comp_algorithm ]; then echo "{{ lab_host_memory_oversubscription_effective_settings.zram.compression_algorithm }}" > /sys/block/{{ lab_host_memory_oversubscription_effective_settings.zram.device_name }}/comp_algorithm; fi; if [ -e /sys/block/{{ lab_host_memory_oversubscription_effective_settings.zram.device_name }}/backing_dev ]; then echo "{{ lab_host_memory_oversubscription_zram_writeback_effective_backing_device }}" > /sys/block/{{ lab_host_memory_oversubscription_effective_settings.zram.device_name }}/backing_dev; else echo "zram backing_dev is unavailable on this kernel" >&2; exit 1; fi; echo "{{ lab_host_memory_oversubscription_effective_settings.zram.size }}" > /sys/block/{{ lab_host_memory_oversubscription_effective_settings.zram.device_name }}/disksize'
+{% else %}
+ExecStart=/usr/sbin/zramctl /dev/{{ lab_host_memory_oversubscription_effective_settings.zram.device_name }} --algorithm {{ lab_host_memory_oversubscription_effective_settings.zram.compression_algorithm }} --size {{ lab_host_memory_oversubscription_effective_settings.zram.size }}
+{% endif %}
+ExecStart=/usr/sbin/mkswap -f /dev/{{ lab_host_memory_oversubscription_effective_settings.zram.device_name }}
+ExecStart=/usr/sbin/swapon --priority {{ lab_host_memory_oversubscription_effective_settings.zram.swap_priority }} --discard /dev/{{ lab_host_memory_oversubscription_effective_settings.zram.device_name }}
+ExecStop=-/usr/sbin/swapoff /dev/{{ lab_host_memory_oversubscription_effective_settings.zram.device_name }}
+ExecStop=-/usr/sbin/zramctl --reset /dev/{{ lab_host_memory_oversubscription_effective_settings.zram.device_name }}
 ExecStop=-/usr/sbin/modprobe -r zram
 {% endif %}
 ExecStart=/usr/bin/bash -lc '\
-{% if lab_host_memory_oversubscription_settings.transparent_hugepages.enabled | bool %}
+{% if lab_host_memory_oversubscription_effective_settings.transparent_hugepages.enabled | bool %}
 if [ -e /sys/kernel/mm/transparent_hugepage/enabled ]; then \
-  echo {{ lab_host_memory_oversubscription_settings.transparent_hugepages.mode }} > /sys/kernel/mm/transparent_hugepage/enabled; \
+  echo {{ lab_host_memory_oversubscription_effective_settings.transparent_hugepages.mode }} > /sys/kernel/mm/transparent_hugepage/enabled; \
 fi; \
 if [ -e /sys/kernel/mm/transparent_hugepage/defrag ]; then \
-  echo {{ lab_host_memory_oversubscription_settings.transparent_hugepages.defrag_mode }} > /sys/kernel/mm/transparent_hugepage/defrag; \
+  echo {{ lab_host_memory_oversubscription_effective_settings.transparent_hugepages.defrag_mode }} > /sys/kernel/mm/transparent_hugepage/defrag; \
 fi; \
 {% endif %}
-{% if lab_host_memory_oversubscription_settings.ksm.enabled | bool %}
+{% if lab_host_memory_oversubscription_effective_settings.ksm.enabled | bool %}
 if [ -e /sys/kernel/mm/ksm/pages_to_scan ]; then \
-  echo {{ lab_host_memory_oversubscription_settings.ksm.pages_to_scan }} > /sys/kernel/mm/ksm/pages_to_scan; \
+  echo {{ lab_host_memory_oversubscription_effective_settings.ksm.pages_to_scan }} > /sys/kernel/mm/ksm/pages_to_scan; \
 fi; \
 if [ -e /sys/kernel/mm/ksm/sleep_millisecs ]; then \
-  echo {{ lab_host_memory_oversubscription_settings.ksm.sleep_millisecs }} > /sys/kernel/mm/ksm/sleep_millisecs; \
+  echo {{ lab_host_memory_oversubscription_effective_settings.ksm.sleep_millisecs }} > /sys/kernel/mm/ksm/sleep_millisecs; \
 fi; \
 if [ -e /sys/kernel/mm/ksm/run ]; then \
-  echo {{ lab_host_memory_oversubscription_settings.ksm.run }} > /sys/kernel/mm/ksm/run; \
+  echo {{ lab_host_memory_oversubscription_effective_settings.ksm.run }} > /sys/kernel/mm/ksm/run; \
 fi; \
 {% endif %}
 true'

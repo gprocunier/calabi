@@ -84,6 +84,26 @@
       Node MAC addresses in openshift_install_cluster.yml and
       openshift_cluster_vm.yml do not match.
 
+- name: Validate optional agent-config extra interfaces
+  ansible.builtin.assert:
+    that:
+      - item.1.name | default('') | length > 0
+      - item.1.mac_address | default('') | length > 0
+      - (item.1.mtu | default(1500) | int) > 0
+      - item.1.ipv4_address | default('') | length > 0
+      - (item.1.prefix_length | default(0) | int) > 0
+    fail_msg: >-
+      Optional installer network interface {{
+      item.1.name | default('unnamed') }} for OpenShift node {{ item.0.name }}
+      is missing required name, MAC address, MTU, or IPv4 data.
+  loop: >-
+    {{
+      openshift_install_cluster.nodes
+      | subelements('additional_interfaces', skip_missing=True)
+    }}
+  loop_control:
+    label: "{{ item.0.name }}:{{ item.1.name | default('unnamed') }}"
+
 - name: Validate every VM node defines a root disk serial
   ansible.builtin.assert:
     that:

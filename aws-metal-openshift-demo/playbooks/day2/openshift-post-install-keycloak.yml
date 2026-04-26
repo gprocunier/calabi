@@ -6,6 +6,7 @@
     - ../../vars/global/execution_environment.yml
     - ../../vars/global/mirror_content.yml
     - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/day2/openshift_odf.yml
     - ../../vars/day2/openshift_keycloak.yml
     - ../../vars/day2/openshift_idm_certs.yml
   roles:

@@ -20,6 +20,10 @@
       /var/tmp/openshift-post-install-web-terminal/tooling-buildconfig.yaml
     openshift_post_install_web_terminal_remote_tooling_template_path: >-
       /var/tmp/openshift-post-install-web-terminal/tooling-devworkspacetemplate.yaml
+    openshift_post_install_web_terminal_remote_registry_auth_path: >-
+      /var/tmp/openshift-post-install-web-terminal/mirror-registry-auth.json
+    openshift_post_install_web_terminal_remote_pull_secret_merged_path: >-
+      /var/tmp/openshift-post-install-web-terminal/pull-secret-merged.json
     openshift_post_install_web_terminal_custom_tooling_pullspec: >-
       mirror-registry.workshop.lan:8443/{{
       openshift_post_install_web_terminal_tooling_mirror_repo }}:{{
@@ -28,6 +32,8 @@
       /tmp/openshift-post-install-web-terminal
     openshift_post_install_web_terminal_local_containerfile_path: >-
       /tmp/openshift-post-install-web-terminal/Containerfile
+    openshift_post_install_web_terminal_local_registry_auth_path: >-
+      /tmp/openshift-post-install-web-terminal/mirror-registry-auth.json
     openshift_post_install_web_terminal_local_pull_secret_path: >-
       /tmp/openshift-post-install-web-terminal/pull-secret.json
 
@@ -484,6 +490,66 @@
   when: openshift_post_install_web_terminal_customize_tooling | bool and
     openshift_post_install_web_terminal_tooling_build_strategy == 'mirror_registry'
 
+- name: Register the mirror-registry guest as a temporary delegate host for Web Terminal tooling
+  ansible.builtin.add_host:
+    name: openshift-post-install-web-terminal-mirror-registry
+    ansible_host: "{{ mirror_registry_vm.network.ipv4_address }}"
+    ansible_user: "{{ mirror_registry_vm.access.admin_user }}"
+    ansible_ssh_private_key_file: >-
+      {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+    ansible_become: true
+    ansible_ssh_common_args: >-
+      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+  when: openshift_post_install_web_terminal_customize_tooling | bool and
+    openshift_post_install_web_terminal_tooling_build_strategy == 'mirror_registry'
+
+- name: Wait for authenticated SSH connectivity to the mirror-registry guest for Web Terminal tooling
+  ansible.builtin.wait_for_connection:
+    timeout: 60
+    sleep: 10
+    connect_timeout: 10
+  delegate_to: openshift-post-install-web-terminal-mirror-registry
+  when: openshift_post_install_web_terminal_customize_tooling | bool and
+    openshift_post_install_web_terminal_tooling_build_strategy == 'mirror_registry'
+
+- name: Read the working mirror-registry authfile from the mirror-registry guest
+  ansible.builtin.slurp:
+    src: "{{ mirror_registry_content.auth.local_registry_auth_file }}"
+  delegate_to: openshift-post-install-web-terminal-mirror-registry
+  become: true
+  register: openshift_post_install_web_terminal_registry_authfile_raw
+  when: openshift_post_install_web_terminal_customize_tooling | bool and
+    openshift_post_install_web_terminal_tooling_build_strategy == 'mirror_registry'
+
+- name: Parse the working mirror-registry authfile for Web Terminal tooling
+  ansible.builtin.set_fact:
+    openshift_post_install_web_terminal_registry_authfile: >-
+      {{
+        openshift_post_install_web_terminal_registry_authfile_raw.content
+        | b64decode
+        | from_json
+      }}
+  when: openshift_post_install_web_terminal_customize_tooling | bool and
+    openshift_post_install_web_terminal_tooling_build_strategy == 'mirror_registry'
+
+- name: Assert the working mirror-registry authfile includes the mirror registry
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          mirror_registry_vm.name ~ '.' ~ mirror_registry_vm.domain ~ ':'
+          ~ mirror_registry_service.registry_port
+        ) in (
+          openshift_post_install_web_terminal_registry_authfile.auths
+          | default({})
+        )
+    fail_msg: >-
+      The mirror-registry guest authfile does not contain credentials for
+      {{ mirror_registry_vm.name }}.{{ mirror_registry_vm.domain }}:{{
+      mirror_registry_service.registry_port }}.
+  when: openshift_post_install_web_terminal_customize_tooling | bool and
+    openshift_post_install_web_terminal_tooling_build_strategy == 'mirror_registry'
+
 - name: Render local Containerfile for Web Terminal tooling build
   ansible.builtin.template:
     src: tooling-containerfile.j2
@@ -504,6 +570,26 @@
   when: openshift_post_install_web_terminal_customize_tooling | bool and
     openshift_post_install_web_terminal_tooling_build_strategy == 'mirror_registry'
 
+- name: Copy mirror-registry auth into the local tooling workspace
+  ansible.builtin.copy:
+    content: >-
+      {{ openshift_post_install_web_terminal_registry_authfile | to_nice_json }}
+    dest: "{{ openshift_post_install_web_terminal_local_registry_auth_path }}"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  when: openshift_post_install_web_terminal_customize_tooling | bool and
+    openshift_post_install_web_terminal_tooling_build_strategy == 'mirror_registry'
+
+- name: Stage mirror-registry auth for Web Terminal cluster pull-secret updates
+  ansible.builtin.copy:
+    content: >-
+      {{ openshift_post_install_web_terminal_registry_authfile | to_nice_json }}
+    dest: "{{ openshift_post_install_web_terminal_remote_registry_auth_path }}"
+    mode: "0600"
+  when: openshift_post_install_web_terminal_customize_tooling | bool and
+    openshift_post_install_web_terminal_tooling_build_strategy == 'mirror_registry'
+
 - name: Build and push custom Web Terminal tooling image on mirror-registry
   ansible.builtin.shell: |
     set -o pipefail
@@ -515,16 +601,16 @@
     )
     scp "${ssh_common[@]}" "{{ openshift_post_install_web_terminal_local_containerfile_path }}" \
       cloud-user@{{ mirror_registry_vm.network.ipv4_address }}:/tmp/web-terminal-tooling.Containerfile
+    scp "${ssh_common[@]}" "{{ openshift_post_install_web_terminal_local_registry_auth_path }}" \
+      cloud-user@{{ mirror_registry_vm.network.ipv4_address }}:/tmp/web-terminal-registry-auth.json
     scp "${ssh_common[@]}" "{{ openshift_post_install_web_terminal_local_pull_secret_path }}" \
       cloud-user@{{ mirror_registry_vm.network.ipv4_address }}:/tmp/web-terminal-pull-secret.json
     ssh "${ssh_common[@]}" cloud-user@{{ mirror_registry_vm.network.ipv4_address }} '
-      sudo podman login \
-        --username "{{ mirror_registry_service.init_user }}" \
-        --password "{{ mirror_registry_service.init_password }}" \
-        mirror-registry.workshop.lan:8443 &&
       sudo mkdir -p /var/tmp/web-terminal-tooling &&
       sudo cp /tmp/web-terminal-tooling.Containerfile \
         /var/tmp/web-terminal-tooling/Containerfile &&
+      sudo cp /tmp/web-terminal-registry-auth.json \
+        /var/tmp/web-terminal-tooling/registry-auth.json &&
       sudo cp /tmp/web-terminal-pull-secret.json \
         /var/tmp/web-terminal-tooling/pull-secret.json &&
       sudo podman build \
@@ -532,6 +618,7 @@
         -t {{ openshift_post_install_web_terminal_custom_tooling_pullspec }} \
         /var/tmp/web-terminal-tooling &&
       sudo podman push \
+        --authfile /var/tmp/web-terminal-tooling/registry-auth.json \
         {{ openshift_post_install_web_terminal_custom_tooling_pullspec }}
     '
   args:
@@ -542,24 +629,69 @@
   when: openshift_post_install_web_terminal_customize_tooling | bool and
     openshift_post_install_web_terminal_tooling_build_strategy == 'mirror_registry'
 
-- name: Merge mirror-registry auth into cluster pull-secret
-  ansible.builtin.shell: |
-    set -o pipefail
-    current_json="$(mktemp)"
-    merged_json="$(mktemp)"
-    "{{ openshift_post_install_web_terminal_remote_oc_path }}" get secret pull-secret \
-      -n openshift-config -o jsonpath='{.data.\.dockerconfigjson}' \
-    | base64 -d > "${current_json}"
-    auth_b64="$(printf '%s' '{{ mirror_registry_service.init_user }}:{{ mirror_registry_service.init_password }}' | base64 -w0)"
-    jq --arg auth "${auth_b64}" '
-      .auths["mirror-registry.workshop.lan:8443"] = {
-        "auth": $auth
-      }
-    ' "${current_json}" > "${merged_json}"
-    "{{ openshift_post_install_web_terminal_remote_oc_path }}" set data secret/pull-secret \
-      -n openshift-config --from-file=.dockerconfigjson="${merged_json}"
-  args:
-    executable: /bin/bash
+- name: Read the current cluster pull-secret for Web Terminal mirror-registry auth
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_web_terminal_remote_oc_path }}"
+      - get
+      - secret/pull-secret
+      - -n
+      - openshift-config
+      - -o
+      - jsonpath={.data.\.dockerconfigjson}
+  environment:
+    KUBECONFIG: >-
+      {{ openshift_post_install_web_terminal_remote_kubeconfig_path }}
+  register: openshift_post_install_web_terminal_pull_secret_raw
+  changed_when: false
+  when: openshift_post_install_web_terminal_customize_tooling | bool and
+    openshift_post_install_web_terminal_tooling_build_strategy == 'mirror_registry'
+
+- name: Merge mirror-registry auth into cluster pull-secret for Web Terminal
+  ansible.builtin.set_fact:
+    openshift_post_install_web_terminal_pull_secret_merged: >-
+      {{
+        (openshift_post_install_web_terminal_pull_secret_raw.stdout | b64decode | from_json)
+        | combine(
+            {
+              'auths': (
+                (
+                  openshift_post_install_web_terminal_pull_secret_raw.stdout
+                  | b64decode
+                  | from_json
+                ).auths
+                | combine(
+                    openshift_post_install_web_terminal_registry_authfile.auths
+                    | default({}),
+                    recursive=True
+                  )
+              )
+            },
+            recursive=True
+          )
+      }}
+  when: openshift_post_install_web_terminal_customize_tooling | bool and
+    openshift_post_install_web_terminal_tooling_build_strategy == 'mirror_registry'
+
+- name: Stage merged pull-secret for Web Terminal mirror-registry auth
+  ansible.builtin.copy:
+    content: >-
+      {{ openshift_post_install_web_terminal_pull_secret_merged | to_nice_json }}
+    dest: "{{ openshift_post_install_web_terminal_remote_pull_secret_merged_path }}"
+    mode: "0600"
+  when: openshift_post_install_web_terminal_customize_tooling | bool and
+    openshift_post_install_web_terminal_tooling_build_strategy == 'mirror_registry'
+
+- name: Update cluster pull-secret with mirror-registry auth for Web Terminal
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_web_terminal_remote_oc_path }}"
+      - set
+      - data
+      - secret/pull-secret
+      - -n
+      - openshift-config
+      - --from-file=.dockerconfigjson={{ openshift_post_install_web_terminal_remote_pull_secret_merged_path }}
   environment:
     KUBECONFIG: >-
       {{ openshift_post_install_web_terminal_remote_kubeconfig_path }}

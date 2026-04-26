@@ -75,16 +75,15 @@ Today those IdM local groups are:
 
 | IdM group | Current meaning | Current access |
 | --- | --- | --- |
-| `access-openshift-admin` | OpenShift platform admin | Bound to OpenShift `cluster-admin` |
-| `access-linux-admin` | Linux/RHEL admin | Granted passwordless sudo by `admins-nopasswd-all` |
-| `access-virt-admin` | reserved virtualization role | group exists; no broad privilege binding documented as default |
-| `access-developer` | reserved non-admin role | group exists; no broad privilege binding documented as default |
-| `access-aap-admin` | AAP admin | Grants AAP gateway superuser through the Keycloak authenticator map |
+| `openshift-admin` | OpenShift platform admin | Bound to OpenShift `cluster-admin` |
+| `admins` | Linux/RHEL admin | Granted passwordless sudo by `admins-nopasswd-all` |
+| `virt-admin` | reserved virtualization role | group exists; no broad privilege binding documented as default |
+| `developer` | reserved non-admin role | group exists; no broad privilege binding documented as default |
 
 That means:
 
-- OpenShift cluster-admin is granted to the group `access-openshift-admin`
-- RHEL sudo is granted to the group `access-linux-admin`
+- OpenShift cluster-admin is granted to the group `openshift-admin`
+- RHEL sudo is granted to the group `admins`
 - privilege is not supposed to be inferred from broad ambient trust alone
 
 ## Component Responsibilities
@@ -106,7 +105,7 @@ IdM currently provides:
 - identity hub for native lab users
 - trust relationship to AD
 - compat-tree visibility for trusted users and groups
-- local policy groups such as `access-openshift-admin` and `access-linux-admin`
+- local policy groups such as `openshift-admin` and `admins`
 - RHEL-side policy such as the `admins-nopasswd-all` sudo rule
 
 ### Keycloak
@@ -126,7 +125,7 @@ OpenShift currently provides:
 
 - OAuth/OIDC login integration
 - claim-to-group mapping from the OIDC `groups` claim
-- RBAC binding of `access-openshift-admin` to `cluster-admin`
+- RBAC binding of `openshift-admin` to `cluster-admin`
 - a separate `HTPasswd` breakglass path
 
 ### AAP
@@ -141,7 +140,7 @@ In the validated clean-build path:
 
 - AAP uses the Keycloak realm already deployed for cluster SSO
 - the AAP client ID is `aap`
-- the required admin group is `access-aap-admin`
+- the required admin group is `access-openshift-admin`
 - direct AAP LDAP is not the supported default path
 
 ### RHEL Hosts
@@ -289,13 +288,14 @@ The first implementation slice for that bridge now exists in the orchestration:
 - the AD trust play can create the mapped IdM external groups and nest them
   into the target local groups
 
-The remaining proof is now narrower and consumer-side:
+The remaining proof is consumer-side:
 
-- confirm AD-side membership changes alone drive the intended RHEL and OpenShift authorization end to end
-- confirm RHEL sudo and related host policy follow the bridged local IdM groups on enrolled systems
-- confirm revocation propagates cleanly across IdM compat, Keycloak, and downstream consumers
+- confirm trusted AD users inherit the intended local IdM groups
+- confirm RHEL sudo flows from those local groups
+- confirm Keycloak emits those local groups into the OpenShift OIDC `groups`
+  claim
 
 That future model is documented in
 <a href="./ad-idm-policy-model.md"><kbd>AD / IDM POLICY MODEL</kbd></a>.
 
-It should be treated as live bridge work with some remaining end-to-end proof, not as a fully closed authorization migration.
+It should be treated as planned work, not current live behavior.

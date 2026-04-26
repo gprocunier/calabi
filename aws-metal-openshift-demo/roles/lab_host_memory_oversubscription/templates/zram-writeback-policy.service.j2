@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Calabi zram writeback policy
+After=calabi-host-memory-oversubscription.service
+Requires=calabi-host-memory-oversubscription.service
+ConditionPathExists=/sys/block/{{ lab_host_memory_oversubscription_effective_settings.zram.device_name }}/writeback
+ConditionPathExists=/sys/block/{{ lab_host_memory_oversubscription_effective_settings.zram.device_name }}/backing_dev
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/calabi-zram-writeback-policy.sh

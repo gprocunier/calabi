@@ -13,10 +13,21 @@
     mirror_registry_role_cloudinit_iso: >-
       {{ mirror_registry_runtime_root }}/{{ mirror_registry_vm.name }}/{{
       mirror_registry_vm.name }}-cidata.iso
+    mirror_registry_role_performance_domain_tier: >-
+      {{
+        mirror_registry_performance_domain_tier |
+        default(mirror_registry_vm.performance_domain.tier)
+      }}
+    mirror_registry_role_performance_domain_iothreads: >-
+      {{
+        mirror_registry_performance_domain_iothreads |
+        default(mirror_registry_vm.performance_domain.iothreads)
+      }}
     mirror_registry_role_performance_domain_settings: >-
       {{
         lab_host_resource_management.performance_domains[
-          mirror_registry_vm.performance_domain.tier
+          mirror_registry_performance_domain_tier |
+          default(mirror_registry_vm.performance_domain.tier)
         ]
       }}
 
@@ -36,7 +47,7 @@
             'iothreadpin0.cpuset=' ~
             lab_host_resource_management.cpu_pools.host_emulator
           ]
-          if (mirror_registry_vm.performance_domain.iothreads | int) > 0
+          if (mirror_registry_role_performance_domain_iothreads | int) > 0
           else []
         )
       }}
@@ -68,10 +79,10 @@
           [
             '--iothreads',
             'iothreads=' ~ (
-              mirror_registry_vm.performance_domain.iothreads | string
+              mirror_registry_role_performance_domain_iothreads | string
             )
           ]
-          if (mirror_registry_vm.performance_domain.iothreads | int) > 0
+          if (mirror_registry_role_performance_domain_iothreads | int) > 0
           else []
         )
       }}

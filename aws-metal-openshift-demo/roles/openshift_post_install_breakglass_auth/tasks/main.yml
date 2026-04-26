@@ -1,4 +1,13 @@
 ---
+- name: Normalize partial breakglass auth dictionary overrides  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    openshift_breakglass_auth: >-
+      {{
+        openshift_breakglass_auth_defaults
+        | default({})
+        | combine(openshift_breakglass_auth | default({}), recursive=True)
+      }}
+
 - name: Derive post-install breakglass auth paths and OAuth payloads
   ansible.builtin.set_fact:
     openshift_post_install_breakglass_auth_oc_local_path: >-

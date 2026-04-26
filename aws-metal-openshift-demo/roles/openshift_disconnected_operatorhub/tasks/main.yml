@@ -29,6 +29,8 @@
       /var/tmp/openshift-disconnected-operatorhub/mirror-registry-auth.json
     openshift_disconnected_operatorhub_catalog_pull_secret_name: >-
       mirror-registry-catalog-pull-secret
+    openshift_disconnected_operatorhub_mirror_registry_delegate_host: >-
+      openshift-disconnected-operatorhub-mirror-registry
     openshift_disconnected_operatorhub_remote_catalogsource_path: >-
       /var/tmp/openshift-disconnected-operatorhub/cs-redhat-operator-index-v4-20.yaml
     openshift_disconnected_operatorhub_redhat_catalog_image: >-
@@ -119,6 +121,24 @@
     dest: "{{ openshift_disconnected_operatorhub_remote_kubeconfig_path }}"
     mode: "0600"
 
+- name: Register the mirror-registry guest as a temporary delegate host
+  ansible.builtin.add_host:
+    name: "{{ openshift_disconnected_operatorhub_mirror_registry_delegate_host }}"
+    ansible_host: "{{ mirror_registry_vm.network.ipv4_address }}"
+    ansible_user: "{{ mirror_registry_vm.access.admin_user }}"
+    ansible_ssh_private_key_file: >-
+      {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+    ansible_become: true
+    ansible_ssh_common_args: >-
+      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+
+- name: Wait for authenticated SSH connectivity to the mirror-registry guest
+  ansible.builtin.wait_for_connection:
+    timeout: 60
+    sleep: 10
+    connect_timeout: 10
+  delegate_to: "{{ openshift_disconnected_operatorhub_mirror_registry_delegate_host }}"
+
 - name: Render mirrored operator CatalogSource manifests
   ansible.builtin.template:
     src: catalogsource.yaml.j2
@@ -159,6 +179,32 @@
   register: openshift_disconnected_operatorhub_pull_secret_raw
   changed_when: false
 
+- name: Read the working mirror-registry authfile from the mirror-registry guest
+  ansible.builtin.slurp:
+    src: "{{ mirror_registry_content.auth.local_registry_auth_file }}"
+  delegate_to: "{{ openshift_disconnected_operatorhub_mirror_registry_delegate_host }}"
+  become: true
+  register: openshift_disconnected_operatorhub_registry_authfile_raw
+
+- name: Parse the working mirror-registry authfile
+  ansible.builtin.set_fact:
+    openshift_disconnected_operatorhub_registry_authfile: >-
+      {{
+        openshift_disconnected_operatorhub_registry_authfile_raw.content
+        | b64decode
+        | from_json
+      }}
+
+- name: Assert the working mirror-registry authfile includes the mirror registry
+  ansible.builtin.assert:
+    that:
+      - >-
+        openshift_disconnected_operatorhub_registry_host in
+        (openshift_disconnected_operatorhub_registry_authfile.auths | default({}))
+    fail_msg: >-
+      The mirror-registry guest authfile does not contain credentials for
+      {{ openshift_disconnected_operatorhub_registry_host }}.
+
 - name: Merge mirror-registry auth into the cluster pull secret
   ansible.builtin.set_fact:
     openshift_disconnected_operatorhub_pull_secret_merged: >-
@@ -174,20 +220,8 @@
                   | from_json
                 ).auths
                 | combine(
-                    {
-                      openshift_disconnected_operatorhub_registry_host: {
-                        'auth': (
-                          mirror_registry_service.init_user
-                          ~ ':'
-                          ~ mirror_registry_service.init_password
-                        ) | b64encode,
-                        'email': (
-                          mirror_registry_service.init_email
-                          if mirror_registry_service.init_email | length > 0
-                          else 'unused@example.com'
-                        )
-                      }
-                    },
+                    openshift_disconnected_operatorhub_registry_authfile.auths
+                    | default({}),
                     recursive=True
                   )
               )
@@ -206,24 +240,7 @@
 - name: Stage a dedicated mirror-registry pull secret for CatalogSource pods
   ansible.builtin.copy:
     content: >-
-      {{
-        {
-          'auths': {
-            openshift_disconnected_operatorhub_registry_host: {
-              'auth': (
-                mirror_registry_service.init_user
-                ~ ':'
-                ~ mirror_registry_service.init_password
-              ) | b64encode,
-              'email': (
-                mirror_registry_service.init_email
-                if mirror_registry_service.init_email | length > 0
-                else 'unused@example.com'
-              )
-            }
-          }
-        } | to_nice_json
-      }}
+      {{ openshift_disconnected_operatorhub_registry_authfile | to_nice_json }}
     dest: >-
       {{ openshift_disconnected_operatorhub_remote_catalog_pull_secret_path }}
     mode: "0600"

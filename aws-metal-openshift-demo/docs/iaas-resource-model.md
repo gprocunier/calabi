@@ -185,11 +185,11 @@ rounding each guest up to the nearest practical instance type:
 | ocp-master | 3 | 8 vCPU, 24 GiB | m5.2xlarge | 8 vCPU, 32 GiB | `$0.384` | `$1.152` |
 | ocp-infra | 3 | 16 vCPU, 64 GiB | m5.4xlarge | 16 vCPU, 64 GiB | `$0.768` | `$2.304` |
 | ocp-worker | 3 | 12 vCPU, 16 GiB | c5.4xlarge | 16 vCPU, 32 GiB | `$0.680` | `$2.040` |
-| idm | 1 | 2 vCPU, 8 GiB | m5.large | 2 vCPU, 8 GiB | `$0.096` | `$0.096` |
-| bastion | 1 | 4 vCPU, 16 GiB | m5.xlarge | 4 vCPU, 16 GiB | `$0.192` | `$0.192` |
-| mirror-registry | 1 | 4 vCPU, 16 GiB | m5.xlarge | 4 vCPU, 16 GiB | `$0.192` | `$0.192` |
+| idm | 1 | 4 vCPU, 8 GiB | m5.xlarge | 4 vCPU, 16 GiB | `$0.192` | `$0.192` |
+| bastion | 1 | 4 vCPU, 8 GiB | m5.xlarge | 4 vCPU, 16 GiB | `$0.192` | `$0.192` |
+| mirror-registry | 1 | 4 vCPU, 8 GiB | m5.xlarge | 4 vCPU, 16 GiB | `$0.192` | `$0.192` |
 | ad | 1 | 4 vCPU, 8 GiB | m5.xlarge (Windows) | 4 vCPU, 16 GiB | `$0.376` | `$0.376` |
-| **native total** | **13** | | | | | **`$6.352`** |
+| **native total** | **13** | | | | | **`$6.448`** |
 | **Calabi m5.metal** | **1** | | m5.metal | 96 vCPU, 384 GiB | | **`$4.608`** |
 
 > [!NOTE]
@@ -255,8 +255,8 @@ guest uplift.
 
 The current layout already demonstrates this:
 
-- 122 guest vCPUs on 72 physical CPUs (`1.69:1` oversubscription)
-- 360 GiB committed guest memory on 384 GiB host (`0.94:1`)
+- 124 guest vCPUs on 72 physical CPUs (`1.72:1` oversubscription)
+- 344 GiB committed guest memory on 384 GiB host (`0.90:1`)
 - the Gold/Silver/Bronze tier model ensures degradation is intentional
 - KSM, zram, and THP provide the memory safety margin
 
@@ -268,7 +268,7 @@ Calabi cost advantage would have been marginal. The progression:
 | --- | --- | ---: | ---: | ---: |
 | original (`3 x 4` workers, 48G infra) | 94 | `$5.088` | `$4.608` | `9%` |
 | previous (`3 x 8` workers, 48G infra) | 106 | `$5.088` | `$4.608` | `9%` |
-| current (`3 x 12` workers, 64G infra, AD) | 122 | `$6.352` | `$4.608` | `27%` |
+| current (`3 x 12` workers, 64G infra, AD) | 124 | `$6.448` | `$4.608` | `29%` |
 
 > [!NOTE]
 > The old 3x4 and 3x8 worker shapes both used m5.2xlarge on the native side

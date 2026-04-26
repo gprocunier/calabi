@@ -1,34 +1,365 @@
 ---
+- name: Normalize host memory oversubscription variables against role defaults
+  ansible.builtin.set_fact:
+    lab_host_memory_oversubscription_effective_settings: >-
+      {{
+        lab_host_memory_oversubscription_defaults
+        | combine(
+            lab_host_memory_oversubscription_settings | default({}),
+            recursive=True
+          )
+      }}
+
 - name: Validate host memory oversubscription variables
   ansible.builtin.assert:
     that:
-      - lab_host_memory_oversubscription_settings.enabled is boolean
-      - lab_host_memory_oversubscription_settings.verify_state is boolean
-      - lab_host_memory_oversubscription_settings.zram.enabled is boolean
-      - lab_host_memory_oversubscription_settings.transparent_hugepages.enabled is boolean
-      - lab_host_memory_oversubscription_settings.ksm.enabled is boolean
-      - lab_host_memory_oversubscription_settings.zram.device_name | length > 0
-      - lab_host_memory_oversubscription_settings.zram.size | length > 0
-      - lab_host_memory_oversubscription_settings.zram.swap_priority | int >= -1
-      - lab_host_memory_oversubscription_settings.transparent_hugepages.mode in ['always', 'madvise', 'never']
-      - lab_host_memory_oversubscription_settings.transparent_hugepages.defrag_mode in ['always', 'defer', 'defer+madvise', 'madvise', 'never']
-      - (lab_host_memory_oversubscription_settings.ksm.run | int) in [0, 1]
-      - (lab_host_memory_oversubscription_settings.ksm.pages_to_scan | int) > 0
-      - (lab_host_memory_oversubscription_settings.ksm.sleep_millisecs | int) > 0
-  when: lab_host_memory_oversubscription_settings.enabled | bool
+      - lab_host_memory_oversubscription_effective_settings.enabled is boolean
+      - lab_host_memory_oversubscription_effective_settings.verify_state is boolean
+      - lab_host_memory_oversubscription_effective_settings.zram.enabled is boolean
+      - lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled is boolean
+      - lab_host_memory_oversubscription_effective_settings.zram.writeback.manage_lvm is boolean
+      - lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.enabled is boolean
+      - lab_host_memory_oversubscription_effective_settings.transparent_hugepages.enabled is boolean
+      - lab_host_memory_oversubscription_effective_settings.ksm.enabled is boolean
+      - lab_host_memory_oversubscription_effective_settings.zram.device_name | length > 0
+      - lab_host_memory_oversubscription_effective_settings.zram.size | length > 0
+      - lab_host_memory_oversubscription_effective_settings.zram.swap_priority | int >= -1
+      - >-
+        not (lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled | bool) or
+        (lab_host_memory_oversubscription_effective_settings.zram.enabled | bool)
+      - >-
+        not (lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled | bool) or
+        (
+          (
+            lab_host_memory_oversubscription_effective_settings.zram.writeback.manage_lvm | bool
+          ) or
+          (
+            lab_host_memory_oversubscription_effective_settings.zram.writeback.backing_device | length > 0
+          )
+        )
+      - >-
+        not (lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled | bool) or
+        (
+          (
+            lab_host_memory_oversubscription_effective_settings.zram.writeback.manage_lvm | bool and
+            lab_host_memory_oversubscription_effective_settings.zram.writeback.volume_group | length > 0 and
+            lab_host_memory_oversubscription_effective_settings.zram.writeback.logical_volume | length > 0 and
+            lab_host_memory_oversubscription_effective_settings.zram.writeback.size is match('^[1-9][0-9]*[Gg]$')
+          ) or
+          (
+            not (lab_host_memory_oversubscription_effective_settings.zram.writeback.manage_lvm | bool) and
+            lab_host_memory_oversubscription_effective_settings.zram.writeback.backing_device is match('^/dev/.+')
+          )
+        )
+      - >-
+        not (lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.enabled | bool) or
+        (lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled | bool)
+      - >-
+        lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.mode in
+        ['incompressible', 'huge', 'idle', 'huge_idle']
+      - (lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.interval | length) > 0
+      - (lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.idle_age_seconds | int) > 0
+      - (lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.per_run_budget_mib | int) >= 0
+      - lab_host_memory_oversubscription_effective_settings.transparent_hugepages.mode in ['always', 'madvise', 'never']
+      - lab_host_memory_oversubscription_effective_settings.transparent_hugepages.defrag_mode in ['always', 'defer', 'defer+madvise', 'madvise', 'never']
+      - (lab_host_memory_oversubscription_effective_settings.ksm.run | int) in [0, 1]
+      - (lab_host_memory_oversubscription_effective_settings.ksm.pages_to_scan | int) > 0
+      - (lab_host_memory_oversubscription_effective_settings.ksm.sleep_millisecs | int) > 0
+  when: lab_host_memory_oversubscription_effective_settings.enabled | bool
+
+- name: Derive zram writeback policy capability flags
+  ansible.builtin.set_fact:
+    lab_host_memory_oversubscription_writeback_policy_uses_idle_tracking: >-
+      {{
+        lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.mode in
+        ['idle', 'huge_idle']
+      }}
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.enabled | bool
+
+- name: Detect whether the running kernel supports age-based zram idle tracking
+  ansible.builtin.shell: |
+    set -euo pipefail
+    grep -q '^CONFIG_ZRAM_TRACK_ENTRY_ACTIME=y$' /boot/config-$(uname -r)
+  args:
+    executable: /bin/bash
+  register: lab_host_memory_oversubscription_zram_track_entry_actime
+  changed_when: false
+  failed_when: false
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.enabled | bool
+    - lab_host_memory_oversubscription_writeback_policy_uses_idle_tracking | bool
+
+- name: Fail when idle-based zram writeback policy lacks kernel support
+  ansible.builtin.assert:
+    that:
+      - lab_host_memory_oversubscription_zram_track_entry_actime.rc == 0
+    fail_msg: >-
+      The configured zram writeback policy mode requires
+      CONFIG_ZRAM_TRACK_ENTRY_ACTIME=y for age-based idle tracking on the
+      running kernel. Use `incompressible` or `huge` instead on this host.
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.enabled | bool
+    - lab_host_memory_oversubscription_writeback_policy_uses_idle_tracking | bool
+
+- name: Derive the effective zram writeback backing device path
+  ansible.builtin.set_fact:
+    lab_host_memory_oversubscription_zram_writeback_effective_backing_device: >-
+      {{
+        '/dev/' ~
+        lab_host_memory_oversubscription_effective_settings.zram.writeback.volume_group ~
+        '/' ~
+        lab_host_memory_oversubscription_effective_settings.zram.writeback.logical_volume
+        if (lab_host_memory_oversubscription_effective_settings.zram.writeback.manage_lvm | bool)
+        else
+        lab_host_memory_oversubscription_effective_settings.zram.writeback.backing_device
+      }}
+    lab_host_memory_oversubscription_zram_writeback_requested_size_gib: >-
+      {{
+        (
+          lab_host_memory_oversubscription_effective_settings.zram.writeback.size
+          | regex_replace('[Gg]$', '')
+        ) | int
+      }}
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled | bool
+
+- name: Query the managed zram writeback volume group
+  ansible.builtin.command:
+    argv:
+      - vgs
+      - --reportformat
+      - json
+      - --units
+      - g
+      - --nosuffix
+      - -o
+      - vg_name,vg_free
+      - "{{ lab_host_memory_oversubscription_effective_settings.zram.writeback.volume_group }}"
+  register: lab_host_memory_oversubscription_writeback_vg_report
+  changed_when: false
+  failed_when: false
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.manage_lvm | bool
+
+- name: Publish the managed zram writeback volume group facts
+  ansible.builtin.set_fact:
+    lab_host_memory_oversubscription_writeback_vg_entry: >-
+      {{
+        (
+          (
+            lab_host_memory_oversubscription_writeback_vg_report.stdout | from_json
+          ).report[0].vg | default([])
+          | selectattr(
+              'vg_name',
+              'equalto',
+              lab_host_memory_oversubscription_effective_settings.zram.writeback.volume_group
+            )
+          | list
+          | first
+        ) | default({})
+      }}
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.manage_lvm | bool
+    - lab_host_memory_oversubscription_writeback_vg_report.rc == 0
+
+- name: Fail when the managed zram writeback volume group is missing
+  ansible.builtin.assert:
+    that:
+      - lab_host_memory_oversubscription_writeback_vg_report.rc == 0
+      - lab_host_memory_oversubscription_writeback_vg_entry.vg_name | default('') | length > 0
+    fail_msg: >-
+      The configured zram writeback volume group {{
+      lab_host_memory_oversubscription_effective_settings.zram.writeback.volume_group }}
+      was not found on the host.
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.manage_lvm | bool
+
+- name: Query the managed zram writeback logical volume
+  ansible.builtin.command:
+    argv:
+      - lvs
+      - --reportformat
+      - json
+      - --units
+      - g
+      - --nosuffix
+      - -o
+      - lv_name,vg_name,lv_size,lv_path
+      - "{{ lab_host_memory_oversubscription_effective_settings.zram.writeback.volume_group }}"
+  register: lab_host_memory_oversubscription_writeback_lv_report
+  changed_when: false
+  failed_when: false
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.manage_lvm | bool
+
+- name: Publish the managed zram writeback logical volume facts
+  ansible.builtin.set_fact:
+    lab_host_memory_oversubscription_writeback_lv_entry: >-
+      {{
+        (
+          (
+            lab_host_memory_oversubscription_writeback_lv_report.stdout | from_json
+          ).report[0].lv | default([])
+          | selectattr(
+              'vg_name',
+              'equalto',
+              lab_host_memory_oversubscription_effective_settings.zram.writeback.volume_group
+            )
+          | selectattr(
+              'lv_name',
+              'equalto',
+              lab_host_memory_oversubscription_effective_settings.zram.writeback.logical_volume
+            )
+          | list
+          | first
+        ) | default({})
+      }}
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.manage_lvm | bool
+    - lab_host_memory_oversubscription_writeback_lv_report.rc == 0
+
+- name: Validate an existing managed zram writeback logical volume
+  ansible.builtin.assert:
+    that:
+      - >-
+        (lab_host_memory_oversubscription_writeback_lv_entry.lv_size | float | round(0, 'common') | int)
+        == (lab_host_memory_oversubscription_zram_writeback_requested_size_gib | int)
+      - >-
+        (lab_host_memory_oversubscription_writeback_lv_entry.lv_path | default('') | trim)
+        == (lab_host_memory_oversubscription_zram_writeback_effective_backing_device | trim)
+    fail_msg: >-
+      The existing managed zram writeback LV does not match the requested size
+      or device path. Adjust the override or recreate the LV intentionally.
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.manage_lvm | bool
+    - lab_host_memory_oversubscription_writeback_lv_entry.lv_name | default('') | length > 0
+
+- name: Create the managed zram writeback logical volume
+  ansible.builtin.command:
+    argv:
+      - lvcreate
+      - --yes
+      - --size
+      - "{{ lab_host_memory_oversubscription_effective_settings.zram.writeback.size }}"
+      - --name
+      - "{{ lab_host_memory_oversubscription_effective_settings.zram.writeback.logical_volume }}"
+      - "{{ lab_host_memory_oversubscription_effective_settings.zram.writeback.volume_group }}"
+  register: lab_host_memory_oversubscription_writeback_lv_create
+  changed_when: true
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.manage_lvm | bool
+    - not ansible_check_mode
+    - lab_host_memory_oversubscription_writeback_lv_entry.lv_name | default('') | length == 0
+
+- name: Wait for LVM device nodes to settle after zram writeback LV creation
+  ansible.builtin.command:
+    argv:
+      - udevadm
+      - settle
+  changed_when: false
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.manage_lvm | bool
+    - not ansible_check_mode
+    - lab_host_memory_oversubscription_writeback_lv_create is defined
+    - lab_host_memory_oversubscription_writeback_lv_create.changed
+
+- name: Check whether the optional zram writeback backing device exists
+  ansible.builtin.command:
+    argv:
+      - test
+      - -b
+      - "{{ lab_host_memory_oversubscription_zram_writeback_effective_backing_device }}"
+  register: lab_host_memory_oversubscription_writeback_backing_device_exists
+  changed_when: false
+  failed_when: false
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled | bool
+
+- name: Fail when the optional zram writeback backing device does not exist
+  ansible.builtin.assert:
+    that:
+      - lab_host_memory_oversubscription_writeback_backing_device_exists.rc == 0
+    fail_msg: >-
+      The configured zram writeback backing device does not exist as a block
+      device on the host.
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled | bool
+
+- name: Check whether the optional zram writeback backing device is active swap
+  ansible.builtin.shell: |
+    set -euo pipefail
+    swapon --show=NAME --noheadings | awk '$1=="{{ lab_host_memory_oversubscription_zram_writeback_effective_backing_device }}"{found=1} END{exit(found?0:1)}'
+  args:
+    executable: /bin/bash
+  register: lab_host_memory_oversubscription_writeback_backing_device_swap_active
+  changed_when: false
+  failed_when: false
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled | bool
+
+- name: Check whether the optional zram writeback backing device is mounted
+  ansible.builtin.command:
+    argv:
+      - findmnt
+      - -rn
+      - -S
+      - "{{ lab_host_memory_oversubscription_zram_writeback_effective_backing_device }}"
+  register: lab_host_memory_oversubscription_writeback_backing_device_mounted
+  changed_when: false
+  failed_when: false
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled | bool
+
+- name: Fail when the optional zram writeback backing device is busy
+  ansible.builtin.assert:
+    that:
+      - lab_host_memory_oversubscription_writeback_backing_device_swap_active.rc != 0
+      - lab_host_memory_oversubscription_writeback_backing_device_mounted.rc != 0
+    fail_msg: >-
+      The configured zram writeback backing device is currently mounted or
+      active as swap. Repurpose a dedicated block device before enabling this
+      override.
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled | bool
 
 - name: Check whether the zram device is already active
   ansible.builtin.shell: |
     set -euo pipefail
-    swapon --show=NAME --noheadings | awk '$1=="/dev/{{ lab_host_memory_oversubscription_settings.zram.device_name }}"{found=1} END{exit(found?0:1)}'
+    swapon --show=NAME --noheadings | awk '$1=="/dev/{{ lab_host_memory_oversubscription_effective_settings.zram.device_name }}"{found=1} END{exit(found?0:1)}'
   args:
     executable: /bin/bash
   register: lab_host_memory_oversubscription_zram_active
   changed_when: false
   failed_when: false
   when:
-    - lab_host_memory_oversubscription_settings.enabled | bool
-    - lab_host_memory_oversubscription_settings.zram.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.enabled | bool
 
 - name: Check whether the policy service is already enabled
   ansible.builtin.command:
@@ -39,7 +370,7 @@
   register: lab_host_memory_oversubscription_service_enabled
   changed_when: false
   failed_when: false
-  when: lab_host_memory_oversubscription_settings.enabled | bool
+  when: lab_host_memory_oversubscription_effective_settings.enabled | bool
 
 - name: Check whether the policy service is already active
   ansible.builtin.command:
@@ -50,7 +381,7 @@
   register: lab_host_memory_oversubscription_service_active
   changed_when: false
   failed_when: false
-  when: lab_host_memory_oversubscription_settings.enabled | bool
+  when: lab_host_memory_oversubscription_effective_settings.enabled | bool
 
 - name: Ensure host memory oversubscription directories exist
   ansible.builtin.file:
@@ -61,7 +392,106 @@
     mode: "0755"
   loop:
     - /etc/systemd/system
-  when: lab_host_memory_oversubscription_settings.enabled | bool
+  when: lab_host_memory_oversubscription_effective_settings.enabled | bool
+
+- name: Install the zram writeback policy helper script
+  ansible.builtin.template:
+    src: zram-writeback-policy.sh.j2
+    dest: /usr/local/sbin/calabi-zram-writeback-policy.sh
+    owner: root
+    group: root
+    mode: "0755"
+  register: lab_host_memory_oversubscription_writeback_policy_script
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.enabled | bool
+
+- name: Install the zram writeback policy service unit
+  ansible.builtin.template:
+    src: zram-writeback-policy.service.j2
+    dest: /etc/systemd/system/calabi-zram-writeback-policy.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: lab_host_memory_oversubscription_writeback_policy_service_unit
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.enabled | bool
+
+- name: Install the zram writeback policy timer unit
+  ansible.builtin.template:
+    src: zram-writeback-policy.timer.j2
+    dest: /etc/systemd/system/calabi-zram-writeback-policy.timer
+    owner: root
+    group: root
+    mode: "0644"
+  register: lab_host_memory_oversubscription_writeback_policy_timer_unit
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.enabled | bool
+
+- name: Check whether the zram writeback policy timer is already enabled
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-enabled
+      - calabi-zram-writeback-policy.timer
+  register: lab_host_memory_oversubscription_writeback_policy_timer_enabled
+  changed_when: false
+  failed_when: false
+  when: lab_host_memory_oversubscription_effective_settings.enabled | bool
+
+- name: Check whether the zram writeback policy timer is already active
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - calabi-zram-writeback-policy.timer
+  register: lab_host_memory_oversubscription_writeback_policy_timer_active
+  changed_when: false
+  failed_when: false
+  when: lab_host_memory_oversubscription_effective_settings.enabled | bool
+
+- name: Stop and disable the zram writeback policy timer when the policy is disabled
+  ansible.builtin.systemd:
+    name: calabi-zram-writeback-policy.timer
+    enabled: false
+    state: stopped
+  failed_when: false
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - not (lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.enabled | bool)
+    - not ansible_check_mode
+    - >-
+      (lab_host_memory_oversubscription_writeback_policy_timer_enabled.rc | default(1)) == 0 or
+      (lab_host_memory_oversubscription_writeback_policy_timer_active.rc | default(1)) == 0
+
+- name: Remove the zram writeback policy timer unit when the policy is disabled
+  ansible.builtin.file:
+    path: /etc/systemd/system/calabi-zram-writeback-policy.timer
+    state: absent
+  register: lab_host_memory_oversubscription_writeback_policy_timer_removed
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - not (lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.enabled | bool)
+
+- name: Remove the zram writeback policy service unit when the policy is disabled
+  ansible.builtin.file:
+    path: /etc/systemd/system/calabi-zram-writeback-policy.service
+    state: absent
+  register: lab_host_memory_oversubscription_writeback_policy_service_removed
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - not (lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.enabled | bool)
+
+- name: Remove the zram writeback policy helper script when the policy is disabled
+  ansible.builtin.file:
+    path: /usr/local/sbin/calabi-zram-writeback-policy.sh
+    state: absent
+  register: lab_host_memory_oversubscription_writeback_policy_script_removed
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - not (lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.enabled | bool)
 
 - name: Check that zramctl is available on the host
   ansible.builtin.command:
@@ -73,8 +503,8 @@
   changed_when: false
   failed_when: false
   when:
-    - lab_host_memory_oversubscription_settings.enabled | bool
-    - lab_host_memory_oversubscription_settings.zram.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.enabled | bool
 
 - name: Fail when zramctl is unavailable on the host
   ansible.builtin.assert:
@@ -84,8 +514,8 @@
       zramctl is not available on the host, so the explicit zram orchestration
       path cannot be applied.
   when:
-    - lab_host_memory_oversubscription_settings.enabled | bool
-    - lab_host_memory_oversubscription_settings.zram.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.enabled | bool
 
 - name: Install the host memory oversubscription policy unit
   ansible.builtin.template:
@@ -95,7 +525,7 @@
     group: root
     mode: "0644"
   register: lab_host_memory_oversubscription_unit
-  when: lab_host_memory_oversubscription_settings.enabled | bool
+  when: lab_host_memory_oversubscription_effective_settings.enabled | bool
 
 - name: Reload systemd after host memory oversubscription changes
   ansible.builtin.command:
@@ -103,9 +533,14 @@
       - systemctl
       - daemon-reload
   when:
-    - lab_host_memory_oversubscription_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
     - not ansible_check_mode
-    - lab_host_memory_oversubscription_unit.changed
+    - >-
+      lab_host_memory_oversubscription_unit.changed or
+      (lab_host_memory_oversubscription_writeback_policy_service_unit is defined and lab_host_memory_oversubscription_writeback_policy_service_unit.changed) or
+      (lab_host_memory_oversubscription_writeback_policy_timer_unit is defined and lab_host_memory_oversubscription_writeback_policy_timer_unit.changed) or
+      (lab_host_memory_oversubscription_writeback_policy_service_removed is defined and lab_host_memory_oversubscription_writeback_policy_service_removed.changed) or
+      (lab_host_memory_oversubscription_writeback_policy_timer_removed is defined and lab_host_memory_oversubscription_writeback_policy_timer_removed.changed)
   changed_when: true
 
 - name: Ensure the host memory oversubscription policy service is enabled and active
@@ -114,7 +549,7 @@
     enabled: true
     state: started
   when:
-    - lab_host_memory_oversubscription_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
     - not ansible_check_mode
     - >-
       lab_host_memory_oversubscription_unit.changed or
@@ -123,12 +558,12 @@
 
 - name: Stop the generator-managed zram unit when the explicit service definition changed
   ansible.builtin.systemd:
-    name: "systemd-zram-setup@{{ lab_host_memory_oversubscription_settings.zram.device_name }}.service"
+    name: "systemd-zram-setup@{{ lab_host_memory_oversubscription_effective_settings.zram.device_name }}.service"
     state: stopped
   failed_when: false
   when:
-    - lab_host_memory_oversubscription_settings.enabled | bool
-    - lab_host_memory_oversubscription_settings.zram.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.enabled | bool
     - not ansible_check_mode
     - lab_host_memory_oversubscription_unit.changed
 
@@ -140,12 +575,27 @@
          if lab_host_memory_oversubscription_unit.changed
          else 'started' }}
   when:
-    - lab_host_memory_oversubscription_settings.enabled | bool
-    - lab_host_memory_oversubscription_settings.zram.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.enabled | bool
     - not ansible_check_mode
     - >-
       lab_host_memory_oversubscription_unit.changed or
       (lab_host_memory_oversubscription_zram_active.rc | default(1)) != 0
+
+- name: Ensure the zram writeback policy timer is enabled and active
+  ansible.builtin.systemd:
+    name: calabi-zram-writeback-policy.timer
+    enabled: true
+    state: started
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.enabled | bool
+    - not ansible_check_mode
+    - >-
+      (lab_host_memory_oversubscription_writeback_policy_service_unit is defined and lab_host_memory_oversubscription_writeback_policy_service_unit.changed) or
+      (lab_host_memory_oversubscription_writeback_policy_timer_unit is defined and lab_host_memory_oversubscription_writeback_policy_timer_unit.changed) or
+      (lab_host_memory_oversubscription_writeback_policy_timer_enabled.rc | default(1)) != 0 or
+      (lab_host_memory_oversubscription_writeback_policy_timer_active.rc | default(1)) != 0
 
 - name: Read the current THP enabled mode
   ansible.builtin.command:
@@ -155,9 +605,9 @@
   register: lab_host_memory_oversubscription_thp_enabled
   changed_when: false
   when:
-    - lab_host_memory_oversubscription_settings.enabled | bool
-    - lab_host_memory_oversubscription_settings.verify_state | bool
-    - lab_host_memory_oversubscription_settings.transparent_hugepages.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.verify_state | bool
+    - lab_host_memory_oversubscription_effective_settings.transparent_hugepages.enabled | bool
 
 - name: Read the current THP defrag mode
   ansible.builtin.command:
@@ -168,9 +618,9 @@
   changed_when: false
   failed_when: false
   when:
-    - lab_host_memory_oversubscription_settings.enabled | bool
-    - lab_host_memory_oversubscription_settings.verify_state | bool
-    - lab_host_memory_oversubscription_settings.transparent_hugepages.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.verify_state | bool
+    - lab_host_memory_oversubscription_effective_settings.transparent_hugepages.enabled | bool
 
 - name: Read the current KSM run state
   ansible.builtin.command:
@@ -180,9 +630,9 @@
   register: lab_host_memory_oversubscription_ksm_run
   changed_when: false
   when:
-    - lab_host_memory_oversubscription_settings.enabled | bool
-    - lab_host_memory_oversubscription_settings.verify_state | bool
-    - lab_host_memory_oversubscription_settings.ksm.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.verify_state | bool
+    - lab_host_memory_oversubscription_effective_settings.ksm.enabled | bool
 
 - name: Read the current KSM pages-to-scan value
   ansible.builtin.command:
@@ -192,9 +642,9 @@
   register: lab_host_memory_oversubscription_ksm_pages_to_scan
   changed_when: false
   when:
-    - lab_host_memory_oversubscription_settings.enabled | bool
-    - lab_host_memory_oversubscription_settings.verify_state | bool
-    - lab_host_memory_oversubscription_settings.ksm.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.verify_state | bool
+    - lab_host_memory_oversubscription_effective_settings.ksm.enabled | bool
 
 - name: Read the current KSM sleep interval
   ansible.builtin.command:
@@ -204,23 +654,67 @@
   register: lab_host_memory_oversubscription_ksm_sleep_millisecs
   changed_when: false
   when:
-    - lab_host_memory_oversubscription_settings.enabled | bool
-    - lab_host_memory_oversubscription_settings.verify_state | bool
-    - lab_host_memory_oversubscription_settings.ksm.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.verify_state | bool
+    - lab_host_memory_oversubscription_effective_settings.ksm.enabled | bool
+
+- name: Read the current zram writeback backing device
+  ansible.builtin.command:
+    argv:
+      - cat
+      - "/sys/block/{{ lab_host_memory_oversubscription_effective_settings.zram.device_name }}/backing_dev"
+  register: lab_host_memory_oversubscription_zram_backing_device
+  changed_when: false
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.verify_state | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled | bool
+
+- name: Resolve the configured zram writeback backing device path
+  ansible.builtin.command:
+    argv:
+      - readlink
+      - -f
+      - "{{ lab_host_memory_oversubscription_zram_writeback_effective_backing_device }}"
+  register: lab_host_memory_oversubscription_zram_backing_device_expected_resolved
+  changed_when: false
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.verify_state | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled | bool
+
+- name: Resolve the current zram writeback backing device path
+  ansible.builtin.shell: |
+    set -euo pipefail
+    current="{{ lab_host_memory_oversubscription_zram_backing_device.stdout | trim }}"
+    test "${current}" != "none"
+    readlink -f "${current}"
+  args:
+    executable: /bin/bash
+  register: lab_host_memory_oversubscription_zram_backing_device_current_resolved
+  changed_when: false
+  failed_when: false
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.verify_state | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled | bool
 
 - name: Re-check whether the zram device is active after policy application
   ansible.builtin.shell: |
     set -euo pipefail
-    swapon --show=NAME --noheadings | awk '$1=="/dev/{{ lab_host_memory_oversubscription_settings.zram.device_name }}"{found=1} END{exit(found?0:1)}'
+    swapon --show=NAME --noheadings | awk '$1=="/dev/{{ lab_host_memory_oversubscription_effective_settings.zram.device_name }}"{found=1} END{exit(found?0:1)}'
   args:
     executable: /bin/bash
   register: lab_host_memory_oversubscription_zram_active_post
   changed_when: false
   failed_when: false
   when:
-    - lab_host_memory_oversubscription_settings.enabled | bool
-    - lab_host_memory_oversubscription_settings.verify_state | bool
-    - lab_host_memory_oversubscription_settings.zram.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.verify_state | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.enabled | bool
 
 - name: Re-check whether the policy service is enabled after policy application
   ansible.builtin.command:
@@ -232,8 +726,8 @@
   changed_when: false
   failed_when: false
   when:
-    - lab_host_memory_oversubscription_settings.enabled | bool
-    - lab_host_memory_oversubscription_settings.verify_state | bool
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.verify_state | bool
 
 - name: Re-check whether the policy service is active after policy application
   ansible.builtin.command:
@@ -245,23 +739,64 @@
   changed_when: false
   failed_when: false
   when:
-    - lab_host_memory_oversubscription_settings.enabled | bool
-    - lab_host_memory_oversubscription_settings.verify_state | bool
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.verify_state | bool
+
+- name: Re-check whether the zram writeback policy timer is enabled after policy application
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-enabled
+      - calabi-zram-writeback-policy.timer
+  register: lab_host_memory_oversubscription_writeback_policy_timer_enabled_post
+  changed_when: false
+  failed_when: false
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.verify_state | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.enabled | bool
+
+- name: Re-check whether the zram writeback policy timer is active after policy application
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - is-active
+      - calabi-zram-writeback-policy.timer
+  register: lab_host_memory_oversubscription_writeback_policy_timer_active_post
+  changed_when: false
+  failed_when: false
+  when:
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.verify_state | bool
+    - lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.enabled | bool
 
 - name: Verify the host memory oversubscription state
   ansible.builtin.assert:
     that:
       - (lab_host_memory_oversubscription_service_enabled_post.stdout | trim) == 'enabled'
       - (lab_host_memory_oversubscription_service_active_post.stdout | trim) == 'active'
-      - not (lab_host_memory_oversubscription_settings.zram.enabled | bool) or lab_host_memory_oversubscription_zram_active_post.rc == 0
-      - not (lab_host_memory_oversubscription_settings.transparent_hugepages.enabled | bool) or ('[' ~ lab_host_memory_oversubscription_settings.transparent_hugepages.mode ~ ']') in lab_host_memory_oversubscription_thp_enabled.stdout
-      - not (lab_host_memory_oversubscription_settings.transparent_hugepages.enabled | bool) or (lab_host_memory_oversubscription_thp_defrag.rc != 0 or ('[' ~ lab_host_memory_oversubscription_settings.transparent_hugepages.defrag_mode ~ ']') in lab_host_memory_oversubscription_thp_defrag.stdout)
-      - not (lab_host_memory_oversubscription_settings.ksm.enabled | bool) or (lab_host_memory_oversubscription_ksm_run.stdout | trim | int) == (lab_host_memory_oversubscription_settings.ksm.run | int)
-      - not (lab_host_memory_oversubscription_settings.ksm.enabled | bool) or (lab_host_memory_oversubscription_ksm_pages_to_scan.stdout | trim | int) == (lab_host_memory_oversubscription_settings.ksm.pages_to_scan | int)
-      - not (lab_host_memory_oversubscription_settings.ksm.enabled | bool) or (lab_host_memory_oversubscription_ksm_sleep_millisecs.stdout | trim | int) == (lab_host_memory_oversubscription_settings.ksm.sleep_millisecs | int)
+      - not (lab_host_memory_oversubscription_effective_settings.zram.enabled | bool) or lab_host_memory_oversubscription_zram_active_post.rc == 0
+      - >-
+        not (lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled | bool) or
+        (
+          lab_host_memory_oversubscription_zram_backing_device_current_resolved.rc == 0 and
+          (lab_host_memory_oversubscription_zram_backing_device_current_resolved.stdout | trim) ==
+          (lab_host_memory_oversubscription_zram_backing_device_expected_resolved.stdout | trim)
+        )
+      - >-
+        not (lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.enabled | bool) or
+        (lab_host_memory_oversubscription_writeback_policy_timer_enabled_post.stdout | trim) == 'enabled'
+      - >-
+        not (lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.enabled | bool) or
+        (lab_host_memory_oversubscription_writeback_policy_timer_active_post.stdout | trim) == 'active'
+      - not (lab_host_memory_oversubscription_effective_settings.transparent_hugepages.enabled | bool) or ('[' ~ lab_host_memory_oversubscription_effective_settings.transparent_hugepages.mode ~ ']') in lab_host_memory_oversubscription_thp_enabled.stdout
+      - not (lab_host_memory_oversubscription_effective_settings.transparent_hugepages.enabled | bool) or (lab_host_memory_oversubscription_thp_defrag.rc != 0 or ('[' ~ lab_host_memory_oversubscription_effective_settings.transparent_hugepages.defrag_mode ~ ']') in lab_host_memory_oversubscription_thp_defrag.stdout)
+      - not (lab_host_memory_oversubscription_effective_settings.ksm.enabled | bool) or (lab_host_memory_oversubscription_ksm_run.stdout | trim | int) == (lab_host_memory_oversubscription_effective_settings.ksm.run | int)
+      - not (lab_host_memory_oversubscription_effective_settings.ksm.enabled | bool) or (lab_host_memory_oversubscription_ksm_pages_to_scan.stdout | trim | int) == (lab_host_memory_oversubscription_effective_settings.ksm.pages_to_scan | int)
+      - not (lab_host_memory_oversubscription_effective_settings.ksm.enabled | bool) or (lab_host_memory_oversubscription_ksm_sleep_millisecs.stdout | trim | int) == (lab_host_memory_oversubscription_effective_settings.ksm.sleep_millisecs | int)
     fail_msg: >-
       The host memory oversubscription policy did not converge to the expected
       zram, THP, or KSM state.
   when:
-    - lab_host_memory_oversubscription_settings.enabled | bool
-    - lab_host_memory_oversubscription_settings.verify_state | bool
+    - lab_host_memory_oversubscription_effective_settings.enabled | bool
+    - lab_host_memory_oversubscription_effective_settings.verify_state | bool

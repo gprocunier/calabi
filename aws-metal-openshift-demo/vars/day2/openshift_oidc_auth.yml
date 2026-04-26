@@ -1,5 +1,5 @@
 ---
-openshift_oidc_auth:
+openshift_oidc_auth_defaults:
   identity_provider_name: "Keycloak"
   realm_name: openshift
   client_id: openshift
@@ -65,3 +65,5 @@ openshift_oidc_auth:
     include_ad_trusted_user: "{{ lab_configure_ad_trust | default(false) | bool }}"
     ad_test_user: "ad-ocpadmin@{{ ad_server.domain_name }}"
     ad_test_password: "{{ lab_default_password | default('') }}"
+
+openshift_oidc_auth: "{{ openshift_oidc_auth_defaults }}"

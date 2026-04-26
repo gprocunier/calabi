@@ -1,4 +1,13 @@
 ---
+- name: Normalize partial AAP dictionary overrides  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    openshift_aap: >-
+      {{
+        openshift_aap_defaults
+        | default({})
+        | combine(openshift_aap | default({}), recursive=True)
+      }}
+
 - name: Derive remaining OpenShift AAP orchestration context
   ansible.builtin.set_fact:
     openshift_post_install_aap_oc_local_path: >-
@@ -243,6 +252,25 @@
   retries: 90
   delay: 10
   until: openshift_post_install_aap_gateway_deployment.rc == 0
+
+- name: Apply AAP gateway deployment resource requests when requested
+  ansible.builtin.command:
+    argv:
+      - "{{ openshift_post_install_aap_remote_oc_path }}"
+      - set
+      - resources
+      - "deployment/{{ openshift_aap.instance_name }}-gateway"
+      - -n
+      - "{{ openshift_aap.namespace }}"
+      - --containers=proxy,api
+      - >-
+        --requests=cpu={{ openshift_aap.gateway_deployment.resource_requests.cpu }},memory={{ openshift_aap.gateway_deployment.resource_requests.memory }}
+  environment:
+    KUBECONFIG: "{{ openshift_post_install_aap_remote_kubeconfig_path }}"
+  changed_when: true
+  when:
+    - openshift_aap.gateway_deployment.resource_requests.cpu | default('') | length > 0
+    - openshift_aap.gateway_deployment.resource_requests.memory | default('') | length > 0
 
 - name: Wait for AAP gateway deployment rollout
   block:

@@ -316,6 +316,10 @@
 - name: Refresh facts after the optional bastion power-cycle
   ansible.builtin.setup:
 
+- name: Install calabi-shell after RHSM registration and guest updates
+  ansible.builtin.include_role:
+    name: calabi_shell
+
 - name: Install the bastion guest package set
   ansible.builtin.package:
     name: "{{ bastion_client.packages + ['oddjob', 'oddjob-mkhomedir'] }}"

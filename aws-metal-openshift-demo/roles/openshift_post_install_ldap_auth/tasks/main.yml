@@ -1,4 +1,13 @@
 ---
+- name: Normalize partial LDAP auth dictionary overrides  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    openshift_ldap_auth: >-
+      {{
+        openshift_ldap_auth_defaults
+        | default({})
+        | combine(openshift_ldap_auth | default({}), recursive=True)
+      }}
+
 - name: Derive the LDAP base DN from the IdM domain
   ansible.builtin.set_fact:
     openshift_post_install_ldap_auth_base_dn: >-

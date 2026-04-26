@@ -5,3 +5,6 @@ Before=slices.target
 [Slice]
 CPUAccounting=yes
 CPUWeight={{ lab_host_resource_management_tier.cpu_weight }}
+{% if lab_host_resource_management_tier.cpu_max_vcpus is defined %}
+CPUQuota={{ (lab_host_resource_management_tier.cpu_max_vcpus | int) * 100 }}%
+{% endif %}

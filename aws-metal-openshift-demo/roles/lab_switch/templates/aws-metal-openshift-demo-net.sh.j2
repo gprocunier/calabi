@@ -25,6 +25,37 @@ ip -4 addr flush dev "{{ port.0 }}"
 {% endif %}
 
 {% endfor %}
+{% for bridge in lab_extra_ovs_bridges | default([]) %}
+# Extra OVS bridge: {{ bridge.name }}
+ovs-vsctl --may-exist add-br "{{ bridge.name }}"
+ovs-vsctl set Interface "{{ bridge.name }}" mtu_request={{ bridge.mtu | default(1500) }}
+ip link set dev "{{ bridge.name }}" mtu {{ bridge.mtu | default(1500) }} up
+{% if bridge.gateway_cidr | default('') | length > 0 %}
+if ip -4 addr show dev "{{ bridge.name }}" | grep -Fq "{{ bridge.gateway_cidr.split('/')[0] }}/"; then
+  :
+else
+  ip -4 addr flush dev "{{ bridge.name }}"
+  ip -4 addr add "{{ bridge.gateway_cidr }}" dev "{{ bridge.name }}"
+fi
+{% else %}
+ip -4 addr flush dev "{{ bridge.name }}"
+{% endif %}
+ip -6 addr flush dev "{{ bridge.name }}"
+{% if bridge.uplink_interface | default('') | length > 0 %}
+{% for retired_uplink in bridge.retired_uplink_interfaces | default([]) %}
+ovs-vsctl --if-exists del-port "{{ bridge.name }}" "{{ retired_uplink }}"
+{% endfor %}
+ip -4 addr flush dev "{{ bridge.uplink_interface }}"
+ip -6 addr flush dev "{{ bridge.uplink_interface }}"
+ip link set dev "{{ bridge.uplink_interface }}" mtu {{ bridge.mtu | default(1500) }} up
+ovs-vsctl --may-exist add-port "{{ bridge.name }}" "{{ bridge.uplink_interface }}"
+ovs-vsctl set Interface "{{ bridge.uplink_interface }}" mtu_request={{ bridge.mtu | default(1500) }}
+{% if bridge.uplink_trunks | default([]) | length > 0 %}
+ovs-vsctl set Port "{{ bridge.uplink_interface }}" trunks={{ bridge.uplink_trunks | join(',') }}
+{% endif %}
+{% endif %}
+
+{% endfor %}
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
 sysctl -w net.ipv4.conf.all.rp_filter=0 >/dev/null
 sysctl -w net.ipv4.conf.default.rp_filter=0 >/dev/null

@@ -10,5 +10,12 @@
     - ../../vars/cluster/openshift_install_cluster.yml
     - ../../vars/cluster/openshift_install_artifacts.yml
     - ../../vars/cluster/openshift_agent_media.yml
+  pre_tasks:
+    - name: Derive existing OpenShift cluster convergence state
+      ansible.builtin.include_tasks: tasks/derive-cluster-convergence.yml
+
+    - name: Skip OpenShift agent media generation when the cluster is already converged
+      ansible.builtin.meta: end_play
+      when: openshift_cluster_already_converged | default(false) | bool
   roles:
     - openshift_agent_media

@@ -1,7 +1,7 @@
 ---
 openshift_post_install_pipelines_operator_namespace: openshift-operators
 openshift_post_install_pipelines_default_storage_class: >-
-  ocs-storagecluster-ceph-rbd
+  {{ openshift_post_install_odf_effective_default_storage_class_rbd }}
 openshift_post_install_pipelines_subscription_name: >-
   openshift-pipelines-operator-rh
 openshift_post_install_pipelines_package_name: >-

@@ -278,7 +278,7 @@ all host-side IO noise has been fully isolated.
 ## Current Capacity Picture On `m5.metal`
 
 `m5.metal` provides 96 logical CPUs and 384 GiB RAM. The current layout
-commits 122 vCPUs and 360 GiB of guest memory across 13 guests. This is a
+commits 124 vCPUs and 344 GiB of guest memory across 13 guests. This is a
 deliberate oversubscription on CPU managed by the Gold/Silver/Bronze tier
 model, with memory sitting just under a 1:1 commit ratio where KSM and zram
 provide the safety margin.
@@ -290,19 +290,19 @@ Present configured guest allocations:
 | masters | 3 | 8 | 24 GiB | 24 | 72 GiB |
 | infra | 3 | 16 | 64 GiB | 48 | 192 GiB |
 | workers | 3 | 12 | 16 GiB | 36 | 48 GiB |
-| IdM | 1 | 2 | 8 GiB | 2 | 8 GiB |
-| mirror-registry | 1 | 4 | 16 GiB | 4 | 16 GiB |
-| bastion | 1 | 4 | 16 GiB | 4 | 16 GiB |
+| IdM | 1 | 4 | 8 GiB | 4 | 8 GiB |
+| mirror-registry | 1 | 4 | 8 GiB | 4 | 8 GiB |
+| bastion | 1 | 4 | 8 GiB | 4 | 8 GiB |
 | ad | 1 | 4 | 8 GiB | 4 | 8 GiB |
-| **total** | **13 guests** | | | **122** | **360 GiB** |
+| **total** | **13 guests** | | | **124** | **344 GiB** |
 
 Against the host:
 
 - guest execution pool: `72` logical CPUs
-- current aggregate guest vCPU count: `122`
-- current vCPU oversubscription ratio: `1.69:1`
+- current aggregate guest vCPU count: `124`
+- current vCPU oversubscription ratio: `1.72:1`
 - host physical RAM: `384` GiB
-- current memory commit ratio: `0.94:1`
+- current memory commit ratio: `0.90:1`
 
 ### vCPU Oversubscription Context
 
@@ -310,7 +310,7 @@ Against the host:
 | --- | --- | --- | --- | --- |
 | historical validated baseline | `3 x 4` | 98 | `1.36:1` | known good baseline before worker uplift |
 | previous repo default | `3 x 8` | 110 | `1.53:1` | first uplift from the original 4-vCPU workers |
-| current repo default | `3 x 12` | 122 | `1.69:1` | chosen default, validated with memory oversub in place |
+| current repo default | `3 x 12` | 124 | `1.72:1` | chosen default, validated with memory oversub in place |
 
 The move to `3 x 12` workers was made possible by the memory oversubscription
 work (KSM, zram, THP). The host demonstrated low steady-state memory
@@ -319,7 +319,7 @@ confidence to push workers to the larger allocation.
 
 ### Memory Commit Context
 
-The `0.94:1` memory commit ratio means guest allocations nearly fill host RAM
+The `0.90:1` memory commit ratio means guest allocations stay below host RAM
 before accounting for the host kernel, page cache, and host-side services.
 In practice the host remains comfortable because:
 

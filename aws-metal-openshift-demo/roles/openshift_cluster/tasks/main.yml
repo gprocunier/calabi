@@ -77,6 +77,26 @@
   loop_control:
     label: "{{ item.name }}"
 
+- name: Validate optional OpenShift node extra network interfaces
+  ansible.builtin.assert:
+    that:
+      - item.1.name | default('') | length > 0
+      - item.1.libvirt_network | default('') | length > 0
+      - item.1.libvirt_portgroup | default('') | length > 0
+      - item.1.mac_address | default('') | length > 0
+      - (item.1.mtu | default(1500) | int) > 0
+    fail_msg: >-
+      Optional network interface {{ item.1.name | default('unnamed') }} for
+      OpenShift node {{ item.0.name }} is missing required libvirt network,
+      portgroup, MAC address, or MTU data.
+  loop: >-
+    {{
+      openshift_cluster_effective_nodes
+      | subelements('network.additional_interfaces', skip_missing=True)
+    }}
+  loop_control:
+    label: "{{ item.0.name }}:{{ item.1.name | default('unnamed') }}"
+
 - name: Check whether the OpenShift node root block devices are present
   ansible.builtin.stat:
     path: "{{ item.disks.root.path }}"
@@ -171,20 +191,6 @@
   changed_when: false
   failed_when: false
 
-- name: Inspect the OpenShift node root block device partition tables
-  ansible.builtin.command:
-    argv:
-      - lsblk
-      - -nro
-      - PTTYPE
-      - "{{ item.disks.root.path }}"
-  loop: "{{ openshift_cluster_effective_nodes }}"
-  loop_control:
-    label: "{{ item.name }}"
-  register: openshift_cluster_root_disk_pttype
-  changed_when: false
-  failed_when: false
-
 - name: Stop the existing OpenShift node VMs before recreation
   ansible.builtin.command:
     argv:
@@ -233,6 +239,7 @@
   loop_control:
     label: "{{ item.item.name }}"
   when:
+    - openshift_cluster_manage_existing_domains_boot_media | bool
     - item.rc == 0
     - not (
         openshift_cluster_recreate_existing_domains | bool or
@@ -281,6 +288,7 @@
   loop_control:
     label: "{{ item.item.name }}"
   when:
+    - openshift_cluster_manage_existing_domains_boot_media | bool
     - item.rc == 0
     - not (
         openshift_cluster_recreate_existing_domains | bool or
@@ -315,6 +323,7 @@
   loop_control:
     label: "{{ item.item.name }}"
   when:
+    - openshift_cluster_manage_existing_domains_boot_media | bool
     - item.rc == 0
     - not (
         openshift_cluster_recreate_existing_domains | bool or
@@ -346,6 +355,7 @@
   loop_control:
     label: "{{ item.item.name }}"
   when:
+    - openshift_cluster_manage_existing_domains_boot_media | bool
     - openshift_cluster_restart_existing_domains_for_boot_media | bool
     - item.rc == 0
     - not (
@@ -407,20 +417,9 @@
   loop_control:
     label: "{{ item.name }}"
   when: >-
-    (
-      item.provisioning.reinitialize_root_disk
-      | default(openshift_cluster_vm_defaults.provisioning.reinitialize_root_disk)
-      | bool
-    ) or (
-      (
-        openshift_cluster_root_disk_pttype.results
-        | selectattr('item.name', 'equalto', item.name)
-        | map(attribute='stdout')
-        | first
-        | default('')
-        | trim
-      ) | length == 0
-    )
+    item.provisioning.reinitialize_root_disk
+    | default(openshift_cluster_vm_defaults.provisioning.reinitialize_root_disk)
+    | bool
   changed_when: true
 
 - name: Reinitialize the OpenShift node additional block devices for a fresh install
@@ -447,7 +446,7 @@
 
 - name: Install the OpenShift node VMs when absent or recreation was requested
   ansible.builtin.command:
-    cmd: "{{ lookup('template', 'virt-install-command.j2') | trim }}"
+    argv: "{{ lookup('template', 'virt-install-argv.yml.j2') | from_yaml }}"
   vars:
     openshift_cluster_node: "{{ item }}"
   loop: "{{ openshift_cluster_effective_nodes }}"

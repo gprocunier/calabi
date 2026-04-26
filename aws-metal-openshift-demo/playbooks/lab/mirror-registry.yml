@@ -1,4 +1,202 @@
 ---
+- name: Probe whether the mirror registry guest is already fully converged
+  hosts: aws_metal
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/host_resource_management.yml
+    - ../../vars/global/pki.yml
+    - ../../vars/global/rhsm.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/bastion_vm.yml
+    - ../../vars/guests/mirror_registry_vm.yml
+    - ../../vars/global/mirror_content.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/global/name_resolution.yml
+    - ../../vars/global/lab_switch_ports.yml
+
+  tasks:
+    - name: Check whether the mirror registry libvirt domain already exists
+      ansible.builtin.command:
+        argv:
+          - virsh
+          - dominfo
+          - "{{ mirror_registry_vm.name }}.{{ mirror_registry_vm.domain }}"
+      register: mirror_registry_probe_domain_info
+      changed_when: false
+      failed_when: false
+
+    - name: Wait briefly for SSH on an existing mirror registry guest
+      ansible.builtin.wait_for:
+        host: "{{ mirror_registry_vm.network.ipv4_address }}"
+        port: 22
+        timeout: 20
+        sleep: 5
+      register: mirror_registry_probe_ssh
+      changed_when: false
+      failed_when: false
+      when:
+        - mirror_registry_probe_domain_info.rc == 0
+        - not (mirror_registry_vm.provisioning.recreate_domain | bool)
+        - not (mirror_registry_vm.provisioning.rebuild_disk_from_image | bool)
+
+    - name: Register the existing mirror registry guest for completion probing
+      ansible.builtin.add_host:
+        name: mirror_registry_probe
+        groups:
+          - mirror_registry_probe
+        ansible_host: "{{ mirror_registry_vm.network.ipv4_address }}"
+        ansible_user: "{{ mirror_registry_vm.access.admin_user }}"
+        ansible_ssh_private_key_file: >-
+          {{ hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+        ansible_become: true
+        ansible_ssh_common_args: >-
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          -o ProxyCommand="ssh -i {{
+          hostvars[inventory_hostname].ansible_ssh_private_key_file }}
+          -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          {{ hostvars[inventory_hostname].ansible_user }}@{{
+          hostvars[inventory_hostname].ansible_host }} -W %h:%p"
+      when:
+        - mirror_registry_probe_domain_info.rc == 0
+        - (mirror_registry_probe_ssh.state | default('')) == 'started'
+        - not (mirror_registry_vm.provisioning.recreate_domain | bool)
+        - not (mirror_registry_vm.provisioning.rebuild_disk_from_image | bool)
+
+- name: Check whether the existing mirror registry guest is already fully configured
+  hosts: mirror_registry_probe
+  become: true
+  gather_facts: false
+  vars_files:
+    - ../../vars/global/execution_environment.yml
+    - ../../vars/global/host_resource_management.yml
+    - ../../vars/global/pki.yml
+    - ../../vars/global/rhsm.yml
+    - ../../vars/guests/idm_vm.yml
+    - ../../vars/guests/bastion_vm.yml
+    - ../../vars/guests/mirror_registry_vm.yml
+    - ../../vars/global/mirror_content.yml
+    - ../../vars/cluster/openshift_install_cluster.yml
+    - ../../vars/global/name_resolution.yml
+    - ../../vars/global/lab_switch_ports.yml
+
+  tasks:
+    - name: Wait for authenticated SSH connectivity to the existing mirror registry guest
+      ansible.builtin.wait_for_connection:
+        timeout: 60
+        sleep: 10
+        connect_timeout: 10
+
+    - name: Probe the mirror registry guest completion state
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+
+          reasons=()
+          registry_host="{{ mirror_registry_vm.name }}.{{ mirror_registry_vm.domain }}"
+          registry_port="{{ mirror_registry_service.registry_port }}"
+          registry_certs_dir="/etc/containers/certs.d/${registry_host}:${registry_port}"
+          auth_file="{{ mirror_registry_service.auth_file }}"
+          config_file="{{ mirror_registry_content.workspace.config_file }}"
+          workflow="{% if mirror_registry_content.mirror_mode == 'advanced' %}{{ mirror_registry_content.workflow }}{% elif mirror_registry_content.mirror_mode == 'direct' %}direct{% elif mirror_registry_content.mirror_mode == 'portable' %}m2d{% else %}d2m{% endif %}"
+          execute_mirror="{% if mirror_registry_execute_mirror_requested is defined %}{{ (mirror_registry_execute_mirror_requested | bool) | ternary('true', 'false') }}{% else %}{{ (mirror_registry_content.execute_mirror | bool) | ternary('true', 'false') }}{% endif %}"
+          force_mirror="{% if mirror_registry_execute_mirror_force_requested is defined %}{{ (mirror_registry_execute_mirror_force_requested | bool) | ternary('true', 'false') }}{% else %}false{% endif %}"
+
+          if [ ! -r /etc/ipa/default.conf ]; then
+            reasons+=("ipa-default-conf")
+          fi
+
+          if ! authselect current --raw 2>/dev/null | grep -F with-mkhomedir >/dev/null 2>&1; then
+            reasons+=("authselect-mkhomedir")
+          fi
+
+          if ! authselect current --raw 2>/dev/null | grep -F with-sudo >/dev/null 2>&1; then
+            reasons+=("authselect-sudo")
+          fi
+
+          if [ ! -f /var/lib/calabi-shell/installed-revision ] || [ ! -f /etc/profile.d/calabi-shell.sh ]; then
+            reasons+=("calabi-shell")
+          fi
+
+          if [ ! -x /usr/local/bin/mirror-registry ]; then
+            reasons+=("mirror-registry-cli")
+          fi
+
+          if [ ! -x /usr/local/bin/oc ]; then
+            reasons+=("oc-cli")
+          fi
+
+          if [ ! -x /usr/local/bin/oc-mirror ]; then
+            reasons+=("oc-mirror-cli")
+          fi
+
+          for svc in quay-pod.service quay-redis.service quay-app.service; do
+            if ! systemctl is-enabled --quiet "${svc}" || ! systemctl is-active --quiet "${svc}"; then
+              reasons+=("service:${svc}")
+            fi
+          done
+
+          if [ ! -r "${auth_file}" ]; then
+            reasons+=("registry-authfile")
+          fi
+
+          if [ ! -r "${registry_certs_dir}/ca.crt" ]; then
+            reasons+=("registry-container-ca")
+          fi
+
+          if ! dig +short @{{ idm_vm.network.ipv4_address }} ${registry_host} A | grep -Fx {{ mirror_registry_vm.network.ipv4_address | regex_replace('/.*$', '') | quote }} >/dev/null 2>&1; then
+            reasons+=("authoritative-dns")
+          fi
+
+          if [ ! -r "${config_file}" ]; then
+            reasons+=("imageset-config")
+          fi
+
+          if ! curl --silent --show-error --output /dev/null \
+              --write-out '%{http_code}' \
+              --cacert "${registry_certs_dir}/ca.crt" \
+              "https://${registry_host}:${registry_port}/v2/" | grep -Ex '200|401' >/dev/null 2>&1; then
+            reasons+=("registry-api")
+          fi
+
+          if [ "${force_mirror}" = "true" ]; then
+            reasons+=("force-mirror")
+          elif [ "${execute_mirror}" = "true" ] && [ -r "${config_file}" ]; then
+            checksum="$(sha1sum "${config_file}" | awk '{print $1}')"
+            marker="{{ mirror_registry_service.mirror_state_dir }}/${workflow}-${checksum}.done"
+            if [ ! -f "${marker}" ]; then
+              reasons+=("mirror-marker")
+            fi
+          fi
+
+          if [ "${reasons[0]+set}" != "set" ]; then
+            printf 'mirror registry guest already converged\n'
+            exit 0
+          fi
+
+          printf '%s\n' "${reasons[@]}"
+          exit 1
+      args:
+        executable: /bin/bash
+      register: mirror_registry_probe_completion
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Record whether the existing mirror registry guest is already converged
+      ansible.builtin.group_by:
+        key: >-
+          mirror_registry_bootstrap_complete_{{
+            (mirror_registry_probe_completion.rc == 0) | ternary('true', 'false')
+          }}
+
+    - name: Publish the mirror registry completion probe result
+      ansible.builtin.debug:
+        msg:
+          completed: "{{ mirror_registry_probe_completion.rc == 0 }}"
+          checks: "{{ mirror_registry_probe_completion.stdout_lines | default([]) }}"
+
 - name: Build the mirror registry virtual machine for the OpenShift demo
   hosts: aws_metal
   become: true
@@ -17,6 +215,13 @@
     - ../../vars/global/lab_switch_ports.yml
 
   pre_tasks:
+    - name: Skip mirror registry VM build when the existing guest is already fully configured
+      ansible.builtin.meta: end_play
+      when:
+        - (groups['mirror_registry_bootstrap_complete_true'] | default([])) | length > 0
+        - not (mirror_registry_vm.provisioning.recreate_domain | bool)
+        - not (mirror_registry_vm.provisioning.rebuild_disk_from_image | bool)
+
     - name: Wait for the IDM server guest to accept SSH connections
       ansible.builtin.wait_for:
         host: "{{ idm_vm.network.ipv4_address }}"
@@ -63,6 +268,13 @@
     - ../../vars/global/lab_switch_ports.yml
 
   pre_tasks:
+    - name: Skip mirror registry guest configuration when the existing guest is already fully configured
+      ansible.builtin.meta: end_play
+      when:
+        - (groups['mirror_registry_bootstrap_complete_true'] | default([])) | length > 0
+        - not (mirror_registry_vm.provisioning.recreate_domain | bool)
+        - not (mirror_registry_vm.provisioning.rebuild_disk_from_image | bool)
+
     - name: Derive the hypervisor delegate host for mirror registry reachability checks
       ansible.builtin.set_fact:
         mirror_registry_guest_delegate_host: >-
@@ -106,6 +318,13 @@
   gather_facts: false
   vars_files:
     - ../../vars/guests/mirror_registry_vm.yml
+  pre_tasks:
+    - name: Skip mirror registry media cleanup when the existing guest is already fully configured
+      ansible.builtin.meta: end_play
+      when:
+        - (groups['mirror_registry_bootstrap_complete_true'] | default([])) | length > 0
+        - not (mirror_registry_vm.provisioning.recreate_domain | bool)
+        - not (mirror_registry_vm.provisioning.rebuild_disk_from_image | bool)
   roles:
     - role: libvirt_cdrom_cleanup
       vars:

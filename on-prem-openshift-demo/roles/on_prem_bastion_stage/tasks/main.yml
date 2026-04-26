@@ -18,31 +18,23 @@
     on_prem_bastion_stage_remote_secrets_root: >-
       {{ on_prem_bastion_stage_effective_remote_project_root }}/secrets
     on_prem_bastion_stage_remote_generated_root: >-
-      {{ on_prem_bastion_stage_effective_remote_project_root }}/generated
+      {{ on_prem_bastion_stage_remote_stock_root }}/generated
     on_prem_bastion_stage_remote_cluster_artifact_root: >-
-      {{ on_prem_bastion_stage_effective_remote_project_root }}/generated/ocp
+      {{ on_prem_bastion_stage_remote_stock_root }}/generated/ocp
     on_prem_bastion_stage_remote_tools_root: >-
-      {{ on_prem_bastion_stage_effective_remote_project_root }}/generated/tools
+      {{ on_prem_bastion_stage_remote_stock_root }}/generated/tools
     on_prem_bastion_stage_current_tools_link: >-
-      {{
-        on_prem_bastion_stage_effective_remote_project_root
-      }}/generated/tools/current
+      {{ on_prem_bastion_stage_remote_stock_root }}/generated/tools/current
     on_prem_bastion_stage_user_bin_links:
       - link_name: oc
         target: >-
-          {{
-            on_prem_bastion_stage_effective_remote_project_root
-          }}/generated/tools/current/bin/oc
+          {{ on_prem_bastion_stage_remote_stock_root }}/generated/tools/current/bin/oc
       - link_name: kubectl
         target: >-
-          {{
-            on_prem_bastion_stage_effective_remote_project_root
-          }}/generated/tools/current/bin/kubectl
+          {{ on_prem_bastion_stage_remote_stock_root }}/generated/tools/current/bin/kubectl
       - link_name: openshift-install
         target: >-
-          {{
-            on_prem_bastion_stage_effective_remote_project_root
-          }}/generated/tools/current/bin/openshift-install
+          {{ on_prem_bastion_stage_remote_stock_root }}/generated/tools/current/bin/openshift-install
       - link_name: track-mirror-progress-onprem
         target: /usr/local/bin/track-mirror-progress-onprem
       - link_name: track-mirror-progress-tmux-onprem
@@ -57,21 +49,19 @@
     on_prem_bastion_stage_user_etc_links:
       - link_name: idm-ca.crt
         target: >-
-          {{
-            on_prem_bastion_stage_effective_remote_project_root
-          }}/generated/ocp/idm-ca.crt
+          {{ on_prem_bastion_stage_remote_stock_root }}/generated/ocp/idm-ca.crt
     on_prem_bastion_stage_user_etc_files:
       - file_name: kubeconfig
         src: >-
-          {{
-            on_prem_bastion_stage_effective_remote_project_root
-          }}/generated/ocp/auth/kubeconfig
+          {{ on_prem_bastion_stage_remote_stock_root }}/generated/ocp/auth/kubeconfig
         mode: "0600"
       - file_name: kubeconfig.local
         src: >-
-          {{
-            on_prem_bastion_stage_effective_remote_project_root
-          }}/generated/ocp/auth/kubeconfig
+          {{ on_prem_bastion_stage_remote_stock_root }}/generated/ocp/auth/kubeconfig
+        mode: "0600"
+      - file_name: kubeadmin-password
+        src: >-
+          {{ on_prem_bastion_stage_remote_stock_root }}/generated/ocp/auth/kubeadmin-password
         mode: "0600"
     on_prem_bastion_stage_project_lab_credentials_path: >-
       {{ lab_execution_project_root }}/inventory/group_vars/all/
@@ -170,7 +160,17 @@
     - "{{ on_prem_bastion_stage_remote_stock_root }}"
     - "{{ on_prem_bastion_stage_remote_stock_root }}/secrets"
     - "{{ on_prem_bastion_stage_remote_secrets_root }}"
+
+- name: Ensure the bastion system Ansible collection directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
     - "{{ bastion_client.collection_root }}"
+    - "{{ bastion_client.collection_root }}/ansible_collections"
 
 - name: Ensure the bastion tracked-run state directory exists
   ansible.builtin.file:
@@ -660,6 +660,11 @@
       - "{{ bastion_client.collection_root }}"
   environment:
     ANSIBLE_COLLECTIONS_PATH: "{{ bastion_client.collection_root }}"
+  become: true
+  register: on_prem_bastion_stage_collection_install
+  retries: 3
+  delay: 10
+  until: on_prem_bastion_stage_collection_install.rc == 0
   changed_when: false
 
 - name: Install required Python packages for WinRM control on the bastion
@@ -721,6 +726,10 @@
       acl: u:cloud-user:r
     - path: "{{ on_prem_bastion_stage_remote_cluster_artifact_root }}/auth/kubeconfig"
       acl: g:access-linux-admin:r
+    - path: "{{ on_prem_bastion_stage_remote_cluster_artifact_root }}/auth/kubeadmin-password"
+      acl: u:cloud-user:r
+    - path: "{{ on_prem_bastion_stage_remote_cluster_artifact_root }}/auth/kubeadmin-password"
+      acl: g:access-linux-admin:r
     - path: "{{ on_prem_bastion_stage_remote_cluster_artifact_root }}/idm-ca.crt"
       acl: u:cloud-user:r
     - path: "{{ on_prem_bastion_stage_remote_cluster_artifact_root }}/idm-ca.crt"
@@ -728,10 +737,11 @@
   changed_when: true
   failed_when: false
 
-- name: Check whether the staged OpenShift kubeconfig already exists
+- name: Check which staged OpenShift admin artifacts already exist
   ansible.builtin.stat:
-    path: "{{ on_prem_bastion_stage_remote_cluster_artifact_root }}/auth/kubeconfig"
-  register: on_prem_bastion_stage_cluster_kubeconfig_stat
+    path: "{{ item.src }}"
+  loop: "{{ on_prem_bastion_stage_user_etc_files }}"
+  register: on_prem_bastion_stage_user_etc_file_stats
   changed_when: false
 
 - name: >-
@@ -740,22 +750,10 @@
   ansible.builtin.set_fact:
     on_prem_bastion_stage_user_etc_files: >-
       {{
-        (
-          [
-            {
-              'file_name': 'kubeconfig',
-              'src': on_prem_bastion_stage_remote_cluster_artifact_root ~ '/auth/kubeconfig',
-              'mode': '0600'
-            },
-            {
-              'file_name': 'kubeconfig.local',
-              'src': on_prem_bastion_stage_remote_cluster_artifact_root ~ '/auth/kubeconfig',
-              'mode': '0600'
-            }
-          ]
-          if on_prem_bastion_stage_cluster_kubeconfig_stat.stat.exists
-          else []
-        )
+        on_prem_bastion_stage_user_etc_file_stats.results
+        | selectattr('stat.exists', 'equalto', true)
+        | map(attribute='item')
+        | list
       }}
 
 - name: Discover current members of the IdM Linux access group on the bastion
@@ -773,7 +771,7 @@
     on_prem_bastion_stage_home_link_users: >-
       {{
         (
-          [bastion_vm.access.admin_user] +
+          [bastion_vm.access.admin_user, 'cloud-user'] +
           (
             (
               on_prem_bastion_stage_linux_access_group.stdout
@@ -803,6 +801,7 @@
     dest: "/etc/skel/bin/{{ item.link_name }}"
     state: link
     force: true
+    follow: false
   loop: "{{ on_prem_bastion_stage_user_bin_links }}"
 
 - name: Seed the skeleton bastion etc links for future admin logins
@@ -811,6 +810,7 @@
     dest: "/etc/skel/etc/{{ item.link_name }}"
     state: link
     force: true
+    follow: false
   loop: "{{ on_prem_bastion_stage_user_etc_links }}"
 
 - name: Seed the skeleton bastion etc files for future admin logins
@@ -868,6 +868,7 @@
     owner: "{{ item.0.user }}"
     group: "{{ item.0.gid }}"
     force: true
+    follow: false
   loop: >-
     {{ (on_prem_bastion_stage_home_link_targets | default([])) |
     product(on_prem_bastion_stage_user_bin_links) | list }}
@@ -880,6 +881,7 @@
     owner: "{{ item.0.user }}"
     group: "{{ item.0.gid }}"
     force: true
+    follow: false
   loop: >-
     {{ (on_prem_bastion_stage_home_link_targets | default([])) |
     product(on_prem_bastion_stage_user_etc_links) | list }}

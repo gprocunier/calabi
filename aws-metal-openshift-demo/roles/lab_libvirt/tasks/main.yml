@@ -80,3 +80,147 @@
       - "{{ lab_switch_name }}"
   when: lab_libvirt_switch_xml.changed or lab_libvirt_switch_info.rc != 0
   changed_when: true
+
+- name: Install extra libvirt OVS network definitions
+  ansible.builtin.template:
+    src: extra-ovs-network.xml.j2
+    dest: "{{ item.xml_path | default('/etc/libvirt/' ~ item.name ~ '.xml') }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ lab_extra_libvirt_networks | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: lab_libvirt_extra_network_xml
+
+- name: Check whether extra libvirt OVS networks already exist
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - -c
+      - qemu:///system
+      - net-info
+      - "{{ item.name }}"
+  loop: "{{ lab_extra_libvirt_networks | default([]) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: lab_libvirt_extra_network_info
+  changed_when: false
+  failed_when: false
+
+- name: Stop extra libvirt OVS networks before redefining them
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - -c
+      - qemu:///system
+      - net-destroy
+      - "{{ item.item.name }}"
+  loop: "{{ lab_libvirt_extra_network_info.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - item.rc == 0
+    - >-
+      (
+        lab_libvirt_extra_network_xml.results
+        | selectattr('item.name', 'equalto', item.item.name)
+        | map(attribute='changed')
+        | first
+        | default(false)
+      )
+  changed_when: true
+  failed_when: false
+
+- name: Undefine extra libvirt OVS networks before redefining them
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - -c
+      - qemu:///system
+      - net-undefine
+      - "{{ item.item.name }}"
+  loop: "{{ lab_libvirt_extra_network_info.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - item.rc == 0
+    - >-
+      (
+        lab_libvirt_extra_network_xml.results
+        | selectattr('item.name', 'equalto', item.item.name)
+        | map(attribute='changed')
+        | first
+        | default(false)
+      )
+  changed_when: true
+  failed_when: false
+
+- name: Define extra libvirt OVS networks
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - -c
+      - qemu:///system
+      - net-define
+      - "{{ item.item.xml_path | default('/etc/libvirt/' ~ item.item.name ~ '.xml') }}"
+  loop: "{{ lab_libvirt_extra_network_info.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - >-
+      item.rc != 0 or
+      (
+        lab_libvirt_extra_network_xml.results
+        | selectattr('item.name', 'equalto', item.item.name)
+        | map(attribute='changed')
+        | first
+        | default(false)
+      )
+  changed_when: true
+
+- name: Start extra libvirt OVS networks
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - -c
+      - qemu:///system
+      - net-start
+      - "{{ item.item.name }}"
+  loop: "{{ lab_libvirt_extra_network_info.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - >-
+      item.rc != 0 or
+      (
+        lab_libvirt_extra_network_xml.results
+        | selectattr('item.name', 'equalto', item.item.name)
+        | map(attribute='changed')
+        | first
+        | default(false)
+      )
+  changed_when: true
+
+- name: Mark extra libvirt OVS networks for autostart
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - -c
+      - qemu:///system
+      - net-autostart
+      - "{{ item.item.name }}"
+  loop: "{{ lab_libvirt_extra_network_info.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - >-
+      item.rc != 0 or
+      (
+        lab_libvirt_extra_network_xml.results
+        | selectattr('item.name', 'equalto', item.item.name)
+        | map(attribute='changed')
+        | first
+        | default(false)
+      )
+  changed_when: true

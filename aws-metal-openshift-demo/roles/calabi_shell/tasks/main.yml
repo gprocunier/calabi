@@ -1,0 +1,110 @@
+---
+- name: Install packages needed for the calabi-shell bootstrap
+  ansible.builtin.package:
+    name:
+      - curl
+      - git
+    state: present
+
+- name: Ensure the calabi-shell install root exists
+  ansible.builtin.file:
+    path: "{{ calabi_shell_install_root }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Clone or update calabi-shell
+  ansible.builtin.git:
+    repo: "{{ calabi_shell_repo_url }}"
+    dest: "{{ calabi_shell_install_root }}"
+    version: "{{ calabi_shell_repo_version }}"
+    update: true
+  register: calabi_shell_checkout
+
+- name: Read the current calabi-shell checkout revision
+  ansible.builtin.command:
+    argv:
+      - git
+      - -C
+      - "{{ calabi_shell_install_root }}"
+      - rev-parse
+      - HEAD
+  register: calabi_shell_current_revision_result
+  changed_when: false
+
+- name: Check the installed calabi-shell marker state
+  ansible.builtin.stat:
+    path: "{{ calabi_shell_install_marker }}"
+  register: calabi_shell_marker_stat
+
+- name: Check the expected calabi-shell system files
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ calabi_shell_expected_files }}"
+  register: calabi_shell_expected_file_stats
+
+- name: Read the previously installed calabi-shell revision
+  ansible.builtin.slurp:
+    src: "{{ calabi_shell_install_marker }}"
+  register: calabi_shell_marker_contents
+  when: calabi_shell_marker_stat.stat.exists
+  changed_when: false
+
+- name: Derive calabi-shell installed revision state
+  ansible.builtin.set_fact:
+    calabi_shell_current_revision: "{{ calabi_shell_current_revision_result.stdout | trim }}"
+    calabi_shell_installed_revision: >-
+      {{
+        (
+          calabi_shell_marker_contents.content
+          | b64decode
+          | trim
+        )
+        if calabi_shell_marker_stat.stat.exists
+        else ''
+      }}
+    calabi_shell_missing_system_files: >-
+      {{
+        calabi_shell_expected_file_stats.results
+        | selectattr('stat.exists', 'equalto', false)
+        | map(attribute='item')
+        | list
+      }}
+
+- name: Derive whether calabi-shell must be installed
+  ansible.builtin.set_fact:
+    calabi_shell_needs_install: >-
+      {{
+        calabi_shell_checkout.changed
+        or (not calabi_shell_marker_stat.stat.exists)
+        or (calabi_shell_installed_revision != calabi_shell_current_revision)
+        or (calabi_shell_missing_system_files | length > 0)
+      }}
+
+- name: Run the calabi-shell system installer
+  ansible.builtin.command:
+    argv:
+      - ./install.sh
+      - --system
+    chdir: "{{ calabi_shell_install_root }}"
+  register: calabi_shell_install_result
+  when: calabi_shell_needs_install | bool
+  changed_when: true
+
+- name: Ensure the calabi-shell install state directory exists
+  ansible.builtin.file:
+    path: "{{ calabi_shell_install_state_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Persist the installed calabi-shell revision
+  ansible.builtin.copy:
+    dest: "{{ calabi_shell_install_marker }}"
+    content: "{{ calabi_shell_current_revision }}\n"
+    owner: root
+    group: root
+    mode: "0644"
+  when: calabi_shell_needs_install | bool

@@ -9,6 +9,10 @@ hosts:
     interfaces:
       - name: {{ openshift_install_artifacts.agent_config.primary_interface_name }}
         macAddress: "{{ node.mac_address }}"
+{% for interface in node.additional_interfaces | default([]) %}
+      - name: {{ interface.name }}
+        macAddress: "{{ interface.mac_address }}"
+{% endfor %}
     rootDeviceHints:
 {% set default_root_device_hints = {'serialNumber': vm_node.disks.root.serial} %}
 {% set root_device_hints = node.root_device_hints | default(default_root_device_hints) | default(openshift_install_artifacts.agent_config.root_device_hints) %}
@@ -27,6 +31,22 @@ hosts:
             dhcp: false
           ipv6:
             enabled: false
+{% for interface in node.additional_interfaces | default([]) %}
+        - name: {{ interface.name }}
+          identifier: mac-address
+          type: ethernet
+          state: up
+          mac-address: "{{ interface.mac_address }}"
+          mtu: {{ interface.mtu | default(1500) }}
+          ipv4:
+            enabled: true
+            dhcp: false
+            address:
+              - ip: {{ interface.ipv4_address }}
+                prefix-length: {{ interface.prefix_length }}
+          ipv6:
+            enabled: false
+{% endfor %}
         - name: {{ openshift_install_artifacts.agent_config.primary_interface_name }}.{{ openshift_install_cluster.network.machine_vlan_id }}
           type: vlan
           state: up

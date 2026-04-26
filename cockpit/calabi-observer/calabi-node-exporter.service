@@ -1,0 +1,35 @@
+[Unit]
+Description=Calabi node_exporter container for Prometheus scraping
+Documentation=https://github.com/gprocunier/calabi
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=CALABI_NODE_EXPORTER_LISTEN_ADDRESS=127.0.0.1:9100
+Environment=CALABI_NODE_EXPORTER_WEB_CONFIG_ARGS=
+EnvironmentFile=-/etc/calabi-observer/prometheus.env
+ExecStartPre=/usr/bin/mkdir -p /var/lib/node_exporter/textfile_collector
+ExecStartPre=-/usr/bin/podman rm -f calabi-node-exporter
+ExecStart=/usr/bin/podman run --rm --name calabi-node-exporter \
+  --pull=never \
+  --net=host \
+  --pid=host \
+  --read-only \
+  --security-opt=no-new-privileges \
+  --cap-drop=ALL \
+  --volume=/:/host:ro,rslave \
+  --volume=/etc/calabi-observer:/etc/calabi-observer:ro \
+  --volume=/var/lib/node_exporter/textfile_collector:/var/lib/node_exporter/textfile_collector:ro \
+  registry.redhat.io/rhacm2/node-exporter-rhel9:v2.16.0-1 \
+  --path.rootfs=/host \
+  --collector.textfile.directory=/var/lib/node_exporter/textfile_collector \
+  --web.listen-address=${CALABI_NODE_EXPORTER_LISTEN_ADDRESS} \
+  $CALABI_NODE_EXPORTER_WEB_CONFIG_ARGS
+ExecStop=/usr/bin/podman stop -t 10 calabi-node-exporter
+Restart=on-failure
+RestartSec=10s
+TimeoutStartSec=60s
+
+[Install]
+WantedBy=multi-user.target

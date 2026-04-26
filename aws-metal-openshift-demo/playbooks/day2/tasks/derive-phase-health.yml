@@ -1,4 +1,43 @@
 ---
+- name: Normalize partial day-2 application dictionary overrides
+  ansible.builtin.set_fact:
+    openshift_breakglass_auth: >-
+      {{
+        openshift_breakglass_auth_defaults
+        | default({})
+        | combine(openshift_breakglass_auth | default({}), recursive=True)
+      }}
+    openshift_idm_certs: >-
+      {{
+        openshift_idm_certs_defaults
+        | default({})
+        | combine(openshift_idm_certs | default({}), recursive=True)
+      }}
+    openshift_keycloak: >-
+      {{
+        openshift_keycloak_defaults
+        | default({})
+        | combine(openshift_keycloak | default({}), recursive=True)
+      }}
+    openshift_ldap_auth: >-
+      {{
+        openshift_ldap_auth_defaults
+        | default({})
+        | combine(openshift_ldap_auth | default({}), recursive=True)
+      }}
+    openshift_oidc_auth: >-
+      {{
+        openshift_oidc_auth_defaults
+        | default({})
+        | combine(openshift_oidc_auth | default({}), recursive=True)
+      }}
+    openshift_aap: >-
+      {{
+        openshift_aap_defaults
+        | default({})
+        | combine(openshift_aap | default({}), recursive=True)
+      }}
+
 - name: Derive post-install phase health probe context
   ansible.builtin.set_fact:
     openshift_post_install_probe_oc_path: >-
@@ -78,11 +117,13 @@
     openshift_post_install_probe_nmstate_instance_name: >-
       {{ openshift_post_install_nmstate_instance_name | default('nmstate') }}
     openshift_post_install_probe_odf_storage_cluster_name: >-
-      {{ openshift_post_install_odf_storage_cluster_name | default('ocs-storagecluster') }}
+      {{ openshift_post_install_odf_effective_storage_cluster_name }}
+    openshift_post_install_probe_odf_cephcluster_name: >-
+      {{ openshift_post_install_odf_effective_cephcluster_name }}
     openshift_post_install_probe_odf_storage_cluster_namespace: >-
-      {{ openshift_post_install_odf_storage_cluster_namespace | default('openshift-storage') }}
+      {{ openshift_post_install_odf_effective_storage_cluster_namespace }}
     openshift_post_install_probe_odf_required_storage_classes: >-
-      {{ openshift_post_install_odf_required_storage_classes | default(['ocs-storagecluster-ceph-rbd']) }}
+      {{ openshift_post_install_odf_effective_required_storage_classes }}
     openshift_post_install_probe_odf_force_osd_device_reset: >-
       {{ openshift_post_install_odf_force_osd_device_reset | default(false) }}
     openshift_post_install_probe_odf_force_destructive_recovery: >-
@@ -454,11 +495,22 @@
     available="$("${oc}" get storagecluster "{{ openshift_post_install_probe_odf_storage_cluster_name }}" -n "{{ openshift_post_install_probe_odf_storage_cluster_namespace }}" -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' 2>/dev/null || true)"
     degraded="$("${oc}" get storagecluster "{{ openshift_post_install_probe_odf_storage_cluster_name }}" -n "{{ openshift_post_install_probe_odf_storage_cluster_namespace }}" -o jsonpath='{.status.conditions[?(@.type=="Degraded")].status}' 2>/dev/null || true)"
     deleting="$("${oc}" get storagecluster "{{ openshift_post_install_probe_odf_storage_cluster_name }}" -n "{{ openshift_post_install_probe_odf_storage_cluster_namespace }}" -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null || true)"
-    ceph_phase="$("${oc}" get cephcluster "{{ openshift_post_install_probe_odf_storage_cluster_name }}-cephcluster" -n "{{ openshift_post_install_probe_odf_storage_cluster_namespace }}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+    ceph_phase="$("${oc}" get cephcluster "{{ openshift_post_install_probe_odf_cephcluster_name }}" -n "{{ openshift_post_install_probe_odf_storage_cluster_namespace }}" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+    network_gateway_ok=true
+    if [[ "{{ openshift_post_install_odf_effective_mode }}" == "external" && "{{ openshift_post_install_odf_external_configure_network_gateway | bool }}" == "True" ]]; then
+      routing="$("${oc}" get network.operator.openshift.io cluster -o jsonpath='{.spec.defaultNetwork.ovnKubernetesConfig.gatewayConfig.routingViaHost}' 2>/dev/null || true)"
+      forwarding="$("${oc}" get network.operator.openshift.io cluster -o jsonpath='{.spec.defaultNetwork.ovnKubernetesConfig.gatewayConfig.ipForwarding}' 2>/dev/null || true)"
+      network_health="$("${oc}" get clusteroperator network -o jsonpath='{.status.conditions[?(@.type=="Available")].status},{.status.conditions[?(@.type=="Progressing")].status},{.status.conditions[?(@.type=="Degraded")].status}' 2>/dev/null || true)"
+      if [[ "${routing}" != "{{ openshift_post_install_odf_external_gateway_routing_via_host | ternary('true', 'false') }}" \
+        || "${forwarding}" != "{{ openshift_post_install_odf_external_gateway_ip_forwarding }}" \
+        || "${network_health}" != "True,False,False" ]]; then
+        network_gateway_ok=false
+      fi
+    fi
     for sc in {{ openshift_post_install_probe_odf_required_storage_classes | map('quote') | join(' ') }}; do
       "${oc}" get storageclass "${sc}" >/dev/null 2>&1 || { echo false; exit 0; }
     done
-    if [[ "${available}" == "True" && "${degraded}" != "True" && -z "${deleting}" && "${ceph_phase}" == "Ready" ]]; then
+    if [[ "${available}" == "True" && "${degraded}" != "True" && -z "${deleting}" && ( "${ceph_phase}" == "Ready" || "${ceph_phase}" == "Connected" ) && "${network_gateway_ok}" == "true" ]]; then
       echo true
     else
       echo false

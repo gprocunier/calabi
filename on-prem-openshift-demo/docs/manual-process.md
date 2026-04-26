@@ -9,6 +9,7 @@ Nearby docs:
 
 <a href="./prerequisites.md"><kbd>&nbsp;&nbsp;PREREQUISITES&nbsp;&nbsp;</kbd></a>
 <a href="./automation-flow.md"><kbd>&nbsp;&nbsp;AUTOMATION FLOW&nbsp;&nbsp;</kbd></a>
+<a href="./override-mechanism.md"><kbd>&nbsp;&nbsp;OVERRIDES&nbsp;&nbsp;</kbd></a>
 <a href="./host-sizing-and-resource-policy.md"><kbd>&nbsp;&nbsp;HOST SIZING&nbsp;&nbsp;</kbd></a>
 <a href="./portability-and-gap-analysis.md"><kbd>&nbsp;&nbsp;PORTABILITY / GAPS&nbsp;&nbsp;</kbd></a>
 <a href="../../aws-metal-openshift-demo/docs/manual-process.md"><kbd>&nbsp;&nbsp;AWS MANUAL PROCESS&nbsp;&nbsp;</kbd></a>
@@ -28,6 +29,8 @@ return to the stock
 - [5. Bootstrap The Host And Provision Guest LVs](#5-bootstrap-the-host-and-provision-guest-lvs)
 - [6. Build The Bastion And Stage The Project](#6-build-the-bastion-and-stage-the-project)
 - [7. Hand Back To The Stock Runbook](#7-hand-back-to-the-stock-runbook)
+- [8. Current External-Ceph Day-2 Continuation](#8-current-external-ceph-day-2-continuation)
+- [9. Clean OpenShift-Only Teardown](#9-clean-openshift-only-teardown)
 
 ## 1. Prepare The Operator Workstation
 
@@ -150,7 +153,31 @@ For hosts that should stop before cluster build, start from one of:
 
 - <a href="../inventory/overrides/core-services.yml.example"><kbd>inventory/overrides/core-services.yml.example</kbd></a>
 - <a href="../inventory/overrides/core-services-ad.yml.example"><kbd>inventory/overrides/core-services-ad.yml.example</kbd></a>
+- <a href="../inventory/overrides/core-services-ad-128g.yml.example"><kbd>inventory/overrides/core-services-ad-128g.yml.example</kbd></a>
 - <a href="../inventory/overrides/precluster-64g.yml.example"><kbd>inventory/overrides/precluster-64g.yml.example</kbd></a>
+
+For the current cluster-capable external Ceph profile, start from:
+
+- <a href="../inventory/overrides/core-services-ad-plus-openshift-3node-external-ceph.yml.example"><kbd>inventory/overrides/core-services-ad-plus-openshift-3node-external-ceph.yml.example</kbd></a>
+
+Read <a href="./override-mechanism.md"><kbd>OVERRIDE MECHANISM</kbd></a>
+before copying or publishing that file. It explains the phase toggles, external
+ODF payload, storage class indirection, and resource sizing assumptions.
+
+Use `core-services-ad-128g.yml.example` for the current ~128 GiB host class
+when you want the core-services+AD footprint plus a managed `32G` zram
+writeback LV in `calabi_lab_vg`.
+
+That override also enables a conservative periodic zram writeback policy:
+
+- backing LV: `calabi_lab_vg/zram-writeback`
+- backing LV size: `32G`
+- policy mode: `incompressible`
+- timer interval: `30m`
+- per-run budget: `256 MiB`
+
+Use that profile as the current reference for the on-prem writeback-capable
+host-memory policy.
 
 What must be correct:
 
@@ -206,6 +233,15 @@ cd <project-root>/on-prem-openshift-demo
   -e @inventory/overrides/core-services-ad.yml.example
 ```
 
+For the current ~128 GiB host class with managed zram writeback:
+
+```bash
+cd <project-root>/on-prem-openshift-demo
+
+./scripts/run_local_playbook.sh playbooks/bootstrap/site.yml \
+  -e @inventory/overrides/core-services-ad-128g.yml.example
+```
+
 This is the on-prem equivalent of the early AWS host steps:
 
 - host base configuration
@@ -238,6 +274,10 @@ EOF
 The current on-prem `site-bootstrap.yml`:
 
 - runs the on-prem bootstrap host prep
+- applies the baseline host memory oversubscription policy (`zram`, THP
+  `madvise`, KSM) during the host bootstrap path
+- can optionally provision a dedicated zram writeback LV and policy timer when
+  an override such as `core-services-ad-128g.yml.example` enables it
 - reuses the stock bastion build
 - stages both the on-prem subtree and the stock AWS-target subtree onto bastion
   through the local on-prem bastion-stage wrapper
@@ -270,7 +310,25 @@ cd <project-root>/on-prem-openshift-demo
   -e @inventory/overrides/core-services-ad.yml.example
 ```
 
+For the current ~128 GiB host class with managed zram writeback:
+
+```bash
+cd <project-root>/on-prem-openshift-demo
+
+./scripts/run_local_playbook.sh playbooks/site-bootstrap.yml \
+  -e @inventory/overrides/core-services-ad-128g.yml.example
+```
+
 After this, the bastion should exist and the project should be staged.
+
+Writeback caveats on the on-prem path:
+
+- the managed-LVM writeback path assumes the local `calabi_lab_vg` volume group
+- the writeback LV must be dedicated to zram and is not counted as planned RAM
+- the role fails fast if the configured writeback LV already exists at a
+  different size
+- the shipped policy uses `incompressible`, not `idle`, because age-based idle
+  tracking is kernel-dependent
 
 ## 7. Hand Back To The Stock Runbook
 
@@ -279,16 +337,17 @@ At this point, the on-prem-specific portion is over.
 Choose the next stock runbook entry based on what you already completed:
 
 - if you want the manual bastion-forward process:
-  - <a href="../../aws-metal-openshift-demo/docs/manual-process.md#12-optionally-build-ad-ds-and-ad-cs-from-bastion"><kbd>Resume at AWS manual step 12</kbd></a>
+  - <a href="../../aws-metal-openshift-demo/docs/manual-process.md#13a-optionally-build-ad-ds-and-ad-cs-from-bastion"><kbd>Resume at AWS manual step 13A</kbd></a>
 - if you are still walking the support-services flow by hand from the bastion build:
-  - <a href="../../aws-metal-openshift-demo/docs/manual-process.md#10-build-the-bastion-vm"><kbd>Resume at AWS manual step 10</kbd></a>
+  - <a href="../../aws-metal-openshift-demo/docs/manual-process.md#12-build-the-bastion-vm"><kbd>Resume at AWS manual step 12</kbd></a>
 
 For automation rather than the hand-run sequence on a cluster-capable host,
 use:
 
 ```bash
 cd <project-root>/on-prem-openshift-demo
-./scripts/run_remote_bastion_playbook.sh playbooks/site-lab.yml
+./scripts/run_remote_bastion_playbook.sh playbooks/site-lab.yml \
+  -e @inventory/overrides/core-services-ad-plus-openshift-3node-external-ceph.yml.example
 ```
 
 For support-services-only profiles such as `core-services` or
@@ -325,3 +384,46 @@ cd <staged-on-prem-project-root>
 ./scripts/run_bastion_playbook.sh playbooks/site-precluster.yml \
   -e @inventory/overrides/precluster-64g.yml
 ```
+
+## 8. Current External-Ceph Day-2 Continuation
+
+If the OpenShift cluster exists and the support services are already healthy,
+continue at the shared day-2 orchestration instead of replaying the full
+`site-lab.yml` chain:
+
+```bash
+cd <project-root>/on-prem-openshift-demo
+
+./scripts/run_remote_bastion_playbook.sh \
+  ../aws-metal-openshift-demo/playbooks/day2/openshift-post-install.yml \
+  -e @inventory/overrides/core-services-ad-plus-openshift-3node-external-ceph.yml.example
+```
+
+The current external-Ceph profile intentionally enables disconnected
+OperatorHub, IdM ingress certs, breakglass auth, NMState, external ODF,
+Keycloak, OIDC auth, Web Terminal, AAP, NetObserv, and validation. It disables
+infra conversion, internal ODF, LDAP auth, OpenShift Virtualization, and
+Pipelines.
+
+Leave the `force_*` variables false for normal continuation. Set a force flag
+only when you are deliberately repairing or replacing that phase.
+
+## 9. Clean OpenShift-Only Teardown
+
+To tear down a broken OpenShift cluster while preserving healthy support
+services:
+
+```bash
+cd <project-root>/on-prem-openshift-demo
+
+./scripts/run_local_playbook.sh \
+  ../aws-metal-openshift-demo/playbooks/maintenance/cleanup.yml \
+  -e cleanup_destroy_openshift_cluster=true \
+  -e cleanup_wipe_openshift_cluster_block_devices=true \
+  -e @inventory/overrides/core-services-ad-plus-openshift-3node-external-ceph.yml.example
+```
+
+That path removes the OpenShift cluster domains, wipes the cluster block
+devices when requested, and preserves AD, IdM, bastion, and mirror-registry.
+After cleanup, rerun `site-lab.yml` with the same override to rebuild the
+cluster and continue through the mirror, install, and day-2 flow.

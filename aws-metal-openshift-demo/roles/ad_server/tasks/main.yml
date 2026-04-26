@@ -22,10 +22,18 @@
     ad_server_role_virtio_iso_staged_path: >-
       /var/lib/aws-metal-openshift-demo/{{ ad_vm.name }}/{{
       ad_vm.virtio_iso | basename }}
+    ad_server_role_performance_domain_tier: >-
+      {{ ad_server_performance_domain_tier | default(ad_vm.performance_domain.tier) }}
+    ad_server_role_performance_domain_iothreads: >-
+      {{
+        ad_server_performance_domain_iothreads |
+        default(ad_vm.performance_domain.iothreads)
+      }}
     ad_server_role_performance_domain_settings: >-
       {{
         lab_host_resource_management.performance_domains[
-          ad_vm.performance_domain.tier
+          ad_server_performance_domain_tier |
+          default(ad_vm.performance_domain.tier)
         ]
       }}
 
@@ -54,7 +62,7 @@
             'iothreadpin0.cpuset=' ~
             lab_host_resource_management.cpu_pools.host_emulator
           ]
-          if (ad_vm.performance_domain.iothreads | int) > 0
+          if (ad_server_role_performance_domain_iothreads | int) > 0
           else []
         )
       }}
@@ -85,9 +93,10 @@
         + (
           [
             '--iothreads',
-            'iothreads=' ~ (ad_vm.performance_domain.iothreads | string)
+            'iothreads=' ~
+            (ad_server_role_performance_domain_iothreads | string)
           ]
-          if (ad_vm.performance_domain.iothreads | int) > 0
+          if (ad_server_role_performance_domain_iothreads | int) > 0
           else []
         )
       }}

@@ -3,10 +3,7 @@ kind: NodeNetworkConfigurationPolicy
 metadata:
   name: {{ item.name }}
 spec:
-  nodeSelector:
-{% for key, value in item.node_selector.items() %}
-    {{ key }}: {{ value | to_json }}
-{% endfor %}
+  nodeSelector: {{ item.node_selector | to_json }}
   desiredState:
     interfaces:
       - name: {{ item.interface_name }}

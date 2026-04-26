@@ -12,6 +12,7 @@
     - ../../vars/guests/ad_vm.yml
     - ../../vars/cluster/openshift_install_cluster.yml
     - ../../vars/day2/openshift_breakglass_auth.yml
+    - ../../vars/day2/openshift_odf.yml
     - ../../vars/day2/openshift_keycloak.yml
     - ../../vars/day2/openshift_ldap_auth.yml
     - ../../vars/day2/openshift_oidc_auth.yml

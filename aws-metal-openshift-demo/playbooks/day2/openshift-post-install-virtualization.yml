@@ -5,6 +5,7 @@
   vars_files:
     - ../../vars/global/execution_environment.yml
     - ../../vars/global/mirror_content.yml
+    - ../../vars/day2/openshift_odf.yml
   tasks:
     - name: Configure OpenShift Virtualization
       ansible.builtin.include_role:

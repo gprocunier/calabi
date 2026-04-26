@@ -8,6 +8,19 @@ lab_host_memory_oversubscription_settings:
     size: 16G
     compression_algorithm: zstd
     swap_priority: 100
+    writeback:
+      enabled: false
+      manage_lvm: false
+      volume_group: calabi_lab_vg
+      logical_volume: zram-writeback
+      size: 32G
+      backing_device: ""
+      policy:
+        enabled: false
+        interval: 30m
+        mode: incompressible
+        idle_age_seconds: 21600
+        per_run_budget_mib: 256
   transparent_hugepages:
     enabled: true
     mode: madvise

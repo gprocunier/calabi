@@ -1,5 +1,5 @@
 ---
-openshift_ldap_auth:
+openshift_ldap_auth_defaults:
   identity_provider_name: "Red Hat Identity Management"
   manage_identity_provider: false
   manage_group_sync: true
@@ -32,3 +32,5 @@ openshift_ldap_auth:
       users_filter: "(objectClass=person)"
   authorization:
     cluster_admin_group: access-openshift-admin
+
+openshift_ldap_auth: "{{ openshift_ldap_auth_defaults }}"

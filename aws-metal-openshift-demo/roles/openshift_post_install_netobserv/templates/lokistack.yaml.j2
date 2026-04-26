@@ -10,54 +10,26 @@ spec:
   storageClassName: {{ openshift_post_install_netobserv_loki_storage_class_name }}
   template:
     compactor:
-      nodeSelector:
-{% for key, value in openshift_post_install_netobserv_loki_node_selector.items() %}
-        {{ key }}: {{ value | to_json }}
-{% endfor %}
-      tolerations:
-{{ openshift_post_install_netobserv_loki_tolerations | to_nice_yaml(indent=8) | indent(6, true) }}
+      nodeSelector: {{ openshift_post_install_netobserv_loki_node_selector | to_json }}
+      tolerations: {{ openshift_post_install_netobserv_loki_tolerations | to_json }}
     distributor:
-      nodeSelector:
-{% for key, value in openshift_post_install_netobserv_loki_node_selector.items() %}
-        {{ key }}: {{ value | to_json }}
-{% endfor %}
-      tolerations:
-{{ openshift_post_install_netobserv_loki_tolerations | to_nice_yaml(indent=8) | indent(6, true) }}
+      nodeSelector: {{ openshift_post_install_netobserv_loki_node_selector | to_json }}
+      tolerations: {{ openshift_post_install_netobserv_loki_tolerations | to_json }}
     gateway:
-      nodeSelector:
-{% for key, value in openshift_post_install_netobserv_loki_node_selector.items() %}
-        {{ key }}: {{ value | to_json }}
-{% endfor %}
-      tolerations:
-{{ openshift_post_install_netobserv_loki_tolerations | to_nice_yaml(indent=8) | indent(6, true) }}
+      nodeSelector: {{ openshift_post_install_netobserv_loki_node_selector | to_json }}
+      tolerations: {{ openshift_post_install_netobserv_loki_tolerations | to_json }}
     indexGateway:
-      nodeSelector:
-{% for key, value in openshift_post_install_netobserv_loki_node_selector.items() %}
-        {{ key }}: {{ value | to_json }}
-{% endfor %}
-      tolerations:
-{{ openshift_post_install_netobserv_loki_tolerations | to_nice_yaml(indent=8) | indent(6, true) }}
+      nodeSelector: {{ openshift_post_install_netobserv_loki_node_selector | to_json }}
+      tolerations: {{ openshift_post_install_netobserv_loki_tolerations | to_json }}
     ingester:
-      nodeSelector:
-{% for key, value in openshift_post_install_netobserv_loki_node_selector.items() %}
-        {{ key }}: {{ value | to_json }}
-{% endfor %}
-      tolerations:
-{{ openshift_post_install_netobserv_loki_tolerations | to_nice_yaml(indent=8) | indent(6, true) }}
+      nodeSelector: {{ openshift_post_install_netobserv_loki_node_selector | to_json }}
+      tolerations: {{ openshift_post_install_netobserv_loki_tolerations | to_json }}
     querier:
-      nodeSelector:
-{% for key, value in openshift_post_install_netobserv_loki_node_selector.items() %}
-        {{ key }}: {{ value | to_json }}
-{% endfor %}
-      tolerations:
-{{ openshift_post_install_netobserv_loki_tolerations | to_nice_yaml(indent=8) | indent(6, true) }}
+      nodeSelector: {{ openshift_post_install_netobserv_loki_node_selector | to_json }}
+      tolerations: {{ openshift_post_install_netobserv_loki_tolerations | to_json }}
     queryFrontend:
-      nodeSelector:
-{% for key, value in openshift_post_install_netobserv_loki_node_selector.items() %}
-        {{ key }}: {{ value | to_json }}
-{% endfor %}
-      tolerations:
-{{ openshift_post_install_netobserv_loki_tolerations | to_nice_yaml(indent=8) | indent(6, true) }}
+      nodeSelector: {{ openshift_post_install_netobserv_loki_node_selector | to_json }}
+      tolerations: {{ openshift_post_install_netobserv_loki_tolerations | to_json }}
   storage:
     schemas:
       - effectiveDate: "2020-10-11"

@@ -9,10 +9,18 @@
       /var/lib/aws-metal-openshift-demo/{{ bastion_vm.name }}/cloudinit
     bastion_role_cloudinit_iso: >-
       /var/lib/aws-metal-openshift-demo/{{ bastion_vm.name }}/{{ bastion_vm.name }}-cidata.iso
+    bastion_role_performance_domain_tier: >-
+      {{ bastion_performance_domain_tier | default(bastion_vm.performance_domain.tier) }}
+    bastion_role_performance_domain_iothreads: >-
+      {{
+        bastion_performance_domain_iothreads |
+        default(bastion_vm.performance_domain.iothreads)
+      }}
     bastion_role_performance_domain_settings: >-
       {{
         lab_host_resource_management.performance_domains[
-          bastion_vm.performance_domain.tier
+          bastion_performance_domain_tier |
+          default(bastion_vm.performance_domain.tier)
         ]
       }}
 
@@ -32,7 +40,7 @@
             'iothreadpin0.cpuset=' ~
             lab_host_resource_management.cpu_pools.host_emulator
           ]
-          if (bastion_vm.performance_domain.iothreads | int) > 0
+          if (bastion_role_performance_domain_iothreads | int) > 0
           else []
         )
       }}
@@ -63,9 +71,9 @@
         + (
           [
             '--iothreads',
-            'iothreads=' ~ (bastion_vm.performance_domain.iothreads | string)
+            'iothreads=' ~ (bastion_role_performance_domain_iothreads | string)
           ]
-          if (bastion_vm.performance_domain.iothreads | int) > 0
+          if (bastion_role_performance_domain_iothreads | int) > 0
           else []
         )
       }}

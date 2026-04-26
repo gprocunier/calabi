@@ -13,48 +13,72 @@
             <h2>Calabi Observer</h2>
             <div id="header-controls">
                 <span id="poll-status" class="status-dot status-dot--waiting" title="Waiting for first sample"></span>
-                <label>
-                    Interval
-                    <select id="interval-select">
-                        <option value="2000">2s</option>
-                        <option value="5000" selected>5s</option>
-                        <option value="10000">10s</option>
-                        <option value="30000">30s</option>
-                    </select>
-                </label>
                 <button id="pause-btn" type="button">Pause</button>
             </div>
         </header>
 
-        <section id="ksm-panel" class="calabi-card">
-            <h3>KSM Cost-Benefit</h3>
-            <div id="ksm-content" class="panel-placeholder">Waiting for data...</div>
-        </section>
+        <nav id="observer-tabs" class="observer-tabs" role="tablist" aria-label="Observer sections">
+            <button class="observer-tab is-active" type="button" role="tab" aria-selected="true" data-tab="cpu">CPU</button>
+            <button class="observer-tab" type="button" role="tab" aria-selected="false" data-tab="memory">Memory</button>
+            <button class="observer-tab" type="button" role="tab" aria-selected="false" data-tab="configuration">Configuration</button>
+        </nav>
 
-        <section id="cpu-panel" class="calabi-card">
-            <h3>CPU Performance Domains</h3>
-            <div id="cpu-content" class="panel-placeholder">Waiting for data...</div>
-        </section>
+        <div class="tab-panel is-active" role="tabpanel" data-tab-panel="cpu">
+            <section id="cpu-overview-panel" class="calabi-card">
+                <h3>CPU Overview</h3>
+                <div id="cpu-overview-content" class="panel-placeholder">Waiting for data...</div>
+            </section>
 
-        <section id="cpu-map-panel" class="calabi-card">
-            <h3>CPU Pool Topology</h3>
-            <div id="cpu-map-content" class="panel-placeholder">Waiting for data...</div>
-        </section>
+            <nav id="cpu-subtabs" class="cpu-subtabs" role="tablist" aria-label="CPU detail sections">
+                <button class="cpu-subtab is-active" type="button" role="tab" aria-selected="true" data-cpu-tab="performance">Performance Domains</button>
+                <button class="cpu-subtab" type="button" role="tab" aria-selected="false" data-cpu-tab="topology">CPU Pool Topology</button>
+                <button class="cpu-subtab" type="button" role="tab" aria-selected="false" data-cpu-tab="ecc">Effective Clock</button>
+            </nav>
 
-        <section id="mem-panel" class="calabi-card">
-            <h3>Memory Overview</h3>
-            <div id="mem-content" class="panel-placeholder">Waiting for data...</div>
-        </section>
+            <section id="cpu-panel" class="calabi-card cpu-subtab-panel is-active" role="tabpanel" data-cpu-panel="performance">
+                <h3>CPU Performance Domains</h3>
+                <div id="cpu-content" class="panel-placeholder">Waiting for data...</div>
+            </section>
 
-        <section id="zram-panel" class="calabi-card">
-            <h3>zram Cost-Benefit</h3>
-            <div id="zram-content" class="panel-placeholder">Waiting for data...</div>
-        </section>
+            <section id="cpu-map-panel" class="calabi-card cpu-subtab-panel" role="tabpanel" data-cpu-panel="topology">
+                <h3>CPU Pool Topology</h3>
+                <div id="cpu-map-content" class="panel-placeholder">Waiting for data...</div>
+            </section>
 
-        <section id="overhead-panel" class="calabi-card">
-            <h3>Memory Management Overhead</h3>
-            <div id="overhead-content" class="panel-placeholder">Waiting for data...</div>
-        </section>
+            <section id="ecc-panel" class="calabi-card cpu-subtab-panel" role="tabpanel" data-cpu-panel="ecc">
+                <h3>VM Effective Constrained Clock</h3>
+                <div id="ecc-content" class="panel-placeholder">Waiting for data...</div>
+            </section>
+        </div>
+
+        <div class="tab-panel" role="tabpanel" data-tab-panel="memory">
+            <section id="mem-panel" class="calabi-card">
+                <h3>Memory Overview</h3>
+                <div id="mem-content" class="panel-placeholder">Waiting for data...</div>
+            </section>
+
+            <nav id="memory-subtabs" class="memory-subtabs" role="tablist" aria-label="Memory detail sections">
+                <button class="memory-subtab is-active" type="button" role="tab" aria-selected="true" data-memory-tab="ksm">KSM Cost-Benefit</button>
+                <button class="memory-subtab" type="button" role="tab" aria-selected="false" data-memory-tab="zram">zram Cost-Benefit</button>
+            </nav>
+
+            <section id="ksm-panel" class="calabi-card memory-subtab-panel is-active" role="tabpanel" data-memory-panel="ksm">
+                <h3>KSM Cost-Benefit</h3>
+                <div id="ksm-content" class="panel-placeholder">Waiting for data...</div>
+            </section>
+
+            <section id="zram-panel" class="calabi-card memory-subtab-panel" role="tabpanel" data-memory-panel="zram">
+                <h3>zram Cost-Benefit</h3>
+                <div id="zram-content" class="panel-placeholder">Waiting for data...</div>
+            </section>
+        </div>
+
+        <div class="tab-panel" role="tabpanel" data-tab-panel="configuration">
+            <section id="prometheus-panel" class="calabi-card">
+                <h3>Export Configuration</h3>
+                <div id="prometheus-content" class="panel-placeholder">Waiting for status...</div>
+            </section>
+        </div>
 
         <div id="error-banner" class="calabi-error" hidden></div>
     </div>

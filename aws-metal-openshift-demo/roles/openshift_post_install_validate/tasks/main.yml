@@ -18,6 +18,8 @@
       mirror_registry_ocp_release }}/bin/oc
     openshift_post_install_validate_kubeconfig_local_path: >-
       {{ lab_execution_ocp_generated_root }}/auth/kubeconfig
+    openshift_post_install_validate_kubeadmin_password_local_path: >-
+      {{ lab_execution_ocp_generated_root }}/auth/kubeadmin-password
     openshift_post_install_validate_remote_dir: >-
       /var/tmp/openshift-post-install-validate
     openshift_post_install_validate_remote_oc_path: >-
@@ -33,6 +35,8 @@
       /var/tmp/openshift-post-install-validate-bastion/oc
     openshift_post_install_validate_bastion_remote_kubeconfig_path: >-
       /var/tmp/openshift-post-install-validate-bastion/kubeconfig
+    openshift_post_install_validate_bastion_remote_kubeadmin_password_path: >-
+      /var/tmp/openshift-post-install-validate-bastion/kubeadmin-password
     openshift_post_install_validate_bastion_cluster_ca_bundle_path: >-
       /var/tmp/openshift-post-install-validate-bastion/kube-root-ca.crt
     openshift_post_install_validate_bastion_cluster_ca_anchor_path: >-
@@ -51,6 +55,13 @@
   delegate_to: localhost
   become: false
   register: openshift_post_install_validate_kubeconfig_local_stat
+
+- name: Check whether the generated kubeadmin password exists
+  ansible.builtin.stat:
+    path: "{{ openshift_post_install_validate_kubeadmin_password_local_path }}"
+  delegate_to: localhost
+  become: false
+  register: openshift_post_install_validate_kubeadmin_password_local_stat
 
 - name: Fail when required local validation artifacts are missing
   ansible.builtin.assert:
@@ -238,6 +249,17 @@
         mode: "0600"
       delegate_to: "{{ openshift_post_install_validate_bastion_host }}"
 
+    - name: Copy the current generated kubeadmin password to the bastion validation workspace
+      ansible.builtin.copy:
+        src: "{{ openshift_post_install_validate_kubeadmin_password_local_path }}"
+        dest: >-
+          {{
+            openshift_post_install_validate_bastion_remote_kubeadmin_password_path
+          }}
+        mode: "0600"
+      delegate_to: "{{ openshift_post_install_validate_bastion_host }}"
+      when: openshift_post_install_validate_kubeadmin_password_local_stat.stat.exists
+
     - name: Discover current members of the IdM Linux access group on the bastion
       ansible.builtin.command:
         argv:
@@ -249,12 +271,15 @@
       failed_when: false
       delegate_to: "{{ openshift_post_install_validate_bastion_host }}"
 
-    - name: Derive bastion users who should receive refreshed helper kubeconfigs
+    - name: Derive bastion users who should receive refreshed helper artifacts
       ansible.builtin.set_fact:
         openshift_post_install_validate_bastion_home_link_users: >-
           {{
             (
-              [openshift_post_install_validate_bastion_admin_user] +
+              [
+                openshift_post_install_validate_bastion_admin_user,
+                'cloud-user'
+              ] +
               (
                 (
                   openshift_post_install_validate_bastion_linux_access_group.stdout.split(':')[-1].split(',')
@@ -264,6 +289,34 @@
                 )
               )
             ) | reject('equalto', '') | unique | list
+          }}
+
+    - name: Derive bastion helper files that should be refreshed
+      ansible.builtin.set_fact:
+        openshift_post_install_validate_bastion_helper_files: >-
+          {{
+            [
+              {
+                'file_name': 'kubeconfig',
+                'src': openshift_post_install_validate_bastion_remote_kubeconfig_path,
+                'mode': '0600'
+              },
+              {
+                'file_name': 'kubeconfig.local',
+                'src': openshift_post_install_validate_bastion_remote_kubeconfig_path,
+                'mode': '0600'
+              }
+            ] + (
+              [
+                {
+                  'file_name': 'kubeadmin-password',
+                  'src': openshift_post_install_validate_bastion_remote_kubeadmin_password_path,
+                  'mode': '0600'
+                }
+              ]
+              if openshift_post_install_validate_kubeadmin_password_local_stat.stat.exists
+              else []
+            )
           }}
 
     - name: Gather passwd entries for bastion kubeconfig refresh targets
@@ -298,17 +351,15 @@
       become: true
       delegate_to: "{{ openshift_post_install_validate_bastion_host }}"
 
-    - name: Seed current cluster kubeconfigs into the skeleton bastion helper layout
+    - name: Seed current cluster helper artifacts into the skeleton bastion layout
       ansible.builtin.copy:
-        src: "{{ openshift_post_install_validate_bastion_remote_kubeconfig_path }}"
-        dest: "/etc/skel/etc/{{ item }}"
+        src: "{{ item.src }}"
+        dest: "/etc/skel/etc/{{ item.file_name }}"
         owner: root
         group: root
-        mode: "0600"
+        mode: "{{ item.mode }}"
         remote_src: true
-      loop:
-        - kubeconfig
-        - kubeconfig.local
+      loop: "{{ openshift_post_install_validate_bastion_helper_files }}"
       become: true
       delegate_to: "{{ openshift_post_install_validate_bastion_host }}"
 
@@ -323,15 +374,20 @@
       become: true
       delegate_to: "{{ openshift_post_install_validate_bastion_host }}"
 
-    - name: Seed current cluster kubeconfigs into bastion admin homes
+    - name: Seed current cluster helper artifacts into bastion admin homes
       ansible.builtin.copy:
-        src: "{{ openshift_post_install_validate_bastion_remote_kubeconfig_path }}"
-        dest: "{{ item.0.home }}/etc/{{ item.1 }}"
+        src: "{{ item.1.src }}"
+        dest: "{{ item.0.home }}/etc/{{ item.1.file_name }}"
         owner: "{{ item.0.user }}"
         group: "{{ item.0.gid }}"
-        mode: "0600"
+        mode: "{{ item.1.mode }}"
         remote_src: true
-      loop: "{{ (openshift_post_install_validate_bastion_home_link_targets | default([])) | product(['kubeconfig', 'kubeconfig.local']) | list }}"
+      loop: >-
+        {{
+          (openshift_post_install_validate_bastion_home_link_targets | default([]))
+          | product(openshift_post_install_validate_bastion_helper_files)
+          | list
+        }}
       become: true
       delegate_to: "{{ openshift_post_install_validate_bastion_host }}"
 

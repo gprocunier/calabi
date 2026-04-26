@@ -1,0 +1,37 @@
+---
+openshift_post_install_odf_effective_mode: >-
+  {{ openshift_post_install_odf_mode | default('internal') }}
+openshift_post_install_odf_effective_storage_cluster_namespace: >-
+  {{ openshift_post_install_odf_storage_cluster_namespace | default('openshift-storage') }}
+openshift_post_install_odf_effective_storage_cluster_name: >-
+  {{
+    openshift_post_install_odf_storage_cluster_name
+    | default(
+      'ocs-external-storagecluster'
+      if (openshift_post_install_odf_mode | default('internal')) == 'external'
+      else 'ocs-storagecluster'
+    )
+  }}
+openshift_post_install_odf_effective_cephcluster_name: >-
+  {{
+    openshift_post_install_odf_cephcluster_name
+    | default(openshift_post_install_odf_effective_storage_cluster_name ~ '-cephcluster')
+  }}
+openshift_post_install_odf_effective_default_storage_class_rbd: >-
+  {{
+    openshift_post_install_odf_default_storage_class_rbd
+    | default(
+      openshift_post_install_odf_effective_storage_cluster_name ~ '-ceph-rbd'
+      if (openshift_post_install_odf_mode | default('internal')) == 'external'
+      else 'ocs-storagecluster-ceph-rbd'
+    )
+  }}
+openshift_post_install_odf_effective_required_storage_classes: >-
+  {{
+    openshift_post_install_odf_required_storage_classes
+    | default([openshift_post_install_odf_effective_default_storage_class_rbd])
+  }}
+openshift_post_install_odf_external_configure_network_gateway: >-
+  {{ openshift_post_install_odf_mode | default('internal') == 'external' }}
+openshift_post_install_odf_external_gateway_routing_via_host: true
+openshift_post_install_odf_external_gateway_ip_forwarding: Global

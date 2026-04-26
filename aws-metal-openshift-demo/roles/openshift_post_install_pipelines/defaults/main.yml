@@ -3,8 +3,11 @@ openshift_post_install_pipelines_remote_dir: >-
   /var/tmp/openshift-post-install-pipelines
 openshift_post_install_pipelines_source: cs-redhat-operator-index-v4-20
 openshift_post_install_pipelines_source_namespace: openshift-marketplace
-openshift_post_install_pipelines_storagecluster_namespace: openshift-storage
-openshift_post_install_pipelines_storagecluster_name: ocs-storagecluster
-openshift_post_install_pipelines_cephcluster_namespace: openshift-storage
+openshift_post_install_pipelines_storagecluster_namespace: >-
+  {{ openshift_post_install_odf_effective_storage_cluster_namespace }}
+openshift_post_install_pipelines_storagecluster_name: >-
+  {{ openshift_post_install_odf_effective_storage_cluster_name }}
+openshift_post_install_pipelines_cephcluster_namespace: >-
+  {{ openshift_post_install_odf_effective_storage_cluster_namespace }}
 openshift_post_install_pipelines_cephcluster_name: >-
-  ocs-storagecluster-cephcluster
+  {{ openshift_post_install_odf_effective_cephcluster_name }}

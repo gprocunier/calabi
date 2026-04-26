@@ -1,0 +1,9 @@
+---
+calabi_shell_repo_url: https://github.com/gprocunier/calabi-shell.git
+calabi_shell_repo_version: main
+calabi_shell_install_root: /opt/calabi-shell
+calabi_shell_install_state_dir: /var/lib/calabi-shell
+calabi_shell_install_marker: "{{ calabi_shell_install_state_dir }}/installed-revision"
+calabi_shell_expected_files:
+  - /etc/bashrc
+  - /etc/profile.d/calabi-shell.sh

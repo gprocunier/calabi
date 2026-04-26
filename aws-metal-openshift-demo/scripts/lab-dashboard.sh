@@ -957,6 +957,9 @@ compute_progress() {
       sub(/^PLAY \[/, "", name)
       sub(/\] \**$/, "", name)
       current_play_name = name
+      current_task_name = "(waiting for first task in current play)"
+      current_task_prefix = current_play_name
+      current_prefix_started = 0
     }
     /^TASK \[/ {
       current_play_tasks++

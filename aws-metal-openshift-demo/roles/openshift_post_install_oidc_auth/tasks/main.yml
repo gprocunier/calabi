@@ -1,4 +1,13 @@
 ---
+- name: Normalize partial OIDC auth dictionary overrides  # noqa: var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    openshift_oidc_auth: >-
+      {{
+        openshift_oidc_auth_defaults
+        | default({})
+        | combine(openshift_oidc_auth | default({}), recursive=True)
+      }}
+
 - name: Derive IdM base DN for OIDC federation
   ansible.builtin.set_fact:
     openshift_post_install_oidc_auth_base_dn: >-

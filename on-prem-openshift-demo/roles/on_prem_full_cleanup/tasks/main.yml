@@ -1,0 +1,461 @@
+---
+- name: Check whether the on-prem guest volume group exists
+  ansible.builtin.command:
+    argv:
+      - vgs
+      - --noheadings
+      - --options
+      - vg_name
+      - "{{ on_prem_lvm_volume_group }}"
+  register: on_prem_full_cleanup_vg_exists
+  changed_when: false
+  failed_when: false
+
+- name: Read the current physical volumes for the on-prem guest volume group
+  ansible.builtin.command:
+    argv:
+      - pvs
+      - --noheadings
+      - --options
+      - pv_name
+      - "{{ on_prem_lvm_volume_group }}"
+  register: on_prem_full_cleanup_pvs
+  changed_when: false
+  failed_when: false
+  when: on_prem_full_cleanup_vg_exists.rc == 0
+
+- name: Derive the effective on-prem cleanup seed-device facts
+  ansible.builtin.set_fact:
+    on_prem_full_cleanup_seed_candidates: >-
+      {{
+        on_prem_full_cleanup_pvs.stdout_lines
+        | default([])
+        | reject('equalto', '')
+        | map('trim')
+        | list
+      }}
+    on_prem_full_cleanup_effective_seed_device: >-
+      {{
+        on_prem_lvm_seed_device
+        | default(
+            (
+              on_prem_full_cleanup_pvs.stdout_lines
+              | default([])
+              | reject('equalto', '')
+              | map('trim')
+              | list
+              | first
+            ) | default(''),
+            true
+          )
+      }}
+
+- name: Stop the fire-and-forget zram writeback policy timer
+  ansible.builtin.systemd_service:
+    name: calabi-zram-writeback-policy.timer
+    enabled: false
+    state: stopped
+  failed_when: false
+
+- name: Stop the fire-and-forget zram writeback policy service
+  ansible.builtin.systemd_service:
+    name: calabi-zram-writeback-policy.service
+    state: stopped
+  failed_when: false
+
+- name: Stop the host memory oversubscription service
+  ansible.builtin.systemd_service:
+    name: calabi-host-memory-oversubscription.service
+    enabled: false
+    state: stopped
+  failed_when: false
+
+- name: Stop the lab networking service
+  ansible.builtin.systemd_service:
+    name: aws-metal-openshift-demo-net.service
+    enabled: false
+    state: stopped
+  failed_when: false
+
+- name: Reset the runtime zram state defensively
+  ansible.builtin.shell: |
+    set -euo pipefail
+    swapoff /dev/zram0 >/dev/null 2>&1 || true
+    zramctl --reset /dev/zram0 >/dev/null 2>&1 || true
+    modprobe -r zram >/dev/null 2>&1 || true
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Disable KSM at runtime when the kernel interface is present
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if [ -e /sys/kernel/mm/ksm/run ]; then
+      echo 0 > /sys/kernel/mm/ksm/run
+    fi
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Query the current permanent firewalld policies
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --permanent
+      - --get-policies
+  register: on_prem_full_cleanup_policy_list
+  changed_when: false
+  failed_when: false
+
+- name: Remove the lab-to-external firewalld policy when it still exists
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --permanent
+      - --delete-policy=lab-to-external
+  register: on_prem_full_cleanup_delete_policy
+  changed_when: "'success' in on_prem_full_cleanup_delete_policy.stdout"
+  failed_when:
+    - on_prem_full_cleanup_delete_policy.rc != 0
+    - "'INVALID_POLICY' not in on_prem_full_cleanup_delete_policy.stderr"
+  when: >-
+    'lab-to-external' in (
+      (on_prem_full_cleanup_policy_list.stdout | default(''))
+      .split()
+    )
+
+- name: Query the current permanent firewalld zones
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --permanent
+      - --get-zones
+  register: on_prem_full_cleanup_zone_list
+  changed_when: false
+  failed_when: false
+
+- name: Remove the lab firewalld zone when it still exists
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --permanent
+      - --delete-zone=lab
+  register: on_prem_full_cleanup_delete_zone
+  changed_when: "'success' in on_prem_full_cleanup_delete_zone.stdout"
+  failed_when:
+    - on_prem_full_cleanup_delete_zone.rc != 0
+    - "'INVALID_ZONE' not in on_prem_full_cleanup_delete_zone.stderr"
+  when: >-
+    'lab' in (
+      (on_prem_full_cleanup_zone_list.stdout | default(''))
+      .split()
+    )
+
+- name: Disable external-zone masquerade when it is still enabled
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --permanent
+      - --zone=external
+      - --remove-masquerade
+  register: on_prem_full_cleanup_remove_masquerade
+  changed_when: "'success' in on_prem_full_cleanup_remove_masquerade.stdout"
+  failed_when:
+    - on_prem_full_cleanup_remove_masquerade.rc != 0
+    - "'NOT_ENABLED' not in on_prem_full_cleanup_remove_masquerade.stderr"
+
+- name: Reload firewalld after on-prem cleanup changes
+  ansible.builtin.command:
+    argv:
+      - firewall-cmd
+      - --reload
+  when: >-
+    (on_prem_full_cleanup_delete_policy is defined and on_prem_full_cleanup_delete_policy.changed) or
+    (on_prem_full_cleanup_delete_zone is defined and on_prem_full_cleanup_delete_zone.changed) or
+    on_prem_full_cleanup_remove_masquerade.changed
+  changed_when: true
+
+- name: Remove persistent host-side lab artifacts
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/aws-metal-openshift-demo-net.service
+    - /usr/local/sbin/aws-metal-openshift-demo-net.sh
+    - /etc/libvirt/lab-switch.xml
+    - /etc/systemd/system/calabi-host-memory-oversubscription.service
+    - /etc/systemd/system/calabi-zram-writeback-policy.service
+    - /etc/systemd/system/calabi-zram-writeback-policy.timer
+    - /usr/local/sbin/calabi-zram-writeback-policy.sh
+    - /etc/systemd/system.conf.d/90-aws-metal-openshift-demo-host-resource-management.conf
+    - /etc/systemd/system/machine-gold.slice
+    - /etc/systemd/system/machine-silver.slice
+    - /etc/systemd/system/machine-bronze.slice
+    - /etc/sysctl.d/90-aws-metal-openshift-demo.conf
+    - /etc/sysctl.d/90-aws-metal-openshift-lab.conf
+    - /etc/tmpfiles.d/ebs-friendly.conf
+    - /etc/udev/rules.d/99-ebs-friendly.rules
+  register: on_prem_full_cleanup_artifacts
+  when: on_prem_full_cleanup_remove_host_artifacts | bool
+
+- name: Remove the irqbalance guest CPU exclusion policy
+  ansible.builtin.lineinfile:
+    path: /etc/sysconfig/irqbalance
+    regexp: '^IRQBALANCE_BANNED_CPULIST='
+    state: absent
+    create: false
+  register: on_prem_full_cleanup_irqbalance
+  when: on_prem_full_cleanup_remove_host_artifacts | bool
+
+- name: Restore the runtime host networking sysctl values
+  ansible.builtin.command:
+    argv:
+      - sysctl
+      - -w
+      - "{{ item }}"
+  loop:
+    - net.ipv4.ip_forward=0
+    - net.ipv4.conf.all.rp_filter=1
+    - net.ipv4.conf.default.rp_filter=1
+  changed_when: true
+  failed_when: false
+  when: on_prem_full_cleanup_remove_host_artifacts | bool
+
+- name: Reload systemd after on-prem host artifact removal
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: on_prem_full_cleanup_remove_host_artifacts | bool
+
+- name: Re-execute systemd so host-manager settings are dropped from PID 1
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - daemon-reexec
+  changed_when: true
+  failed_when: false
+  when: on_prem_full_cleanup_remove_host_artifacts | bool
+
+- name: Restart irqbalance after removing the guest CPU exclusion policy
+  ansible.builtin.systemd_service:
+    name: irqbalance.service
+    state: restarted
+    enabled: true
+  failed_when: false
+  when:
+    - on_prem_full_cleanup_remove_host_artifacts | bool
+    - on_prem_full_cleanup_irqbalance.changed | default(false)
+
+- name: Remove the /dev/ebs guest compatibility directory
+  ansible.builtin.file:
+    path: "{{ on_prem_lvm_guest_symlink_root | default('/dev/ebs') }}"
+    state: absent
+  register: on_prem_full_cleanup_guest_symlink_root
+  when: on_prem_full_cleanup_remove_host_artifacts | bool
+
+- name: Reload udev after removing the guest compatibility naming layer
+  ansible.builtin.command:
+    argv:
+      - udevadm
+      - control
+      - --reload-rules
+  changed_when: true
+  when:
+    - on_prem_full_cleanup_remove_host_artifacts | bool
+    - >-
+      on_prem_full_cleanup_guest_symlink_root.changed or
+      (
+        on_prem_full_cleanup_artifacts is defined and
+        on_prem_full_cleanup_artifacts.changed
+      )
+
+- name: Trigger block-device udev events after removing the guest naming layer
+  ansible.builtin.command:
+    argv:
+      - udevadm
+      - trigger
+      - --subsystem-match=block
+      - --action=change
+  changed_when: true
+  when:
+    - on_prem_full_cleanup_remove_host_artifacts | bool
+    - >-
+      on_prem_full_cleanup_guest_symlink_root.changed or
+      (
+        on_prem_full_cleanup_artifacts is defined and
+        on_prem_full_cleanup_artifacts.changed
+      )
+
+- name: Wait for udev to settle after removing the guest naming layer
+  ansible.builtin.command:
+    argv:
+      - udevadm
+      - settle
+  changed_when: false
+  when:
+    - on_prem_full_cleanup_remove_host_artifacts | bool
+    - >-
+      on_prem_full_cleanup_guest_symlink_root.changed or
+      (
+        on_prem_full_cleanup_artifacts is defined and
+        on_prem_full_cleanup_artifacts.changed
+      )
+
+- name: Check whether the default libvirt network exists
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - net-info
+      - default
+  register: on_prem_full_cleanup_default_network
+  changed_when: false
+  failed_when: false
+  when: on_prem_full_cleanup_restore_default_libvirt_network | bool
+
+- name: Check whether the packaged default libvirt network definition exists
+  ansible.builtin.stat:
+    path: /usr/share/libvirt/networks/default.xml
+  register: on_prem_full_cleanup_default_network_xml
+  when: on_prem_full_cleanup_restore_default_libvirt_network | bool
+
+- name: Restore the default libvirt network definition when it is missing
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - net-define
+      - /usr/share/libvirt/networks/default.xml
+  changed_when: true
+  when:
+    - on_prem_full_cleanup_restore_default_libvirt_network | bool
+    - on_prem_full_cleanup_default_network.rc != 0
+    - on_prem_full_cleanup_default_network_xml.stat.exists | bool
+
+- name: Ensure the default libvirt network autostarts
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - net-autostart
+      - default
+  changed_when: true
+  failed_when: false
+  when:
+    - on_prem_full_cleanup_restore_default_libvirt_network | bool
+    - on_prem_full_cleanup_default_network_xml.stat.exists | bool
+
+- name: Ensure the default libvirt network is active
+  ansible.builtin.command:
+    argv:
+      - virsh
+      - net-start
+      - default
+  changed_when: true
+  failed_when: false
+  when:
+    - on_prem_full_cleanup_restore_default_libvirt_network | bool
+    - on_prem_full_cleanup_default_network_xml.stat.exists | bool
+
+- name: Read the current logical volumes in the on-prem guest volume group
+  ansible.builtin.command:
+    argv:
+      - lvs
+      - --noheadings
+      - --separator
+      - '|'
+      - --options
+      - lv_name
+      - "{{ on_prem_lvm_volume_group }}"
+  register: on_prem_full_cleanup_lvs
+  changed_when: false
+  failed_when: false
+  when:
+    - on_prem_full_cleanup_remove_guest_storage | bool
+    - on_prem_full_cleanup_vg_exists.rc == 0
+
+- name: Remove all logical volumes from the on-prem guest volume group
+  ansible.builtin.command:
+    argv:
+      - lvremove
+      - --force
+      - --yes
+      - "/dev/{{ on_prem_lvm_volume_group }}/{{ item }}"
+  loop: >-
+    {{
+      on_prem_full_cleanup_lvs.stdout_lines
+      | default([])
+      | reject('equalto', '')
+      | map('trim')
+      | list
+    }}
+  loop_control:
+    label: "{{ item }}"
+  changed_when: true
+  failed_when: false
+  when:
+    - on_prem_full_cleanup_remove_guest_storage | bool
+    - on_prem_full_cleanup_vg_exists.rc == 0
+
+- name: Remove the on-prem guest volume group
+  ansible.builtin.command:
+    argv:
+      - vgremove
+      - --force
+      - --yes
+      - "{{ on_prem_lvm_volume_group }}"
+  changed_when: true
+  failed_when: false
+  when:
+    - on_prem_full_cleanup_remove_guest_storage | bool
+    - on_prem_full_cleanup_vg_exists.rc == 0
+
+- name: Fail when a seed-device wipe was requested but no unique seed device is known
+  ansible.builtin.assert:
+    that:
+      - on_prem_full_cleanup_effective_seed_device | length > 0
+      - >-
+        (
+          on_prem_lvm_seed_device | default('') | length > 0
+        ) or
+        (
+          (on_prem_full_cleanup_seed_candidates | default([]) | length) == 1
+        )
+    fail_msg: >-
+      A full on-prem cleanup requested a seed-device wipe, but no unique seed
+      device could be derived for {{ on_prem_lvm_volume_group }}. Set
+      on_prem_lvm_seed_device explicitly for this host before retrying.
+  when: on_prem_full_cleanup_wipe_seed_device | bool
+
+- name: Wipe the on-prem seed device back to an unprovisioned state
+  ansible.builtin.shell: |
+    set -euo pipefail
+
+    DEVICE_REAL="$(readlink -f "{{ on_prem_full_cleanup_effective_seed_device }}")"
+    SIZE_MB=$(( $(blockdev --getsize64 "${DEVICE_REAL}") / 1024 / 1024 ))
+
+    pvremove --force --force --yes "${DEVICE_REAL}" || true
+    wipefs --all --force "${DEVICE_REAL}" || true
+    blkdiscard -f "${DEVICE_REAL}" || true
+
+    dd if=/dev/zero of="${DEVICE_REAL}" bs=4M \
+      count=$(( {{ on_prem_full_cleanup_seed_head_wipe_mb }} / 4 )) \
+      oflag=direct conv=fsync,notrunc status=none
+
+    if (( SIZE_MB > {{ on_prem_full_cleanup_seed_tail_wipe_mb }} )); then
+      dd if=/dev/zero of="${DEVICE_REAL}" bs=1M \
+        seek=$(( SIZE_MB - {{ on_prem_full_cleanup_seed_tail_wipe_mb }} )) \
+        count="{{ on_prem_full_cleanup_seed_tail_wipe_mb }}" \
+        oflag=direct conv=fsync,notrunc status=none
+    fi
+
+    wipefs --all --force "${DEVICE_REAL}" || true
+    partprobe "${DEVICE_REAL}" || true
+  args:
+    executable: /bin/bash
+  changed_when: true
+  when: on_prem_full_cleanup_wipe_seed_device | bool
+
+- name: Wait for udev to settle after wiping the seed device
+  ansible.builtin.command:
+    argv:
+      - udevadm
+      - settle
+  changed_when: false
+  when: on_prem_full_cleanup_wipe_seed_device | bool

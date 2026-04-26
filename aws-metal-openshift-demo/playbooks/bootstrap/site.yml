@@ -125,6 +125,7 @@
     - role: lab_switch
     - role: lab_firewall
     - role: lab_libvirt
+    - role: calabi_shell
   post_tasks:
     - name: Check whether the local guest base image is available on the operator host
       ansible.builtin.stat:

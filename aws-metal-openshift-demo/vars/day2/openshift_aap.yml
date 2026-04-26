@@ -1,5 +1,5 @@
 ---
-openshift_aap:
+openshift_aap_defaults:
   namespace: aap
   operatorgroup_name: aap
   subscription_name: ansible-automation-platform-operator
@@ -13,15 +13,18 @@ openshift_aap:
   idm_ca_secret_name: workshop-aap-idm-ca
   route_host: aap.apps.ocp.workshop.lan
   bundle_cacert_secret: workshop-aap-idm-ca
-  validation_username: aapadmin
+  validation_username: sysop
   validation_password: "{{ lab_default_password | default('') }}"
   database:
-    postgres_storage_class: ocs-storagecluster-ceph-rbd
+    postgres_storage_class: "{{ openshift_post_install_odf_effective_default_storage_class_rbd }}"
     storage: 20Gi
     resource_requirements:
       requests:
         cpu: 250m
         memory: 512Mi
+  api: {}
+  gateway_deployment:
+    resource_requests: {}
   controller:
     disabled: false
     name: workshop-aap-controller
@@ -45,7 +48,7 @@ openshift_aap:
     client_secret: "{{ lab_default_password | default('') }}"
     groups_claim: groups
     required_group_names:
-      - access-aap-admin
+      - access-openshift-admin
     protocol_mapper:
       name: groups
       claim_name: groups
@@ -55,15 +58,9 @@ openshift_aap:
       included_client_audience: aap
     validation_username: >-
       {{
-        ('ad-aapadmin@' ~ ad_server.domain_name)
+        openshift_oidc_auth.validation.ad_test_user
         if (lab_configure_ad_trust | default(false) | bool)
-        else (
-          idm_server.identity_users
-          | selectattr('groups', 'contains', 'access-aap-admin')
-          | map(attribute='name')
-          | first
-          | default('')
-        )
+        else openshift_oidc_auth.validation.native_test_user
       }}
     validation_password: >-
       {{
@@ -73,3 +70,5 @@ openshift_aap:
       }}
   ldap:
     authenticator_name: Red Hat Identity Management
+
+openshift_aap: "{{ openshift_aap_defaults }}"

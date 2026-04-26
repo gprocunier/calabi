@@ -1,5 +1,5 @@
 ---
-openshift_keycloak:
+openshift_keycloak_defaults:
   namespace: keycloak
   operatorgroup_name: keycloak
   subscription_name: rhbk-operator
@@ -22,6 +22,8 @@ openshift_keycloak:
   database_host: postgres-db
   database_port: 5432
   database_image: registry.redhat.io/rhel9/postgresql-15:latest
-  database_storage_class: ocs-storagecluster-ceph-rbd
+  database_storage_class: "{{ openshift_post_install_odf_effective_default_storage_class_rbd }}"
   database_storage_size: 5Gi
   discovery_realm: master
+
+openshift_keycloak: "{{ openshift_keycloak_defaults }}"

@@ -13,26 +13,13 @@ spec:
       cacheActiveTimeout: {{ openshift_post_install_netobserv_flowcollector_cache_active_timeout }}
       cacheMaxFlows: {{ openshift_post_install_netobserv_flowcollector_cache_max_flows }}
       privileged: {{ openshift_post_install_netobserv_flowcollector_ebpf_privileged | bool | lower }}
-      features:
-{% for feature_name in openshift_post_install_netobserv_flowcollector_ebpf_features %}
-        - {{ feature_name }}
-{% endfor %}
-      excludeInterfaces:
-{% for interface_name in openshift_post_install_netobserv_flowcollector_ebpf_exclude_interfaces %}
-        - {{ interface_name }}
-{% endfor %}
+      features: {{ openshift_post_install_netobserv_flowcollector_ebpf_features | to_json }}
+      excludeInterfaces: {{ openshift_post_install_netobserv_flowcollector_ebpf_exclude_interfaces | to_json }}
   processor:
     consumerReplicas: {{ openshift_post_install_netobserv_flowcollector_processor_replicas }}
     subnetLabels:
       openShiftAutoDetect: {{ openshift_post_install_netobserv_flowcollector_subnet_labels.openShiftAutoDetect | bool | lower }}
-      customLabels:
-{% for subnet_label in openshift_post_install_netobserv_flowcollector_subnet_labels.customLabels %}
-        - name: {{ subnet_label.name }}
-          cidrs:
-{% for cidr in subnet_label.cidrs %}
-            - {{ cidr }}
-{% endfor %}
-{% endfor %}
+      customLabels: {{ openshift_post_install_netobserv_flowcollector_subnet_labels.customLabels | to_json }}
     metrics:
       disableAlerts: {{ openshift_post_install_netobserv_flowcollector_disable_alerts | to_json }}
   consolePlugin:
