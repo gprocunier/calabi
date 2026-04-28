@@ -200,6 +200,7 @@ function drawRadialGauge(canvas, value, max, opts) {
 
     var lineWidth = opts.lineWidth || 10;
     var radius = Math.min(cw, ch) / 2 - lineWidth / 2 - 2;
+    if (radius < 1) return;
     var cx = cw / 2;
     var cy = ch / 2 + radius * 0.12;
 
