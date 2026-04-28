@@ -582,6 +582,29 @@ body {
 .zram-meter--pressure .zram-meter-fill {
     background: linear-gradient(90deg, #ffe082 0%, #ef6c00 100%);
 }
+.zram-meter--writeback .zram-meter-fill {
+    background: linear-gradient(90deg, #00897b, #4db6ac);
+}
+
+.zram-tier-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 2px;
+}
+.zram-tier-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--co-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+.zram-tier-value {
+    font-size: 14px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--co-text-strong);
+}
 
 /* ---------------------------------------------------------------------------
    zram Writeback
@@ -1049,6 +1072,7 @@ body {
 
 .zram-legend-dot--cost { background: #00695c; }
 .zram-legend-dot--saved { background: #80cbc4; }
+.zram-legend-dot--writeback { background: #4db6ac; }
 .zram-legend-dot--free { background: #dfe7eb; border: 1px solid #b8c2c8; }
 
 /* ---------------------------------------------------------------------------
@@ -1852,4 +1876,19 @@ body {
     .vm-ecc-grid {
         grid-template-columns: 1fr;
     }
+}
+
+/* Dark mode: verdict badges */
+@media (prefers-color-scheme: dark) {
+    .verdict-good { background: #1b5e20; color: #a5d6a7; }
+    .verdict-warn { background: #4e342e; color: #ffcc80; }
+    .verdict-bad { background: #4e0000; color: #ef9a9a; }
+    .verdict-inactive { background: #37474f; color: #90a4ae; }
+    .verdict-standby { background: #0d47a1; color: #90caf9; }
+
+    .calabi-error { background: #4e0000; color: #ef9a9a; border-color: #b71c1c; }
+
+    .zram-io-errors { background: #4e0000; color: #ef9a9a; }
+
+    .zram-legend-dot--free { background: #37474f; border-color: #546e7a; }
 }

@@ -52,7 +52,7 @@ Current defaults:
 | zram.writeback | `backing_device` | `""` | dedicated block device used only when writeback is enabled |
 | zram.writeback.policy | `enabled` | `false` | run periodic writeback from a systemd timer |
 | zram.writeback.policy | `interval` | `30m` | timer cadence for each writeback pass |
-| zram.writeback.policy | `mode` | `incompressible` | conservative default writeback mode |
+| zram.writeback.policy | `mode` | `huge` | writes back pages that did not compress well |
 | zram.writeback.policy | `idle_age_seconds` | `21600` | age threshold only for `idle` or `huge_idle` modes |
 | zram.writeback.policy | `per_run_budget_mib` | `256` | writeback budget applied before each timer run |
 | THP | `mode` | `madvise` | application-controlled huge page allocation |
@@ -171,7 +171,7 @@ lab_host_memory_oversubscription_settings:
       policy:
         enabled: true
         interval: 30m
-        mode: incompressible
+        mode: huge
         per_run_budget_mib: 256
 ```
 
@@ -199,7 +199,7 @@ backing device in one burst.
 
 Recommended starting point for the current ~128 GiB host class:
 
-- mode: `incompressible`
+- mode: `huge`
 - interval: `30m`
 - per-run budget: `256 MiB`
 
@@ -215,14 +215,61 @@ Additional caveats:
 - The timer only becomes useful after a backing device is attached. Enabling
   the policy block without a working writeback device is not a valid
   configuration.
-- The current default mode, `incompressible`, is intentionally conservative.
-  It avoids broad idle-page sweeps on kernels that lack age-based tracking.
+- The default mode, `huge`, writes back pages that zstd could not compress
+  well (stored at near-original size in RAM). This reclaims the physical
+  memory those pages consume and pushes them to the backing device where
+  the storage cost is negligible. For broader cold-page relief, use
+  `huge_idle` with an appropriate `idle_age_seconds` threshold, which
+  also sweeps idle compressible pages.
 - The timer applies a per-run `writeback_limit` budget to reduce the chance of
   sudden I/O bursts, but heavy writeback can still add latency to the backing
   storage tier under memory pressure.
 - On hosts that still keep a separate physical swap device enabled, zram
   writeback does not remove that device from the reclaim path automatically.
   Disk-backed swap remains a separate policy decision.
+
+## Two-Tier Swap Model
+
+When a writeback backing device is attached and the policy timer is active, the
+zram device operates as a two-tier swap system:
+
+| Tier | Backing | Physical cost | Latency | Contents |
+| --- | --- | --- | --- | --- |
+| RAM tier | host physical memory | compressed size (typ. 2-4x reduction) | nanoseconds | pages that compressed well |
+| Backing tier | dedicated block device | zero RAM | microseconds (NVMe) to milliseconds (SSD) | pages that did not compress well, pushed by the writeback policy |
+
+The `16G` zram disksize caps total uncompressed data across **both tiers**. When
+the device is 92% full, that means 92% of the 16 GiB logical capacity is
+occupied -- but the physical RAM cost depends on how much was compressed in the
+RAM tier vs. how much was offloaded to the backing tier.
+
+Example from a running 10-VM lab on a 125 GiB host:
+
+```
+Total swap data:       14.7 GiB uncompressed (92% of 16 GiB cap)
+├── RAM tier:           4.0 GiB physical (compressed from ~12.9 GiB)
+│   └── Compression:   3.2:1 ratio, saving ~8.9 GiB
+└── Backing tier:       1.8 GiB on NVMe (zero RAM cost)
+    └── Headroom:      30.2 GiB of 32 GiB LV remaining
+
+Effective RAM saved:   10.7 GiB (compression) + 1.8 GiB (writeback) = 12.5 GiB
+```
+
+Without the backing tier, those 1.8 GiB of incompressible pages would consume
+~1.8 GiB of physical RAM (stored at near-original size in the zram device).
+
+The Cockpit observer's zram panel reflects this model:
+
+- The **Swap Capacity** card shows separate RAM-tier and backing-tier
+  occupancy meters
+- The **Utilization Mix** bar shows four segments: RAM cost, compression
+  avoided, writeback offloaded, and free logical capacity
+- The **RAM Avoided** card splits its total into compression savings and
+  writeback offload
+- The memory overview's **pressure scoring** reduces the zram-utilization
+  penalty when a backing store is active with headroom, since 92% zram
+  occupancy with a working writeback tier is not the same threat as 92%
+  without one
 
 ## Transparent Huge Pages
 
@@ -352,6 +399,10 @@ Expected current behavior:
 - `swapon` shows `/dev/zram0` at priority `100`
 - `backing_dev` matches the configured override when writeback is enabled
 - the writeback timer is enabled and active when policy is enabled
+- `bd_stat` shows nonzero `bd_writes` when the writeback policy has run at
+  least once (zero `bd_writes` with a configured backing device means the
+  policy is not writing back -- check the mode is `huge`, not a mode the
+  kernel silently ignores)
 - THP enabled shows `[madvise]` (bracketed = active selection)
 - THP defrag shows `[madvise]`
 - KSM `run` is `1`

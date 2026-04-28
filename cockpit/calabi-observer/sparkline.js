@@ -214,7 +214,7 @@ function drawRadialGauge(canvas, value, max, opts) {
     // Track
     ctx.beginPath();
     ctx.arc(cx, cy, radius, startAngle, endAngle);
-    ctx.strokeStyle = opts.track || "rgba(128, 128, 128, 0.15)";
+    ctx.strokeStyle = opts.track || "rgba(128, 128, 128, 0.20)";
     ctx.lineWidth = lineWidth;
     ctx.lineCap = "round";
     ctx.stroke();
@@ -243,7 +243,7 @@ function drawRadialGauge(canvas, value, max, opts) {
     // Value text
     var displayText = opts.valueText !== undefined ? opts.valueText : (value != null ? value.toFixed(1) : "—");
     var fontSize = Math.max(12, Math.floor(radius * 0.48));
-    ctx.fillStyle = opts.textColor || "#f0f6fc";
+    ctx.fillStyle = opts.textColor || "#e0e0e0";
     ctx.font = "800 " + fontSize + "px " + (opts.fontFamily || "system-ui, sans-serif");
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
@@ -252,7 +252,7 @@ function drawRadialGauge(canvas, value, max, opts) {
     // Label text
     if (opts.label) {
         var labelSize = Math.max(9, Math.floor(radius * 0.22));
-        ctx.fillStyle = opts.labelColor || "rgba(128, 128, 128, 0.7)";
+        ctx.fillStyle = opts.labelColor || "rgba(160, 160, 160, 0.8)";
         ctx.font = "600 " + labelSize + "px system-ui, sans-serif";
         ctx.fillText(opts.label, cx, cy + fontSize * 0.55 + 2);
     }

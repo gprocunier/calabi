@@ -18,7 +18,7 @@ lab_host_memory_oversubscription_defaults:
       policy:
         enabled: false
         interval: 30m
-        mode: incompressible
+        mode: huge
         idle_age_seconds: 21600
         per_run_budget_mib: 256
   transparent_hugepages:
@@ -50,7 +50,7 @@ lab_host_memory_oversubscription_settings:
       policy:
         enabled: false
         interval: 30m
-        mode: incompressible
+        mode: huge
         idle_age_seconds: 21600
         per_run_budget_mib: 256
   transparent_hugepages:

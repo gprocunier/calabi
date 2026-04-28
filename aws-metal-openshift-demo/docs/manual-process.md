@@ -505,10 +505,11 @@ dedicated block device through `backing_device`. What is on-prem-specific in
 this repo is the managed-LVM convenience path that assumes the local
 `calabi_lab_vg` layout used by the on-prem deployment flow.
 
-If you also enable the optional writeback policy timer, start conservatively:
-use `mode: incompressible` with a small per-run budget such as `256 MiB` every
-`30m`. Only use `idle` or `huge_idle` when the running kernel supports
-age-based zram idle tracking.
+If you also enable the optional writeback policy timer, start with
+`mode: huge` and a small per-run budget such as `256 MiB` every `30m`.
+The `huge` mode writes back pages that did not compress well. For
+broader cold-page relief, use `huge_idle` when the running kernel
+supports age-based zram idle tracking.
 
 Do not point writeback at:
 

@@ -249,6 +249,12 @@ def parse_zram() -> list[dict]:
         backing_dev = read_text(f"{sysfs_path}/backing_dev")
         if backing_dev and backing_dev != "none":
             entry["backing_dev"] = backing_dev
+            try:
+                bd_size = read_int(f"/sys/class/block/{os.path.basename(backing_dev)}/size")
+                if bd_size is not None:
+                    entry["backing_dev_size_bytes"] = bd_size * 512
+            except Exception:
+                pass
 
         writeback_limit_enabled = read_text(f"{sysfs_path}/writeback_limit_enable")
         if writeback_limit_enabled is not None:

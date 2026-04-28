@@ -105,6 +105,8 @@ def format_metrics(payload: dict[str, Any]) -> str:
         ]:
             emit_sample(seen, lines, f"calabi_zram_{key}", entry.get(key), f"zram {key}.", host=hostname, device=device, algorithm=algorithm)
         emit_sample(seen, lines, "calabi_zram_writeback_attached", 1 if entry.get("backing_dev") else 0, "Whether zram has a writeback backing device attached.", host=hostname, device=device, backing_dev=entry.get("backing_dev"))
+        if entry.get("backing_dev_size_bytes") is not None:
+            emit_sample(seen, lines, "calabi_zram_backing_dev_size_bytes", entry["backing_dev_size_bytes"], "Size of the zram writeback backing device in bytes.", host=hostname, device=device, backing_dev=entry.get("backing_dev"))
         emit_sample(seen, lines, "calabi_zram_writeback_limit_enabled", 1 if entry.get("writeback_limit_enabled") else 0, "Whether zram writeback limit enforcement is enabled.", host=hostname, device=device)
         for key, value in (entry.get("mm_stat") or {}).items():
             emit_sample(seen, lines, f"calabi_zram_mm_{key}", value, f"zram mm_stat {key}.", host=hostname, device=device)

@@ -11,14 +11,39 @@
 var PROMETHEUS_CONTROL_PATH = "/usr/share/cockpit/calabi-observer/prometheus_control.py";
 var METRICS_PATH = "/run/calabi-observer/metrics.json";
 var TIER_COLORS = { gold: "#c9b037", silver: "#a8a9ad", bronze: "#cd7f32" };
-var COLORS = {
+var COLORS_LIGHT = {
     good: "#2e7d32", warn: "#b26a00", risk: "#ef6c00", crit: "#c62828",
     blue: "#1565c0", teal: "#00695c", purple: "#6a1b9a", amber: "#e65100",
     ksmSavings: "#2e7d32", ksmCpu: "#e65100",
     memUsed: "#1565c0", memCached: "#64b5f6", memKsm: "#2e7d32", memZram: "#00838f", memAvail: "#e0e0e0",
-    zramCost: "#00695c", zramSaved: "#80cbc4", zramFree: "#dfe7eb",
+    zramCost: "#00695c", zramSaved: "#80cbc4", zramWriteback: "#4db6ac", zramFree: "#dfe7eb",
     zramLine: "#00838f",
+    gaugeTrack: "rgba(0, 0, 0, 0.10)",
+    gaugeText: "#1a1a1a",
+    gaugeLabel: "rgba(0, 0, 0, 0.5)",
+    sparkFillAlpha: "0.08",
 };
+var COLORS_DARK = {
+    good: "#66bb6a", warn: "#ffb74d", risk: "#ff9800", crit: "#ef5350",
+    blue: "#42a5f5", teal: "#4db6ac", purple: "#ba68c8", amber: "#ffa726",
+    ksmSavings: "#66bb6a", ksmCpu: "#ffa726",
+    memUsed: "#42a5f5", memCached: "#90caf9", memKsm: "#66bb6a", memZram: "#4dd0e1", memAvail: "#455a64",
+    zramCost: "#4db6ac", zramSaved: "#b2dfdb", zramWriteback: "#80cbc4", zramFree: "#37474f",
+    zramLine: "#4dd0e1",
+    gaugeTrack: "rgba(255, 255, 255, 0.18)",
+    gaugeText: "#f0f4f8",
+    gaugeLabel: "rgba(255, 255, 255, 0.6)",
+    sparkFillAlpha: "0.15",
+};
+function isDarkMode() {
+    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+var COLORS = isDarkMode() ? COLORS_DARK : COLORS_LIGHT;
+if (window.matchMedia) {
+    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function () {
+        COLORS = isDarkMode() ? COLORS_DARK : COLORS_LIGHT;
+    });
+}
 var TIER_ORDER = ["gold", "silver", "bronze"];
 var HISTORY_SIZE = 120;
 var GiB = 1073741824;
@@ -164,8 +189,10 @@ function visualCard(label, value, fillPct, subtext, modifier, help, gaugeOpts) {
                 color: gaugeOpts.color || COLORS.blue,
                 lineWidth: 8,
                 valueText: "",
-                track: "rgba(128,128,128,0.12)",
+                track: COLORS.gaugeTrack,
                 gradient: gaugeOpts.gradient || null,
+                textColor: COLORS.gaugeText,
+                labelColor: COLORS.gaugeLabel,
             });
         });
     } else {
@@ -195,8 +222,10 @@ function zramVisualCard(label, value, fillPct, meterClass, subtext, help, gaugeO
                 color: gaugeOpts.color || COLORS.teal,
                 lineWidth: 8,
                 valueText: "",
-                track: "rgba(128,128,128,0.12)",
+                track: COLORS.gaugeTrack,
                 gradient: gaugeOpts.gradient || null,
+                textColor: COLORS.gaugeText,
+                labelColor: COLORS.gaugeLabel,
             });
         });
     } else {
@@ -1657,6 +1686,12 @@ function memoryDisposition(curr, deltas) {
     var zramSize = z ? z.disksize_bytes || 0 : 0;
     var zramHeadroom = zramSize > 0 ? Math.max(zramSize - zramSwapUsed, 0) : 0;
     var zramUtilPct = zramSize > 0 ? (zramSwapUsed / zramSize) * 100 : 0;
+    var zramBd = z && z.bd_stat ? z.bd_stat : {};
+    var zramBackedBytes = zramBd.backed_bytes || 0;
+    var zramBackingSize = z ? z.backing_dev_size_bytes || 0 : 0;
+    var zramBackingHeadroom = Math.max(zramBackingSize - zramBackedBytes, 0);
+    var zramHasActiveBacking = zramBackedBytes > 0 && zramBackingSize > 0;
+    var zramBackingUtilPct = zramBackingSize > 0 ? (zramBackedBytes / zramBackingSize) * 100 : 0;
     var ksmCliffCoverage = ksmSaved > 0 ? (available + zramHeadroom) / ksmSaved : 99;
 
     var swapActivity = deltas ? (deltas.pswpin_per_sec || 0) + (deltas.pswpout_per_sec || 0) : 0;
@@ -1673,8 +1708,12 @@ function memoryDisposition(curr, deltas) {
     else if (ksmCliffCoverage < 1.0) pressureScore += 2;
     else if (ksmCliffCoverage < 1.25) pressureScore += 1;
 
-    if (zramUtilPct > 85) pressureScore += 2;
-    else if (zramUtilPct > 70) pressureScore += 1;
+    if (zramHasActiveBacking && zramBackingUtilPct < 50) {
+        if (zramUtilPct > 85) pressureScore += 1;
+    } else {
+        if (zramUtilPct > 85) pressureScore += 2;
+        else if (zramUtilPct > 70) pressureScore += 1;
+    }
 
     if (directReclaim > 100 || swapActivity > 5000 || kswapdHostPct > 2) pressureScore += 3;
     else if (directReclaim > 10 || swapActivity > 500 || kswapdHostPct > 0.5) pressureScore += 1;
@@ -1699,16 +1738,21 @@ function memoryDisposition(curr, deltas) {
         keepUp = "active";
     }
 
+    var fields = [
+        { label: "commit", value: overcommitRatio.toFixed(2) + "x" },
+        { label: "avail", value: pct(availablePct, 1) },
+        { label: "KSM", value: humanGiB(ksmSaved) },
+        { label: "cliff", value: ksmCliffCoverage.toFixed(2) + "x" },
+        { label: "reclaim", value: keepUp },
+    ];
+    if (zramHasActiveBacking) {
+        fields.push({ label: "swap RAM", value: humanGiB(z.mem_used_bytes || 0) });
+        fields.push({ label: "swap back", value: humanGiB(zramBackedBytes) });
+    }
     return {
         level: level,
         label: label,
-        fields: [
-            { label: "commit", value: overcommitRatio.toFixed(2) + "x" },
-            { label: "avail", value: pct(availablePct, 1) },
-            { label: "KSM", value: humanGiB(ksmSaved) },
-            { label: "cliff", value: ksmCliffCoverage.toFixed(2) + "x" },
-            { label: "reclaim", value: keepUp },
-        ],
+        fields: fields,
     };
 }
 
@@ -1746,10 +1790,19 @@ function renderMemory(curr, deltas) {
             pct((available / total) * 100) + " of host RAM", "efficiency",
             "Kernel estimate of memory available without heavy reclaim.",
             { value: (available / total) * 100, max: 100, color: COLORS.good }),
-        visualCard("Reclaim Contribution", humanGiB(reclaimTotal),
-            Math.min((reclaimTotal / total) * 100, 100),
-            "KSM " + humanGiB(ksmSaved) + " / zram " + humanGiB(zramSaved), "savings",
-            "Memory pressure relief currently provided by KSM and zram."),
+        (function () {
+            var zObj = curr.zram && curr.zram[0] ? curr.zram[0] : null;
+            var zBacked = zObj && zObj.bd_stat ? zObj.bd_stat.backed_bytes || 0 : 0;
+            var zCompr = zBacked > 0 ? Math.max(zramSaved - zBacked, 0) : zramSaved;
+            var subline = zBacked > 0
+                ? "KSM " + humanGiB(ksmSaved) + " / compression " + humanGiB(zCompr) + " / writeback " + humanGiB(zBacked)
+                : "KSM " + humanGiB(ksmSaved) + " / zram " + humanGiB(zramSaved);
+            return visualCard("Reclaim Contribution", humanGiB(reclaimTotal),
+                Math.min((reclaimTotal / total) * 100, 100),
+                subline, "savings",
+                "Memory pressure relief currently provided by KSM and zram." +
+                (zBacked > 0 ? " zram savings split: " + humanGiB(zCompr) + " from compression, " + humanGiB(zBacked) + " from writeback offload to backing store." : ""));
+        })(),
         visualCard("Cache + Reclaimable", humanGiB(cached),
             Math.min((cached / total) * 100, 100),
             pct((cached / total) * 100) + " of host RAM", "cpu",
@@ -1934,6 +1987,8 @@ function renderZram(curr, deltas) {
     var incompressiblePages = mm.huge_pages || 0;
     var backingDev = z.backing_dev || "";
     var backedBytes = bd.backed_bytes || 0;
+    var compressionAvoided = Math.max(dataBytes - backedBytes - memUsed, 0);
+    var writebackAvoided = backedBytes;
     var writebackReadRate = deltas ? deltas.zram_writeback_reads_per_sec || 0 : 0;
     var writebackWriteRate = deltas ? deltas.zram_writeback_writes_per_sec || 0 : 0;
     var writebackLimitEnabled = !!z.writeback_limit_enabled;
@@ -1986,18 +2041,48 @@ function renderZram(curr, deltas) {
             humanBytes(dataBytes) + " data / " + humanBytes(compressedBytes) + " compressed",
             "How efficiently zram compresses swapped pages in RAM.",
             comprRatio > 0 ? { value: comprRatio, max: 4, color: COLORS.blue } : null),
-        zramVisualCard("Swap Occupancy", pct(swapUtilPct),
-            swapUtilPct, "zram-meter--occupancy",
-            humanBytes(swapUsed) + " used / " + humanBytes(disksize),
-            "How full the zram swap device is right now.",
-            { value: swapUtilPct, max: 100, gradient: [
-                { stop: 0, color: COLORS.good }, { stop: 0.7, color: COLORS.warn },
-                { stop: 0.9, color: COLORS.crit }
-            ]}),
+        (function () {
+            var backingUtilPct = 0;
+            var backingSize = 0;
+            if (backedBytes > 0 && z.backing_dev) {
+                backingSize = z.backing_dev_size_bytes || 0;
+                backingUtilPct = backingSize > 0 ? (backedBytes / backingSize) * 100 : 0;
+            }
+            var card = el("div", {
+                className: "zram-visual-card",
+                "data-help": backedBytes > 0
+                    ? "Two-tier swap: the RAM tier holds compressed pages in physical memory. The backing tier holds pages that did not compress well, offloaded by the writeback policy. The " + humanBytes(disksize) + " disksize caps total uncompressed data across both tiers."
+                    : "How full the zram swap device is right now."
+            }, [
+                el("div", { className: "zram-visual-label", textContent: "Swap Capacity" }),
+                el("div", { className: "zram-tier-row" }, [
+                    el("span", { className: "zram-tier-label", textContent: "RAM tier" }),
+                    el("span", { className: "zram-tier-value", textContent: pct(swapUtilPct) }),
+                ]),
+                el("div", { className: "zram-meter zram-meter--occupancy" }, [
+                    el("div", { className: "zram-meter-fill", style: "width:" + Math.min(swapUtilPct, 100).toFixed(1) + "%" }),
+                ]),
+                el("div", { className: "zram-visual-subtext", textContent: humanBytes(swapUsed) + " / " + humanBytes(disksize) }),
+            ].concat(backedBytes > 0 ? [
+                el("div", { className: "zram-tier-row", style: "margin-top:6px" }, [
+                    el("span", { className: "zram-tier-label", textContent: "Backing tier" }),
+                    el("span", { className: "zram-tier-value", textContent: backingSize > 0 ? pct(backingUtilPct) : humanBytes(backedBytes) }),
+                ]),
+                el("div", { className: "zram-meter zram-meter--writeback" }, [
+                    el("div", { className: "zram-meter-fill", style: "width:" + Math.min(backingUtilPct, 100).toFixed(1) + "%" }),
+                ]),
+                el("div", { className: "zram-visual-subtext", textContent: backingSize > 0 ? humanBytes(backedBytes) + " / " + humanBytes(backingSize) : humanBytes(backedBytes) + " offloaded" }),
+            ] : []));
+            return card;
+        })(),
         zramVisualCard("RAM Avoided", humanBytes(savedBytes),
             savingsPct, "zram-meter--savings",
-            humanBytes(memUsed) + " current RAM cost",
-            "Estimated RAM saved after paying zram metadata and compression cost."),
+            backedBytes > 0
+                ? "compression " + humanBytes(compressionAvoided) + " + writeback " + humanBytes(writebackAvoided)
+                : humanBytes(memUsed) + " current RAM cost",
+            backedBytes > 0
+                ? "RAM saved by compression (" + humanBytes(compressionAvoided) + ") plus pages offloaded to the backing store (" + humanBytes(writebackAvoided) + "). Total RAM avoided: " + humanBytes(savedBytes) + "."
+                : "Estimated RAM saved after paying zram metadata and compression cost."),
         zramVisualCard("Reclaim Pressure", pct(kswapdHostPct, 2),
             reclaimScore, "zram-meter--pressure",
             "direct reclaim " + Math.round(pgstealDirect) + " pg/s",
@@ -2009,10 +2094,17 @@ function renderZram(curr, deltas) {
     container.appendChild(el("div", { className: "zram-utilization" }, [
         el("div", { className: "zram-utilization-head" }, [
             el("span", { className: "zram-utilization-title", textContent: "zram Utilization Mix" }),
-            el("span", { className: "zram-utilization-summary", textContent: humanBytes(memUsed) + " RAM cost / " + humanBytes(savedBytes) + " avoided / " + humanBytes(freeLogical) + " free" }),
+            el("span", { className: "zram-utilization-summary", textContent: backedBytes > 0
+                ? humanBytes(memUsed) + " RAM cost / " + humanBytes(compressionAvoided) + " compression / " + humanBytes(writebackAvoided) + " writeback / " + humanBytes(freeLogical) + " free"
+                : humanBytes(memUsed) + " RAM cost / " + humanBytes(savedBytes) + " avoided / " + humanBytes(freeLogical) + " free" }),
         ]),
         utilizationCanvas,
-        el("div", { className: "zram-utilization-legend" }, [
+        el("div", { className: "zram-utilization-legend" }, backedBytes > 0 ? [
+            el("span", {}, [el("i", { className: "zram-legend-dot zram-legend-dot--cost" }), " RAM cost"]),
+            el("span", {}, [el("i", { className: "zram-legend-dot zram-legend-dot--saved" }), " compression avoided"]),
+            el("span", {}, [el("i", { className: "zram-legend-dot zram-legend-dot--writeback" }), " writeback offloaded"]),
+            el("span", {}, [el("i", { className: "zram-legend-dot zram-legend-dot--free" }), " free logical capacity"]),
+        ] : [
             el("span", {}, [el("i", { className: "zram-legend-dot zram-legend-dot--cost" }), " RAM cost"]),
             el("span", {}, [el("i", { className: "zram-legend-dot zram-legend-dot--saved" }), " avoided RAM"]),
             el("span", {}, [el("i", { className: "zram-legend-dot zram-legend-dot--free" }), " free logical capacity"]),
@@ -2150,7 +2242,12 @@ function renderZram(curr, deltas) {
                 min: 0, spotColor: COLORS.purple,
             });
         }
-        drawStackedBar(utilizationCanvas, [
+        drawStackedBar(utilizationCanvas, backedBytes > 0 ? [
+            { value: Math.max(memUsed, 0), color: COLORS.zramCost },
+            { value: Math.max(compressionAvoided, 0), color: COLORS.zramSaved },
+            { value: Math.max(writebackAvoided, 0), color: COLORS.zramWriteback },
+            { value: Math.max(freeLogical, 0), color: COLORS.zramFree },
+        ] : [
             { value: Math.max(memUsed, 0), color: COLORS.zramCost },
             { value: Math.max(savedBytes, 0), color: COLORS.zramSaved },
             { value: Math.max(freeLogical, 0), color: COLORS.zramFree },

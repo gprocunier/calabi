@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SPEC_NAME="cockpit-calabi-observer"
-VERSION="1.2.3"
+VERSION="1.3.0"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_ROOT="${SCRIPT_DIR}/rpmbuild"
 

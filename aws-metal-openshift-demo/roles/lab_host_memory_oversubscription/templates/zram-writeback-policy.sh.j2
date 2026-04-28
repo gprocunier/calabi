@@ -31,7 +31,7 @@ case "${mode}" in
   idle|huge_idle)
     echo "${idle_age_seconds}" > "${sysfs}/idle"
     ;;
-  incompressible|huge)
+  huge)
     ;;
   *)
     echo "unsupported zram writeback mode: ${mode}" >&2

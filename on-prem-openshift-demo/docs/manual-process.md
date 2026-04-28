@@ -172,7 +172,7 @@ That override also enables a conservative periodic zram writeback policy:
 
 - backing LV: `calabi_lab_vg/zram-writeback`
 - backing LV size: `32G`
-- policy mode: `incompressible`
+- policy mode: `huge`
 - timer interval: `30m`
 - per-run budget: `256 MiB`
 
@@ -327,8 +327,9 @@ Writeback caveats on the on-prem path:
 - the writeback LV must be dedicated to zram and is not counted as planned RAM
 - the role fails fast if the configured writeback LV already exists at a
   different size
-- the shipped policy uses `incompressible`, not `idle`, because age-based idle
-  tracking is kernel-dependent
+- the shipped policy uses `huge`, which writes back pages that did not
+  compress well. For broader cold-page relief, `huge_idle` also sweeps
+  idle compressible pages but requires kernel age-tracking support
 
 ## 7. Hand Back To The Stock Runbook
 

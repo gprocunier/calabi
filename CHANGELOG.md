@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.3.1 (2026-04-28)
+
+Maintenance release focused on the Cockpit observer zram visualization and
+the zram writeback policy fix that enables the backing store to function
+correctly.
+
+Highlights:
+
+- Fixed zram writeback policy mode from `incompressible` to `huge` so the
+  backing store actually receives offloaded pages.
+- Added two-tier swap capacity visualization to the Cockpit observer with
+  separate RAM-tier and backing-tier occupancy meters.
+- Split the zram utilization bar into four segments (RAM cost, compression
+  avoided, writeback offloaded, free) when a backing store is active.
+- Added theme-aware dual light/dark color palette with automatic switching
+  and improved gauge, verdict, and legend contrast in dark mode.
+- Added `calabi_zram_backing_dev_size_bytes` Prometheus metric.
+- Documented the two-tier swap model and updated the observer interpretation
+  guide.
+
+Release notes:
+
+- `releases/v1.3.1.md`
+
 ## v1.3.0 (2026-04-26)
 
 Feature release of Calabi focused on making the experimental on-prem path a

@@ -56,7 +56,7 @@
         (lab_host_memory_oversubscription_effective_settings.zram.writeback.enabled | bool)
       - >-
         lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.mode in
-        ['incompressible', 'huge', 'idle', 'huge_idle']
+        ['huge', 'idle', 'huge_idle']
       - (lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.interval | length) > 0
       - (lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.idle_age_seconds | int) > 0
       - (lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.per_run_budget_mib | int) >= 0
@@ -99,7 +99,7 @@
     fail_msg: >-
       The configured zram writeback policy mode requires
       CONFIG_ZRAM_TRACK_ENTRY_ACTIME=y for age-based idle tracking on the
-      running kernel. Use `incompressible` or `huge` instead on this host.
+      running kernel. Use `huge` instead on this host.
   when:
     - lab_host_memory_oversubscription_effective_settings.enabled | bool
     - lab_host_memory_oversubscription_effective_settings.zram.writeback.policy.enabled | bool

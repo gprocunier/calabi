@@ -1,5 +1,5 @@
 Name:           cockpit-calabi-observer
-Version:        1.2.3
+Version:        1.3.0
 Release:        1%{?dist}
 Summary:        Cockpit plugin for Calabi hypervisor performance domain and memory oversubscription observability
 

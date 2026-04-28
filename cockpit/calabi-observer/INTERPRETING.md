@@ -389,12 +389,43 @@ performance. This metric is highlighted in amber when nonzero.
 
 ### Capacity Bar
 
-Shows the zram device capacity breakdown:
+Shows the zram device capacity breakdown. When a writeback backing store is
+active, the bar splits into four segments. When no backing store is configured,
+it shows the original three-segment view.
 
-- **Compressed** (teal): actual RAM consumed by compressed data
-- **Saved** (light teal): the difference between original data and compressed
-  data
+**Four-segment mode** (writeback active):
+
+- **RAM cost** (dark teal): physical RAM consumed by compressed pages still
+  in memory
+- **Compression avoided** (light teal): RAM saved by compression alone --
+  these pages are in zram but stored smaller than their original size
+- **Writeback offloaded** (medium teal): pages that did not compress well and
+  were pushed to the backing store by the writeback policy timer. These consume
+  zero RAM.
+- **Free** (grey): unused logical capacity in the zram device
+
+**Three-segment mode** (no writeback):
+
+- **RAM cost** (dark teal): physical RAM consumed by compressed data
+- **Avoided RAM** (light teal): the difference between original data and
+  compressed data
 - **Free** (grey): unused device capacity
+
+### Swap Capacity Card
+
+When a writeback backing store is active, the single "Swap Occupancy" gauge is
+replaced by a two-tier "Swap Capacity" card showing:
+
+- **RAM tier**: occupancy of the zram device itself (the 16 GiB disksize cap).
+  This is the percentage of uncompressed data the device is holding across
+  both tiers. When this reaches 100%, the kernel cannot push more pages into
+  swap regardless of backing store headroom.
+- **Backing tier**: occupancy of the writeback backing device. Shows how much
+  of the backing store has been consumed by offloaded pages. Low utilization
+  here means the writeback policy has room to continue freeing RAM.
+
+When no backing store is configured, the card shows a single occupancy gauge
+as before.
 
 ### Recommendations
 

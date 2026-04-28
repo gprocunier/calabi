@@ -75,7 +75,7 @@ lab_host_memory_oversubscription_settings:
       policy:
         enabled: true
         interval: 30m
-        mode: incompressible
+        mode: huge
         per_run_budget_mib: 256
   transparent_hugepages:
     enabled: true
