@@ -535,7 +535,7 @@ lab_host_memory_oversubscription_settings:
   zram:
     enabled: true
     device_name: zram0
-    size: 16G
+    size: 32G
     compression_algorithm: zstd
     swap_priority: 100
     writeback:
@@ -543,12 +543,12 @@ lab_host_memory_oversubscription_settings:
       manage_lvm: true
       volume_group: calabi_lab_vg
       logical_volume: zram-writeback
-      size: 32G
+      size: 64G
       policy:
         enabled: true
-        interval: 30m
+        interval: 5m
         mode: huge
-        per_run_budget_mib: 256
+        per_run_budget_mib: 512
   transparent_hugepages:
     enabled: true
     mode: madvise
